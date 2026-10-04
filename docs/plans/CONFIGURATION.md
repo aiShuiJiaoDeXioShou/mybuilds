@@ -298,7 +298,7 @@ run 内未启动新的 bash 时使用 shell 字段对应的解释器；显式 ba
 params 定义允许用户传入的普通参数及默认值，MVP 采用字符串值，支持默认值简写及 description/required/choices 约束，不预建复杂类型或表单。
 参数名称须符合 [A-Za-z_][A-Za-z0-9_]*，不得占用既有上下文模板变量名；params 不自动变成环境变量，由 env 显式映射，避免与工具和系统变量冲突。
 run/trigger 支持重复 --param key=value，按第一个等号分割；未知参数、重复键或空名称报错，空字符串值允许。
---version 与 --channel 是相应 --param 的快捷形式，同次传入同名 --param 时拒绝，不按参数顺序决定优先级。
+trigger 的 --version 与 --channel 是相应 --param 的快捷形式，同次传入同名 --param 时拒绝，不按参数顺序决定优先级；本地 run 直接使用 --param。
 批量选择时参数用于全部选中 build，所有 build 都必须声明该参数；参数不同则分别触发。
 本地覆盖优先于 YAML 默认值；远程覆盖优先于项目同名 build 参数，再优先于所选流水线默认值。
 参数通过环境变量传入，不把值直接拼进 run 正文；密钥不能作为 --param，须使用授权节点的凭据引用。

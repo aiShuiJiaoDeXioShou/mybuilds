@@ -1,0 +1,45 @@
+# 在当前目录执行：mybuilds run --file /path/to/examples/local-run.yml
+# 参数仅通过显式 env 映射进入 shell；脚本不由模板引擎改写。
+version: 1
+timeout: 1m
+params:
+  message:
+    default: 本地构建示例
+    description: 日志中的演示文本
+    required: true
+  release:
+    default: "no"
+    choices: ["yes", "no"]
+env:
+  MESSAGE: "{{message}}"
+steps:
+  - kind: run
+    name: prepare
+    run: |
+      mkdir -p local-output
+      printf '%s\n' "$MESSAGE" > local-output/message.txt
+      printf '准备完成\n'
+  - kind: run
+    name: verify
+    run: |
+      test -s local-output/message.txt
+      printf '验证完成\n'
+  - kind: run
+    name: release-check
+    when:
+      params: {release: "yes"}
+    run: printf '发布条件已满足；本地不执行上传\n'
+post:
+  timeout: 10s
+  success:
+    - kind: run
+      name: summarize
+      run: printf '本地构建成功\n'
+  failure:
+    - kind: run
+      name: diagnostics
+      run: printf '本地构建失败，请检查步骤结果\n' >&2
+  always:
+    - kind: run
+      name: finish
+      run: printf '本次构建收尾完成\n'

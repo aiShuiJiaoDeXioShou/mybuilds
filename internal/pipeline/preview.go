@@ -1,4 +1,4 @@
-// Package pipeline 提供不执行命令、不读取秘密的流水线预览。
+// Package pipeline 提供流水线预览与本地执行，共享配置校验规则。
 package pipeline
 
 import (
@@ -352,6 +352,11 @@ func checkEnv(env map[string]string, field string, params, context map[string]st
 
 // checkField 只扫描原字段，参数值不会作为模板再次解释；渲染结果不进入预览。
 func checkField(value, field string, params, context map[string]string, secrets, notification bool) (bool, error) {
+	_, missing, err := renderField(value, field, params, context, secrets, notification)
+	return missing, err
+}
+
+func renderField(value, field string, params, context map[string]string, secrets, notification bool) (string, bool, error) {
 	if secrets {
 		for rest := value; ; {
 			start := strings.Index(rest, "${")
@@ -361,7 +366,7 @@ func checkField(value, field string, params, context map[string]string, secrets,
 			rest = rest[start+2:]
 			end := strings.IndexByte(rest, '}')
 			if end < 0 || !referenceName.MatchString(rest[:end]) {
-				return false, fmt.Errorf("%s: 环境引用格式错误", field)
+				return "", false, fmt.Errorf("%s: 环境引用格式错误", field)
 			}
 			rest = rest[end+1:]
 		}
@@ -373,19 +378,19 @@ func checkField(value, field string, params, context map[string]string, secrets,
 		close := strings.Index(rest, "}}")
 		if start < 0 {
 			if close >= 0 {
-				return false, fmt.Errorf("%s: 模板格式错误", field)
+				return "", false, fmt.Errorf("%s: 模板格式错误", field)
 			}
 			rendered.WriteString(rest)
 			break
 		}
 		if close >= 0 && close < start {
-			return false, fmt.Errorf("%s: 模板格式错误", field)
+			return "", false, fmt.Errorf("%s: 模板格式错误", field)
 		}
 		rendered.WriteString(rest[:start])
 		rest = rest[start+2:]
 		end := strings.Index(rest, "}}")
 		if end < 0 {
-			return false, fmt.Errorf("%s: 模板格式错误", field)
+			return "", false, fmt.Errorf("%s: 模板格式错误", field)
 		}
 		key := strings.TrimSpace(rest[:end])
 		if value, exists := params[key]; exists {
@@ -395,10 +400,10 @@ func checkField(value, field string, params, context map[string]string, secrets,
 			case "project", "build.name", "build.number", "build.id", "git.sha", "git.branch", "node.name", "workspace", "step.name":
 			case "build.status", "build.url":
 				if !notification {
-					return false, fmt.Errorf("%s: 未知模板变量", field)
+					return "", false, fmt.Errorf("%s: 未知模板变量", field)
 				}
 			default:
-				return false, fmt.Errorf("%s: 未知模板变量", field)
+				return "", false, fmt.Errorf("%s: 未知模板变量", field)
 			}
 			if value, known := context[key]; known {
 				rendered.WriteString(value)
@@ -411,34 +416,34 @@ func checkField(value, field string, params, context map[string]string, secrets,
 	if !missing && isPathField(field) {
 		renderedValue := rendered.String()
 		if value != "" && strings.TrimSpace(renderedValue) == "" {
-			return false, fmt.Errorf("%s: 模板渲染后路径不能为空", field)
+			return "", false, fmt.Errorf("%s: 模板渲染后路径不能为空", field)
 		}
 		value := renderedValue
 		if strings.Contains(value, "\\") {
-			return false, fmt.Errorf("%s: 模板渲染后路径不允许反斜杠", field)
+			return "", false, fmt.Errorf("%s: 模板渲染后路径不允许反斜杠", field)
 		}
 		for _, r := range value {
 			if unicode.IsControl(r) {
-				return false, fmt.Errorf("%s: 模板渲染后路径不能含控制字符", field)
+				return "", false, fmt.Errorf("%s: 模板渲染后路径不能含控制字符", field)
 			}
 		}
 		for _, part := range strings.Split(value, "/") {
 			if part == ".." {
-				return false, fmt.Errorf("%s: 模板渲染后路径不得包含向上段", field)
+				return "", false, fmt.Errorf("%s: 模板渲染后路径不得包含向上段", field)
 			}
 		}
 		if strings.HasSuffix(field, ".paths") || strings.HasSuffix(field, ".file") {
 			if _, err := path.Match(value, ""); err != nil {
-				return false, fmt.Errorf("%s: 模板渲染后路径模式无效", field)
+				return "", false, fmt.Errorf("%s: 模板渲染后路径模式无效", field)
 			}
 		} else if strings.ContainsAny(value, "*?[") {
-			return false, fmt.Errorf("%s: 模板渲染后路径不允许 glob", field)
+			return "", false, fmt.Errorf("%s: 模板渲染后路径不允许 glob", field)
 		}
 		if path.IsAbs(value) || (len(value) > 1 && value[1] == ':') {
-			return false, fmt.Errorf("%s: 模板渲染后路径必须相对且不得越界", field)
+			return "", false, fmt.Errorf("%s: 模板渲染后路径必须相对且不得越界", field)
 		}
 	}
-	return missing, nil
+	return rendered.String(), missing, nil
 }
 
 func isPathField(field string) bool {

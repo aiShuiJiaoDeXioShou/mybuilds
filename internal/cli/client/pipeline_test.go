@@ -272,12 +272,9 @@ post:
 			t.Fatalf("输出包含敏感值 %q", secret)
 		}
 	}
-	if _, err := execute(t, "run"); err == nil || !strings.Contains(err.Error(), "未") {
-		t.Fatalf("普通执行应明确未实现：%v", err)
-	}
 	for _, name := range []string{"run-marker", "post-marker", "git-marker"} {
 		if _, err := os.Stat(name); !os.IsNotExist(err) {
-			t.Fatalf("预览或普通 run 产生副作用 %s", name)
+			t.Fatalf("预览产生副作用 %s", name)
 		}
 	}
 	if requests.Load() != 0 {
@@ -301,11 +298,11 @@ func TestExampleConfiguration(t *testing.T) {
 	}
 }
 
-func TestRunUnsupportedWithoutConfiguration(t *testing.T) {
+func TestRunWithoutConfiguration(t *testing.T) {
 	t.Chdir(t.TempDir())
 	out, err := execute(t, "run")
-	if err == nil || !strings.Contains(err.Error(), "尚未实现") || strings.Contains(out, "mybuilds.yml") {
-		t.Fatalf("普通 run 应在读取配置前报未实现：%q，%v", out, err)
+	if err == nil || strings.Contains(out, "mybuilds.yml") {
+		t.Fatalf("普通 run 应拒绝缺失配置且不暴露文件名：%q，%v", out, err)
 	}
 	entries, err := os.ReadDir(".")
 	if err != nil || len(entries) != 0 {
