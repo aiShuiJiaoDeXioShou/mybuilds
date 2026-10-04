@@ -1,0 +1,232 @@
+package server
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"mime"
+	"net/http"
+	"net/url"
+	"reflect"
+	"strconv"
+	"strings"
+
+	"mybuilds/internal/scm"
+	"mybuilds/internal/store"
+)
+
+var errTooLarge = errors.New("request_too_large")
+var errPipeline = errors.New("invalid_pipeline")
+var errUnsupported = errors.New("unsupported_setting")
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.WriteHeader(status)
+	if status != http.StatusNoContent {
+		_ = json.NewEncoder(w).Encode(value)
+	}
+}
+func writeError(w http.ResponseWriter, err error) {
+	status, code, message := 500, "internal_error", "服务处理失败"
+	switch {
+	case errors.Is(err, store.ErrInvalid):
+		status, code, message = 400, "invalid_request", "请求无效"
+	case errors.Is(err, errPipeline):
+		status, code, message = 400, "invalid_pipeline", "流水线无效"
+	case errors.Is(err, errUnsupported):
+		status, code, message = 400, "unsupported_setting", "当前设置尚未支持"
+	case errors.Is(err, store.ErrUnauthorized):
+		status, code, message = 401, "unauthorized", "身份无效"
+	case errors.Is(err, store.ErrForbidden):
+		status, code, message = 403, "forbidden", "无权执行此操作"
+	case errors.Is(err, store.ErrNotFound):
+		status, code, message = 404, "not_found", "对象或入口不存在"
+	case errors.Is(err, store.ErrConflict):
+		status, code, message = 409, "conflict", "请求与当前状态冲突"
+	case errors.Is(err, store.ErrLockLost):
+		status, code, message = 503, "control_lock_lost", "控制端运行权已丢失"
+	case errors.Is(err, errTooLarge):
+		status, code, message = 413, "request_too_large", "请求超过大小上限"
+	default:
+		var git *scm.Error
+		if errors.As(err, &git) {
+			status, code, message = 400, "invalid_pipeline", "无法读取有效流水线"
+		}
+	}
+	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
+}
+
+// 先遍历原始Token查重复与null，再按声明的精确JSON字段检查；Decoder不承担弱结构校验。
+func readJSON(r *http.Request, target any) error {
+	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || media != "application/json" {
+		return store.ErrInvalid
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, (1<<20)+1))
+	if err != nil {
+		return store.ErrInvalid
+	}
+	if len(data) > 1<<20 {
+		return errTooLarge
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	nodes := 0
+	value, err := jsonValue(dec, 0, &nodes)
+	if err != nil {
+		return store.ErrInvalid
+	}
+	if _, err = dec.Token(); err != io.EOF {
+		return store.ErrInvalid
+	}
+	typ := reflect.TypeOf(target)
+	if typ.Kind() != reflect.Pointer || checkJSONFields(value, typ.Elem()) != nil {
+		return store.ErrInvalid
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return store.ErrInvalid
+	}
+	return nil
+}
+func jsonValue(dec *json.Decoder, depth int, nodes *int) (any, error) {
+	*nodes++
+	if depth > 64 || *nodes > 10000 {
+		return nil, store.ErrInvalid
+	}
+	token, err := dec.Token()
+	if err != nil || token == nil {
+		return nil, store.ErrInvalid
+	}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return token, nil
+	}
+	switch delim {
+	case '{':
+		result := map[string]any{}
+		for dec.More() {
+			key, err := dec.Token()
+			name, ok := key.(string)
+			if err != nil || !ok {
+				return nil, store.ErrInvalid
+			}
+			if _, exists := result[name]; exists {
+				return nil, store.ErrInvalid
+			}
+			value, err := jsonValue(dec, depth+1, nodes)
+			if err != nil {
+				return nil, err
+			}
+			result[name] = value
+		}
+		end, err := dec.Token()
+		if err != nil || end != json.Delim('}') {
+			return nil, store.ErrInvalid
+		}
+		return result, nil
+	case '[':
+		result := []any{}
+		for dec.More() {
+			value, err := jsonValue(dec, depth+1, nodes)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, value)
+		}
+		end, err := dec.Token()
+		if err != nil || end != json.Delim(']') {
+			return nil, store.ErrInvalid
+		}
+		return result, nil
+	default:
+		return nil, store.ErrInvalid
+	}
+}
+func checkJSONFields(value any, typ reflect.Type) error {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	switch typ.Kind() {
+	case reflect.Struct:
+		mapping, ok := value.(map[string]any)
+		if !ok {
+			return store.ErrInvalid
+		}
+		fields := map[string]reflect.Type{}
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+			name := strings.Split(field.Tag.Get("json"), ",")[0]
+			if name == "" {
+				name = field.Name
+			}
+			if name != "-" {
+				fields[name] = field.Type
+			}
+		}
+		for name, item := range mapping {
+			field, exists := fields[name]
+			if !exists || checkJSONFields(item, field) != nil {
+				return store.ErrInvalid
+			}
+		}
+	case reflect.Map:
+		mapping, ok := value.(map[string]any)
+		if !ok {
+			return store.ErrInvalid
+		}
+		for _, item := range mapping {
+			if checkJSONFields(item, typ.Elem()) != nil {
+				return store.ErrInvalid
+			}
+		}
+	case reflect.Slice:
+		items, ok := value.([]any)
+		if !ok {
+			return store.ErrInvalid
+		}
+		for _, item := range items {
+			if checkJSONFields(item, typ.Elem()) != nil {
+				return store.ErrInvalid
+			}
+		}
+	}
+	return nil
+}
+func readQuery(r *http.Request, allowed ...string) (map[string]string, error) {
+	// ParseQuery拒绝非法编码与分号。
+	values, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return nil, store.ErrInvalid
+	}
+	result := map[string]string{}
+	for name, items := range values {
+		known := false
+		for _, key := range allowed {
+			known = known || name == key
+		}
+		if !known || len(items) != 1 {
+			return nil, store.ErrInvalid
+		}
+		result[name] = items[0]
+	}
+	return result, nil
+}
+func readPage(values map[string]string) (store.Page, error) {
+	p := store.Page{Limit: 20}
+	var err error
+	if v, ok := values["limit"]; ok {
+		p.Limit, err = strconv.Atoi(v)
+		if err != nil || p.Limit < 1 || p.Limit > 200 {
+			return p, store.ErrInvalid
+		}
+	}
+	if v, ok := values["offset"]; ok {
+		p.Offset, err = strconv.Atoi(v)
+		if err != nil || p.Offset < 0 || p.Offset > 1000000 {
+			return p, store.ErrInvalid
+		}
+	}
+	return p, nil
+}

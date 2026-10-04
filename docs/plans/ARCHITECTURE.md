@@ -135,7 +135,7 @@ database:
   `run` 正文的 `$VAR` / `${VAR}` 留给 shell；分支名、版本等值通过环境变量传入，不直接拼接到 shell 命令中。
 - 支持既定的 `{{var}}`，但 `run` 正文不做模板替换；未知模板变量报错，`--dry-run` 输出不展示密钥。
 - token 存数据库，只保存高熵 token 的摘要和身份、角色、撤销状态；创建时仅显示一次明文，列表不回显。
-  首次启动且 token 表为空时，可用 `MYBUILDS_BOOTSTRAP_ADMIN_TOKEN` 初始化管理员，之后撤销不会被配置重新创建。
+  首次身份初始化时，可用 `MYBUILDS_BOOTSTRAP_ADMIN_TOKEN` 初始化管理员；数据库保存初始化标记，之后即使全部身份撤销或删除，也不会被配置重新创建。
 - 项目管理可由本机管理员 CLI 操作；admin 可访问全部 API，trigger 仅能触发不含 upload 的构建及查询基本服务状态，
   approver 可列待审批任务、读取其详情 / 日志 / 产物并批准或拒绝。取消、重试、上传结果确认与控制端 / 节点 doctor 仅限 admin。
 

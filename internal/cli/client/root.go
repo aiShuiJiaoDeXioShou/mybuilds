@@ -11,6 +11,7 @@ func NewCommand() *cobra.Command {
 		Short:        "移动端构建发布客户端",
 		SilenceUsage: true,
 	}
-	cmd.AddCommand(version.NewCommand(), newInitCommand(), newRunCommand(), newDoctorCommand())
+	remoteRootFlags(cmd)
+	cmd.AddCommand(version.NewCommand(), newInitCommand(), newRunCommand(), newDoctorCommand(), newRemoteGroupCommand(), newBuildCommand(), newStatusCommand(), newRemoteProjectCommand(), newTriggerCommand())
 	return cmd
 }

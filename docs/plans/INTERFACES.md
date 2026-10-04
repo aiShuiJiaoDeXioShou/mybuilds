@@ -1,5 +1,7 @@
 # 触发链路、目录与 CLI / HTTP 接口
 
+006 已实现命令范围与最小示例见 [README](../../README.md#控制端与远程排队)；本文件仍描述完整目标接口，Agent、恢复、方案、发布、审批和 Webhook 需对应功能验收后使用。
+
 本文件保留原 [PLAN.md](PLAN.md) 的完整专题章节；业务功能按 [实施路线](SPECKIT_ROADMAP.md) 推进，当前状态见 [实施历史](../IMPLEMENTATION_HISTORY.md)。
 
 ## 触发链路
@@ -143,7 +145,7 @@ GET    /api/artifacts/{id}/{file}          # 产物下载
 
 ## CLI 面
 
-以下为拟定接口，除双端帮助与 version 外均待实现；最终行为、输出和退出码在对应 Spec Kit feature 的 contracts 中确认。
+以下为完整目标接口；已实现子集见 README，最终行为、输出和退出码以对应 Spec Kit feature 的 contracts 与验收记录为准。
 `<name>` / `<id>` 表示必填位置参数；列表与详情支持 `--json`，默认输出表格。token 通过环境变量或受限配置文件读取，不提供明文 token 参数。
 
 ### 服务端 `mybuilds-server`（运维 / 管理员用）

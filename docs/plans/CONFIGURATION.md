@@ -6,6 +6,8 @@
 
 ### 服务端配置 `~/.mybuilds/server.yml`（由 `mybuilds-server serve` 读取）
 
+006 当前支持下方的 listen、data_dir、concurrency、database 与 secrets_file；build_profiles、retention、defaults 分别随对应功能接入，当前明确拒绝。可运行的最小配置见 [README](../../README.md#控制端与远程排队)。PostgreSQL 使用明确 DSN，不读取宿主 PG 环境/service/passfile；显式 TLS 材料受限普通文件读取后在内存校验。
+
 数据库选型见[数据库设计选择](ARCHITECTURE.md#3-数据库默认-sqlite可切-postgresql统一走-gorm)。
 
 ```yaml

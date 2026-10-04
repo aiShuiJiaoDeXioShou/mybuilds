@@ -13,7 +13,7 @@
 | 3 | 003-build-artifacts | 002 | 递归 glob、路径及符号链接边界；匹配错误拒绝；产物名称、大小和 SHA-256 可核对。 |
 | 4 | 004-android-build | 003 | Android doctor、可编辑的默认 run/artifact 模板；真实工程生成 APK/AAB/mapping，版本正确；JDK/SDK/签名错误可诊断，失败/取消不留本次进程。 |
 | 4 | 005-ios-build | 003 | iOS doctor、archive/export 模板；真实签名有效的 IPA/dSYM，版本正确；独立 DerivedData/临时 keychain，失败/取消清理签名资源与本次进程。 |
-| 5 | 006-control-plane | 004、005 | SQLite/PostgreSQL 同行为；唯一控制端锁；项目组/default/改名迁移/历史保留、token 与鉴权；固定 SHA 与快照、批量校验/原子入队、幂等构建号；skipped 不占号/节点；API/CLI、条件事实/预算/收尾进度持久化。 |
+| 5 | 006-control-plane | 003、004 | SQLite/PostgreSQL 同行为；唯一控制端锁；项目组/default/改名迁移/历史保留、token 与鉴权；固定 SHA 与快照、批量校验/原子入队、幂等构建号；skipped 不占号/节点；API/CLI、条件事实/预算/收尾进度持久化。 |
 | 5 | 009-flutter-builds | 004、005 | Flutter doctor、Android/iOS 模板；真工程双平台版本/flavor/签名/产物正确；模板可编辑，复用已有取消、签名和产物契约。 |
 | 6 | 007-node-agents | 006 | 独立节点身份、HTTPS、能力/授权/容量匹配；双节点竞争只领取一次，同名串行、不同 build 并行；续租/过期回报拒绝/断网停止；UTC 脱敏日志、SSE、校验产物回传下载；管理停止确认。 |
 | 7 | 008-build-recovery | 007 | 控制端重启核对仍有效租约；排队恢复，预算不重置、已开始未知 post 不重跑；失联不迁移，stop_unconfirmed 保互斥/隔离/禁止清理；停止确认；retry 固定原 SHA/参数/条件/配置且产生新号。 |
@@ -72,3 +72,9 @@
 ## 上下文交接最小记录
 
 每次暂停、换代理或上下文交接，更新对应 specs 的 validation.md 和 [实施历史](../IMPLEMENTATION_HISTORY.md)，只记录：功能/分支/worktree 与依赖提交；当前 Spec Kit 阶段和未完任务 ID；本次文件归属/共享接口变化；已运行检查、结果与证据；未解决阻塞/真实环境缺口；下一条可执行任务及集成/最终提交哈希。配置和日志只给脱敏证据位置，密钥仅写引用；不要另建看板、数据库或复杂追踪工具。
+
+## 2026-10-04 实施依赖修正
+
+006的前置由004/005改为已验收的003/004。控制端只读取严格流水线配置、冻结SHA/条件/参数并持久化排队，不调用mobile签名或执行Xcode；004提交2ab8991已提供其实际需要的config/pipeline/process基础。006在独立worktree从该提交开始，不依赖005未验收代码或其任务勾选，仍需双数据库、单控制端锁、真实Git/API/CLI和事务验收后整项提交。
+
+007可在006验收后验证通用及Android节点协议，iOS能力必须显式声明和核验，不能仅因节点为macOS就取得签名能力。005待真实Apple材料验收，009仍依赖已验收004/005；合法签名材料在005及后续节点租约取消/签名系统清理中的真实联验、两大商店与整个MVP的完成门均保留。这是执行顺序修正，不降低验收范围。

@@ -1,0 +1,241 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/glebarez/sqlite"
+	"github.com/jackc/pgx/v5/stdlib"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+	"gorm.io/gorm/logger"
+)
+
+type Store struct {
+	db, writer       *gorm.DB
+	conn             *sql.Conn
+	lockFile         *os.File
+	lockPath, dbPath string
+	lockInfo, dbInfo os.FileInfo
+	driver           string
+	mu               sync.Mutex
+	lost, closed     bool
+}
+
+func Open(ctx context.Context, opt Options) (*Store, error) {
+	if !supportedPlatform() {
+		return nil, ErrInvalid
+	}
+	if opt.Driver != "sqlite" && opt.Driver != "postgres" {
+		return nil, ErrInvalid
+	}
+	if ctx.Err() != nil {
+		return nil, errDatabase
+	}
+	s := &Store{driver: opt.Driver}
+	cfg := &gorm.Config{Logger: logger.Default.LogMode(logger.Silent), NowFunc: func() time.Time { return time.Now().UTC() }, DisableAutomaticPing: true}
+	var err error
+	if opt.Driver == "sqlite" {
+		if err = s.openSQLiteLock(opt.DSN); err != nil {
+			return nil, err
+		}
+		dsn := (&url.URL{Scheme: "file", Path: s.dbPath}).String() + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
+		s.db, err = gorm.Open(sqlite.Open(dsn), cfg)
+		s.writer = s.db
+	} else {
+		if strings.TrimSpace(opt.DSN) == "" {
+			return nil, ErrInvalid
+		}
+		parsed, parseErr := postgresConfig(ctx, opt.DSN)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		pgPool := stdlib.OpenDB(*parsed)
+		s.db, err = gorm.Open(postgres.New(postgres.Config{Conn: pgPool}), cfg)
+		if err != nil {
+			pgPool.Close()
+		}
+		if err == nil {
+			var pool *sql.DB
+			pool, err = s.db.DB()
+			if err == nil {
+				s.conn, err = pool.Conn(ctx)
+			}
+			if err == nil {
+				var acquired bool
+				err = s.conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock(1973481521, 6)").Scan(&acquired)
+				if err == nil && !acquired {
+					err = ErrLocked
+				}
+			}
+			if err == nil {
+				s.writer, err = gorm.Open(postgres.New(postgres.Config{Conn: s.conn}), cfg)
+			}
+		}
+	}
+	if err != nil {
+		s.Close()
+		return nil, safeError(err)
+	}
+	pool, err := s.db.DB()
+	if err != nil {
+		s.Close()
+		return nil, safeError(err)
+	}
+	pool.SetMaxOpenConns(8)
+	pool.SetMaxIdleConns(8)
+	if err = pool.PingContext(ctx); err != nil {
+		s.Close()
+		return nil, safeError(err)
+	}
+	return s, nil
+}
+
+func (s *Store) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	var failed bool
+	if s.conn != nil {
+		// 同一 session 释放；失效时不尝试从连接池恢复运行权。
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		if !s.lost {
+			if _, err := s.conn.ExecContext(ctx, "SELECT pg_advisory_unlock(1973481521, 6)"); err != nil {
+				failed = true
+			}
+		}
+		cancel()
+		if err := s.conn.Close(); err != nil && !s.lost {
+			failed = true
+		}
+	}
+	if s.db != nil {
+		if pool, err := s.db.DB(); err != nil {
+			failed = true
+		} else if err = pool.Close(); err != nil {
+			failed = true
+		}
+	}
+	if s.lockFile != nil {
+		if err := releaseFileLock(s.lockFile); err != nil {
+			failed = true
+		}
+	}
+	if failed {
+		return errDatabase
+	}
+	return nil
+}
+
+func (s *Store) CheckLock(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.checkLock(ctx)
+}
+func (s *Store) checkLock(ctx context.Context) error {
+	if s.lost || s.closed {
+		return ErrLockLost
+	}
+	if ctx.Err() != nil {
+		return errDatabase
+	}
+	valid := false
+	if s.driver == "sqlite" {
+		lock, err := os.Lstat(s.lockPath)
+		if err == nil && lock.Mode().IsRegular() && os.SameFile(s.lockInfo, lock) && singleLink(lock) {
+			db, err := os.Lstat(s.dbPath)
+			valid = err == nil && db.Mode().IsRegular() && os.SameFile(s.dbInfo, db) && singleLink(db)
+		}
+	} else {
+		err := s.conn.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND classid = 1973481521 AND objid = 6 AND objsubid = 2 AND granted)").Scan(&valid)
+		if err != nil {
+			valid = false
+		}
+	}
+	if !valid {
+		s.lost = true
+		return ErrLockLost
+	}
+	return nil
+}
+
+// ponytail: 单控制端写事务串行；需要吞吐扩展时再评估更细的事务竞争。
+func (s *Store) write(ctx context.Context, fn func(*gorm.DB) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkLock(ctx); err != nil {
+		return err
+	}
+	err := s.writer.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := fn(tx); err != nil {
+			return err
+		}
+		return s.checkLock(ctx)
+	})
+	if err != nil && s.driver == "postgres" {
+		checkCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if s.checkLock(checkCtx) == ErrLockLost {
+			return ErrLockLost
+		}
+	}
+	return safeError(err)
+}
+
+func (s *Store) Migrate(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkLock(ctx); err != nil {
+		return err
+	}
+	db := s.writer.WithContext(ctx)
+	if err := db.AutoMigrate(&groupRecord{}, &projectRecord{}, &identityRecord{}, &metadataRecord{}, &auditRecord{}, &batchRecord{}, &buildRecord{}, &stepRecord{}, &requestRecord{}); err != nil {
+		return safeError(err)
+	}
+	err := db.Transaction(func(tx *gorm.DB) error {
+		group := groupRecord{ID: "default", Name: "default"}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&group).Error; err != nil {
+			return err
+		}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&metadataRecord{ID: 1}).Error; err != nil {
+			return err
+		}
+		return s.checkLock(ctx)
+	})
+	return safeError(err)
+}
+
+func normalizeSQLite(path string) (string, error) {
+	if path == "" || path == ":memory:" || strings.HasPrefix(path, "file:") || strings.ContainsAny(path, "?\x00") {
+		return "", ErrInvalid
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", ErrInvalid
+	}
+	if err = os.MkdirAll(filepath.Dir(abs), 0700); err != nil {
+		return "", errDatabase
+	}
+	if resolved, e := filepath.EvalSymlinks(abs); e == nil {
+		abs = resolved
+	} else if !os.IsNotExist(e) {
+		return "", ErrInvalid
+	} else {
+		parent, e := filepath.EvalSymlinks(filepath.Dir(abs))
+		if e != nil {
+			return "", ErrInvalid
+		}
+		abs = filepath.Join(parent, filepath.Base(abs))
+	}
+	return abs, nil
+}
