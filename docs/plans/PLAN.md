@@ -18,6 +18,7 @@
 | 数据库 | 默认 SQLite，支持 PostgreSQL，统一通过 **ORM（GORM）** 访问 |
 | 技术选型 | 标准库覆盖的能力直接使用；CLI / ORM / Webhook / cron / 飞书等采用成熟第三方库 |
 | 配置 | 默认优先仓库内 `mybuilds.yml`，缺失时使用项目绑定的可复用构建方案 |
+| 项目组 | 客户端注册项目时选择归属组，未指定进入 default；支持组改名与项目迁移 |
 | 代码源 | GitLab / GitHub / Gitee / 任意自建 Git（通用 git 协议） |
 | 触发 | Webhook（含签名校验）+ 轮询，外加手动触发 |
 | 审批 | 支持发布审批（流水线中途挂起等人放行） |
@@ -69,10 +70,11 @@ CLI 分发形态：
 cmd/mybuilds-server/  → mybuilds-server   服务端二进制
                  ├─ serve          起 HTTP API + 调度，不执行构建 shell
                  ├─ migrate        建表 / 升级 schema
-                 ├─ project add|ls|rm
+                 ├─ project add|set|ls|move|rm / group create|ls|rename|rm
                  ├─ token create|ls|revoke
                  └─ node create|ls|drain|enable|disable|rm
 cmd/mybuilds/  → mybuilds          客户端二进制（连服务端）
+                 ├─ project init|ls|move / group create|ls|rename|rm
                  ├─ trigger / build ls|show|cancel|retry|resolve-upload
                  ├─ logs / artifact ls|download
                  ├─ approvals / approve / reject
@@ -163,6 +165,22 @@ database:
   首次启动且 token 表为空时，可用 `MYBUILDS_BOOTSTRAP_ADMIN_TOKEN` 初始化管理员，之后撤销不会被配置重新创建。
 - 项目管理可由本机管理员 CLI 操作；admin 可访问全部 API，trigger 仅能触发不含 upload 的构建及查询基本服务状态，
   approver 可列待审批任务、读取其详情 / 日志 / 产物并批准或拒绝。取消、重试、上传结果确认与控制端 / 节点 doctor 仅限 admin。
+
+### 8. 项目组与项目归属
+
+- 项目组（project group）用于分类与查询；构建方案（build profile）用于复用流水线。
+  一个项目属于一个组，仍独立绑定构建方案、节点授权与通知，组不新增配置继承层。
+- 控制端初始化数据库时创建 default 组；注册项目未传 --group 时进入该组，指定不存在的组则报错。
+  default 为固定兜底组，不能改名或删除；普通组支持创建、列表、改名和删除，名称唯一，空名称拒绝。
+- 客户端 project init 注册远程项目并选择组，使用 admin token；项目组与远程项目管理仅允许 admin。
+  原有 mybuilds init 继续生成本地流水线，不连接控制端；归属保存在数据库，不由仓库 mybuilds.yml 修改。
+- 数据模型采用 project_groups(id, name) 与 projects.group_id（非空外键）；组 ID 与项目 ID 不因改名或改组改变。
+  项目名称保持全局唯一，trigger、Webhook 路径和构建号使用原项目身份，不增加 group/project 命名空间。
+- group rename 修改组名；project move 修改项目归属，可移入其他组或移回 default。
+  迁移只在事务中更新归属和操作记录（身份、时间、原组/目标组），保留构建历史、产物、工作区、配置、凭据与编号，
+  允许构建期间改组，运行任务继续使用原配置快照。迁移到当前组为无操作成功，目标不存在时不修改。
+- 分组列表按项目当前归属查询，迁移后历史构建随项目可查；组删除仅允许空组，数据库外键阻止并发写入下的误删。
+  双数据库验证默认归属、改名、迁移、历史保留和删除竞态。
 
 ## 架构
 
@@ -468,7 +486,13 @@ examples/flutter-ios.mybuilds.yml
 
 ```
 POST   /hook/{project}                     # webhook（外部，token/HMAC 校验）
-GET    /api/projects                       # 项目列表
+GET    /api/projects                       # 项目列表（admin）
+POST   /api/projects                       # 注册项目，group 缺省为 default（admin）
+PATCH  /api/projects/{p}                   # 更新归属 group（admin）
+GET    /api/groups                         # 组列表（admin）
+POST   /api/groups                         # 创建组（admin）
+PATCH  /api/groups/{id}                    # 修改组名（admin）
+DELETE /api/groups/{id}                    # 删除空组，default 不可删（admin）
 GET    /api/doctor                         # 控制端体检（admin）
 GET    /api/nodes                          # 节点健康、标签与容量（admin）
 GET    /api/nodes/{id}/doctor              # 节点工具链体检（admin）
@@ -484,6 +508,9 @@ POST   /api/builds/{id}/approve            # 需要 approver/admin 角色
 POST   /api/builds/{id}/reject             # 需要 approver/admin 角色
 GET    /api/artifacts/{id}/{file}          # 产物下载
 ```
+
+项目列表支持 group 查询参数，构建列表也支持按项目当前归属的 group 过滤；返回项目时包含组 ID 与名称。
+客户端和控制端本机管理命令复用同一组管理逻辑与事务校验，不维护两套归属信息。
 
 ### Agent HTTP 接口（待 007 契约细化）
 
@@ -505,12 +532,15 @@ GET    /api/artifacts/{id}/{file}          # 产物下载
 | `serve` | `--listen`、`--data-dir`、`--concurrency`，未传时取配置值 | 启动 API 与调度，不执行构建 shell |
 | `migrate` | 共用 `--config`，数据库参数取文件/环境变量 | 建表或升级 schema；升级前停止服务并备份 |
 | `project add <name>` | `--repo` 必填；`--provider` 默认 generic，可选 github/gitlab/gitee/generic；`--branches` 默认 main | 注册可信仓库与允许分支，分支列表支持 glob |
+| 同上：分组 | `--group` 默认 default | 指定现有项目组 |
 | 同上：节点授权 | `--nodes` 必填，逗号分隔；`--default-node` 可选且须在允许集合内 | 限定项目可用节点；未声明 runner 时使用默认节点 |
 | 同上：版本 | `--build-number-start` 默认 1，正整数 | 设置首次分配的构建号，兼容商店既有版本 |
 | 同上：项目设置 | `--settings <本地YAML>` 可选 | 绑定 pipeline 来源/构建方案与默认参数；直接配置通知 Webhook 随通知功能接入 |
 | 同上：自动触发（后续） | `--hook` 默认 false；`--poll` 如 60s；`--schedule` 为五段 cron 表达式 | 接入 Webhook、轮询、定时构建 |
 | `project set <name>` | `--settings <本地YAML>` 必填 | 更新显式提供的设置块；正在执行的构建使用原快照 |
-| `project ls` / `project rm <name>` | ls 支持 `--json` | 列表/删除；有活动、待审批或未知发布结果时拒绝删除 |
+| `project ls` / `project rm <name>` | ls 支持 `--group` 与 `--json` | 列表/删除；有活动、待审批或未知发布结果时拒绝删除 |
+| `project move <name>` | `--group <组名>` 必填 | 将项目迁移至目标组，保留历史与配置 |
+| `group create/ls/rename/rm` | 参数与客户端 group 命令一致 | 本机管理项目组 |
 | `token create` | `--role` 必填：admin/trigger；approver 随后续审批接入 | 创建用户 token，仅显示一次明文 |
 | `token ls` / `token revoke <id>` | ls 支持 `--json` | 查看身份/角色/撤销状态；不显示明文 |
 | `node create <name>` | `--labels` 逗号分隔；`--capacity` 默认 1 | 注册节点并仅显示一次独立 Agent token |
@@ -556,9 +586,16 @@ mybuilds-agent version
 |---|---|---|
 | `init` | `--framework`：native/flutter，默认 native；`--platform`：android/ios，选择内置模板时必填 | 生成 mybuilds.yml，已有文件拒绝覆盖 |
 | 同上：用户模板 | `--template <本地文件>`，不能与 framework/platform 混用 | 校验并生成用户模板 |
+| `project init <name>` | `--repo`、`--nodes` 必填；`--group` 默认 default；provider/branches/default-node/build-number-start/settings 与服务端 project add 一致 | 通过 API 注册远程项目，选择归属组；需要 admin |
+| `project ls` | `--group <组名>` 可选；`--json` | 列出项目及当前归属；需要 admin |
+| `project move <name>` | `--group <组名>` 必填 | 修改项目归属；需要 admin |
+| `group create <name>` | 组名必填 | 创建项目组；需要 admin |
+| `group ls` | `--json` | 列出项目组；需要 admin |
+| `group rename <name>` | `--name <新名称>` 必填 | 修改普通组名；需要 admin |
+| `group rm <name>` | 组名必填 | 删除空组；需要 admin |
 | `run` | `--file` 默认 mybuilds.yml；`--step <name>` 可选；`--dry-run` 默认 false | 本地执行或脱敏预览；指定步骤仍须校验输入与产物依赖 |
 | `trigger <project>` | `--branch` 默认 main；`--ref <sha>` 与 branch 显式传入互斥；`--version`、`--channel` 可选 | 远程触发，参数未覆盖时取流水线值；ref 必须属于授权分支 |
-| `build ls` | `--project`、`--status` 可选；`--limit` 默认 20；`--offset` 默认 0；`--json` | 过滤与分页 |
+| `build ls` | `--project`、`--group`、`--status` 可选；`--limit` 默认 20；`--offset` 默认 0；`--json` | 过滤与分页；项目与组同时传入时取交集 |
 | `build show <id>` | `--json` | 查看节点、步骤、工具版本、产物与发布记录 |
 | `build cancel <id>` / `build retry <id>` | admin 权限 | 请求取消/用原 SHA、配置和参数生成新构建号 |
 | `build resolve-upload <id>` | `--step`、`--result sent/not-sent`、`--note` 均必填；admin 权限 | 依据远端证据确认未知上传；sent 确认远端已接收，不推断已上架 |
@@ -581,6 +618,19 @@ mybuilds build ls --project app-android --limit 20 --json
 mybuilds logs 123 --follow
 mybuilds artifact ls 123
 mybuilds doctor --node linux-android-01
+```
+
+项目组示例（待实现）：
+
+```bash
+mybuilds group create mobile
+mybuilds project init app-android \
+  --repo git@gitlab.example.com:team/app.git \
+  --nodes linux-android-01 --default-node linux-android-01 --group mobile
+mybuilds project ls --group mobile
+mybuilds group rename mobile --name apps
+mybuilds project move app-android --group default
+mybuilds group rm apps
 ```
 
 列表与详情命令支持 `--json`；`trigger --branch` 在触发时解析并固定最新 SHA，`retry` 始终重跑原提交。
@@ -618,6 +668,7 @@ mybuilds doctor --node linux-android-01
 
 - [ ] 加入 Viper、GORM 与双驱动；验证纯 Go SQLite 驱动兼容性，设置 WAL / 外键 / 锁等待
 - [ ] 模型保存构建配置快照、参数、SHA、当前步骤、工具版本与产物；项目构建号事务分配
+- [ ] 项目组模型、default 初始化、客户端 project init 选组、组改名/空组删除与项目事务迁移；构建历史保留，列表按当前归属过滤
 - [ ] 控制端具名构建方案、项目 auto/repo/profile 来源选择；仅缺文件回退，错误配置拒绝，执行快照与重试不受方案编辑影响
 - [ ] SQLite 与 PostgreSQL 跑相同的 CRUD / 事务 / 条件状态更新 / 唯一约束 / 分页用例
 - [ ] token 摘要存储、一次性管理员初始化、创建 / 撤销 / 身份审计，统一读写权限检查
