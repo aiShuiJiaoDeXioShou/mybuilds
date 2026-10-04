@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -209,4 +210,82 @@ func openSnapshot(ctx context.Context, resultDir string, artifact localArtifact)
 	}
 	valid = true
 	return file, nil
+}
+
+// journal读取在私有Root内，不跟链接且非阻塞打开，读前后拒绝替换/尺寸/mtime变化。
+func (lock *dataLock) readJournalFile(name string) ([]byte, os.FileInfo, error) {
+	if err := lock.Check(); err != nil {
+		return nil, nil, err
+	}
+	parent, err := lock.root.Lstat("journal")
+	if err != nil || !privateInfo(parent, true) {
+		return nil, nil, failure("data_invalid")
+	}
+	relative := path.Join("journal", name)
+	if path.Dir(relative) != "journal" || strings.Contains(name, "\\") {
+		return nil, nil, failure("data_invalid")
+	}
+	before, err := lock.root.Lstat(relative)
+	if err != nil || !privateInfo(before, false) || before.Size() < 1 || before.Size() > 1<<20 {
+		return nil, nil, failure("data_invalid")
+	}
+	file, err := lock.root.OpenFile(relative, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, nil, failure("data_invalid")
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !privateInfo(opened, false) || !os.SameFile(before, opened) {
+		return nil, nil, failure("data_invalid")
+	}
+	data, readErr := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+	after, statErr := file.Stat()
+	current, pathErr := lock.root.Lstat(relative)
+	currentParent, parentErr := lock.root.Lstat("journal")
+	if readErr != nil || statErr != nil || pathErr != nil || parentErr != nil || !privateInfo(currentParent, true) || !os.SameFile(parent, currentParent) || !privateInfo(current, false) || !os.SameFile(opened, current) || int64(len(data)) != opened.Size() || opened.Size() != after.Size() || !opened.ModTime().Equal(after.ModTime()) || opened.Size() != current.Size() || !opened.ModTime().Equal(current.ModTime()) {
+		return nil, nil, failure("data_invalid")
+	}
+	if err = lock.Check(); err != nil {
+		return nil, nil, err
+	}
+	return data, opened, nil
+}
+
+func (lock *dataLock) journalNames() ([]string, error) {
+	if err := lock.Check(); err != nil {
+		return nil, err
+	}
+	before, err := lock.root.Lstat("journal")
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil || !privateInfo(before, true) {
+		return nil, failure("data_invalid")
+	}
+	directory, err := lock.root.OpenFile("journal", os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, failure("data_invalid")
+	}
+	defer directory.Close()
+	opened, err := directory.Stat()
+	if err != nil || !privateInfo(opened, true) || !os.SameFile(before, opened) {
+		return nil, failure("data_invalid")
+	}
+	entries, err := directory.ReadDir(129)
+	if err != nil && err != io.EOF || len(entries) > 128 {
+		return nil, failure("data_invalid")
+	}
+	current, err := lock.root.Lstat("journal")
+	if err != nil || !privateInfo(current, true) || !os.SameFile(opened, current) {
+		return nil, failure("data_invalid")
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	sort.Strings(names)
+	if err = lock.Check(); err != nil {
+		return nil, err
+	}
+	return names, nil
 }

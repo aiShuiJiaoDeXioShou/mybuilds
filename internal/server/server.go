@@ -109,7 +109,10 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	if err := s.store.CheckLock(ctx); err != nil {
 		return err
 	}
-	if err := s.store.ExpireLeases(ctx); err != nil {
+	recovery, finishRecovery := context.WithTimeout(ctx, 30*time.Second)
+	err := s.store.Recover(recovery)
+	finishRecovery()
+	if err != nil {
 		return err
 	}
 	live, cancel := context.WithCancel(ctx)

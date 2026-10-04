@@ -14,6 +14,21 @@ type LeaseRef struct {
 	LeaseID   string `json:"lease_id"`
 	Epoch     int64  `json:"epoch"`
 }
+
+// TerminalReceipt 仅核对已经确认的终态，不授予旧执行权。
+type TerminalReceiptRequest struct {
+	Ref    LeaseRef `json:"ref"`
+	Seq    int64    `json:"seq"`
+	Digest string   `json:"digest"`
+}
+type TerminalReceipt struct {
+	Ref       LeaseRef `json:"ref"`
+	Seq       int64    `json:"seq"`
+	Digest    string   `json:"digest"`
+	Status    string   `json:"status"`
+	StopKnown bool     `json:"stop_known"`
+	NodeName  string   `json:"node_name"`
+}
 type ToolCheck struct {
 	Name    string `json:"name"`
 	Status  string `json:"status"`

@@ -209,6 +209,12 @@ func (s *Store) Migrate(ctx context.Context) error {
 		return err
 	}
 	db := s.writer.WithContext(ctx)
+	// SQLite 可直接添加默认NULL的自关联列，避免重建已有attempt/receipt引用的父表。
+	if s.driver == "sqlite" && db.Migrator().HasTable(&buildRecord{}) && !db.Migrator().HasColumn(&buildRecord{}, "RetryOf") {
+		if err := db.Exec("ALTER TABLE builds ADD COLUMN retry_of TEXT CONSTRAINT fk_builds_retry_original REFERENCES builds(id) ON DELETE RESTRICT").Error; err != nil {
+			return safeError(err)
+		}
+	}
 	if err := db.AutoMigrate(&groupRecord{}, &projectRecord{}, &identityRecord{}, &metadataRecord{}, &auditRecord{}, &batchRecord{}, &buildRecord{}, &stepRecord{}, &requestRecord{}, &nodeRecord{}, &nodeCredentialRecord{}, &nodeSessionRecord{}, &attemptRecord{}, &executionReceiptRecord{}, &stopConfirmationRecord{}, &logChunkRecord{}, &artifactRecord{}); err != nil {
 		return safeError(err)
 	}

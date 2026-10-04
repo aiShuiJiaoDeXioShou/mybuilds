@@ -76,6 +76,9 @@ func buildView(db *gorm.DB, row buildRecord) (BuildView, error) {
 		return BuildView{}, err
 	}
 	result := BuildView{ID: row.ID, Project: project.Name, Group: project.Group.Name, BatchID: row.BatchID, Name: row.Name, Number: row.Number, Status: row.Status, Reason: row.Reason, SHA: batch.SHA, Branch: batch.Branch, Source: batch.Source, File: batch.File, SourceDigest: batch.SourceDigest, Condition: row.Condition, InitialBudgetNS: row.InitialBudgetNS, RemainingBudgetNS: row.RemainingBudgetNS, PostBudgetNS: row.PostBudgetNS, CreatedAt: row.CreatedAt.UTC(), Steps: []StepProgress{}, Post: []StepProgress{}}
+	if row.RetryOf != nil {
+		result.RetryOf = *row.RetryOf
+	}
 	result.NodeID = buildRef(row).NodeID
 	result.SessionID = buildRef(row).SessionID
 	result.AttemptID = buildRef(row).AttemptID

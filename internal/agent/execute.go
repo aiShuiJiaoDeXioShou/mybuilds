@@ -9,16 +9,18 @@ import (
 	"mybuilds/internal/scm"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 // 每个真实租约只调用一次现有Run，私有journal先于任何网络进度写入。
 type taskExecution struct {
-	lease    *executionLease
-	client   *agentHTTP
-	journal  *executionJournal
-	spool    *logSpool
-	terminal bool
+	lease     *executionLease
+	client    *agentHTTP
+	journal   *executionJournal
+	spool     *logSpool
+	terminal  bool
+	stopRenew func()
 }
 
 func (execution *taskExecution) progress(ctx context.Context, p protocol.ExecutionProgress) error {
@@ -44,6 +46,13 @@ func (execution *taskExecution) progress(ctx context.Context, p protocol.Executi
 		}
 		return err
 	}
+	if p.Kind == "build_finished" {
+		// 真实终态会结束中央租约；先等待续租worker退出，不能由其409撤销回执读取。
+		execution.stopRenew()
+		if err := execution.lease.check(); err != nil {
+			return err
+		}
+	}
 	if err := execution.declare(&p); err != nil {
 		execution.lease.cancel()
 		return err
@@ -62,7 +71,12 @@ func (execution *taskExecution) progress(ctx context.Context, p protocol.Executi
 		return err
 	}
 	var ack protocol.EventAck
-	if err = execution.client.retryPost(ctx, "/api/agent/events", event, &ack); err != nil {
+	if p.Kind == "build_finished" {
+		err = execution.client.post(ctx, "/api/agent/events", event, &ack)
+	} else {
+		err = execution.client.retryExecutionPost(ctx, "/api/agent/events", event, &ack)
+	}
+	if err != nil {
 		execution.lease.cancel()
 		return err
 	}
@@ -91,7 +105,7 @@ func (execution *taskExecution) log(ctx context.Context, record protocol.LogReco
 		return err
 	}
 	var ack protocol.LogAck
-	if err = execution.client.retryPost(ctx, "/api/agent/logs", chunk, &ack); err != nil {
+	if err = execution.client.retryExecutionPost(ctx, "/api/agent/logs", chunk, &ack); err != nil {
 		execution.lease.cancel()
 		return err
 	}
@@ -108,9 +122,12 @@ func executeTask(parent context.Context, client *agentHTTP, lock *dataLock, cfg 
 	}
 	defer lease.close()
 	renewDone := make(chan struct{})
-	go func() { defer close(renewDone); lease.renew(client) }()
-	defer func() { lease.cancel(); <-renewDone }()
-	execution := &taskExecution{lease: lease, client: client, journal: journal, spool: newSpool(journal, usage)}
+	renewStop := make(chan struct{})
+	var renewOnce sync.Once
+	stopRenew := func() { renewOnce.Do(func() { close(renewStop) }); <-renewDone }
+	go func() { defer close(renewDone); lease.renew(client, renewStop) }()
+	defer func() { lease.cancel(); stopRenew() }()
+	execution := &taskExecution{lease: lease, client: client, journal: journal, spool: newSpool(journal, usage), stopRenew: stopRenew}
 	task := grant.Task
 	values, err := loadSecrets(cfg)
 	if err != nil {

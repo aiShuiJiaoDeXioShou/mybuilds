@@ -105,6 +105,12 @@ func (client *agentHTTP) putArtifact(ctx context.Context, resultDir string, arti
 		request.Header.Set("X-Mybuilds-Artifact", base64.RawURLEncoding.EncodeToString(encoded))
 		response, sendErr := client.client.Do(request)
 		file.Close()
+		if sendErr != nil {
+			safe := client.requestError(ctx, sendErr)
+			if !temporaryNetwork(safe) {
+				return safe
+			}
+		}
 		if sendErr == nil {
 			view, readErr := readArtifactResponse(response)
 			if readErr == nil && artifactMatches(view, declaration) {
@@ -113,7 +119,10 @@ func (client *agentHTTP) putArtifact(ctx context.Context, resultDir string, arti
 			if readErr == nil {
 				return failure("invalid_response")
 			}
-			if readErr.Error() != "agent_network_error" {
+			if temporaryNetwork(readErr) {
+				client.paused.Store(true)
+			}
+			if !temporaryNetwork(readErr) {
 				return readErr
 			}
 		}
@@ -188,7 +197,11 @@ func (client *agentHTTP) getArtifact(ctx context.Context, declaration protocol.A
 	request.Header.Set("Authorization", "Bearer "+client.token)
 	response, err := client.client.Do(request)
 	if err != nil {
-		return protocol.ArtifactView{}, failure("network_error")
+		return protocol.ArtifactView{}, client.requestError(ctx, err)
 	}
-	return readArtifactResponse(response)
+	view, readErr := readArtifactResponse(response)
+	if temporaryNetwork(readErr) {
+		client.paused.Store(true)
+	}
+	return view, readErr
 }

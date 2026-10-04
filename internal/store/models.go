@@ -93,6 +93,7 @@ type BuildFilter struct {
 	Page                                       Page
 }
 type BuildView struct {
+	RetryOf               string         `json:"retry_of,omitempty"`
 	ID                    string         `json:"id"`
 	Project               string         `json:"project"`
 	Group                 string         `json:"group"`
@@ -187,6 +188,8 @@ type batchRecord struct {
 func (batchRecord) TableName() string { return "batches" }
 
 type buildRecord struct {
+	RetryOf                                                  *string       `gorm:"size:36;index"`
+	RetryOriginal                                            *buildRecord  `gorm:"foreignKey:RetryOf;references:ID;constraint:OnDelete:RESTRICT"`
 	ID                                                       string        `gorm:"primaryKey;size:36;index:build_status_created,priority:3"`
 	BatchID                                                  string        `gorm:"not null;size:36"`
 	Batch                                                    batchRecord   `gorm:"foreignKey:BatchID;constraint:OnDelete:RESTRICT"`

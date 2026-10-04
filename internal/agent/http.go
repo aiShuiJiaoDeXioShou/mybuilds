@@ -5,11 +5,13 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"mybuilds/internal/config"
@@ -22,6 +24,7 @@ type agentHTTP struct {
 	transport       *http.Transport
 	endpoint, token string
 	timeout         time.Duration
+	paused          atomic.Bool
 }
 
 func newAgentHTTP(cfg config.AgentConfig) (*agentHTTP, error) {
@@ -71,15 +74,12 @@ func (client *agentHTTP) post(parent context.Context, path string, input, output
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.client.Do(request)
 	if err != nil {
-		if parent.Err() != nil {
-			return failure("cancelled")
-		}
-		return failure("network_error")
+		return client.requestError(parent, err)
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
 	if err != nil {
-		return failure("network_error")
+		return client.requestError(parent, err)
 	}
 	if len(body) > 1<<20 {
 		return failure("invalid_response")
@@ -104,6 +104,17 @@ func (client *agentHTTP) post(parent context.Context, path string, input, output
 			return failure("invalid_response")
 		}
 		return nil
+	}
+	// 只读终态回执不得用重复字段的后值覆盖解释停止证据。
+	if path == "/api/agent/terminal-receipt" {
+		tokens := json.NewDecoder(bytes.NewReader(body))
+		count := 0
+		if journalJSONValue(tokens, 0, &count) != nil {
+			return failure("invalid_response")
+		}
+		if _, err := tokens.Token(); err != io.EOF {
+			return failure("invalid_response")
+		}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
@@ -140,15 +151,65 @@ func (client *agentHTTP) retryPost(parent context.Context, path string, input, o
 			return nil
 		}
 		safe, ok := err.(*Error)
-		if !ok || safe.Code != "network_error" || ctx.Err() != nil {
+		if parent.Err() != nil {
+			return failure("cancelled")
+		}
+		if ctx.Err() != nil && ok && (safe.Code == "cancelled" || safe.Code == "network_error") {
+			return failure("network_error")
+		}
+		if !ok || safe.Code != "network_error" {
 			return err
 		}
 		timer := time.NewTimer(50 * time.Millisecond)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+			if parent.Err() != nil {
+				return failure("cancelled")
+			}
 			return failure("network_error")
 		case <-timer.C:
 		}
 	}
+}
+
+// 只在真实执行Authority内等待网络恢复，每轮HTTP期限不延长原租约。
+func (client *agentHTTP) retryExecutionPost(ctx context.Context, path string, input, output any) error {
+	for {
+		err := client.retryPost(ctx, path, input, output)
+		if !temporaryNetwork(err) || ctx.Err() != nil {
+			return err
+		}
+		timer := time.NewTimer(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return failure("cancelled")
+		case <-timer.C:
+		}
+	}
+}
+func temporaryNetwork(err error) bool {
+	safe, ok := err.(*Error)
+	return ok && safe.Code == "network_error"
+}
+func (client *agentHTTP) requestError(parent context.Context, err error) error {
+	if parent.Err() != nil {
+		return failure("cancelled")
+	}
+	var certificate *tls.CertificateVerificationError
+	var record tls.RecordHeaderError
+	if errors.As(err, &certificate) || errors.As(err, &record) {
+		return failure("tls_configuration_error")
+	}
+	var transport *url.Error
+	if errors.As(err, &transport) {
+		err = transport.Err
+	}
+	var network net.Error
+	if errors.As(err, &network) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
+		client.paused.Store(true)
+		return failure("network_error")
+	}
+	return failure("request_failed")
 }

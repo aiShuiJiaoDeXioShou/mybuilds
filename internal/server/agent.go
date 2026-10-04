@@ -40,6 +40,18 @@ func (s *Server) agentRoutes(w http.ResponseWriter, r *http.Request, actor store
 			return
 		}
 		writeJSON(w, 200, result)
+	case "/api/agent/terminal-receipt":
+		var in protocol.TerminalReceiptRequest
+		if err := readJSON(r, &in); err != nil {
+			writeError(w, err)
+			return
+		}
+		result, err := s.store.TerminalReceipt(r.Context(), actor, in)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, 200, result)
 	case "/api/agent/heartbeat":
 		var in protocol.HeartbeatRequest
 		if err := readJSON(r, &in); err != nil {

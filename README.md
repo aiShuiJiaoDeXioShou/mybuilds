@@ -22,6 +22,7 @@
 
 已完成 `000-project-bootstrap`：Go 单模块、双 CLI 帮助与共享版本、Spec Kit 项目原则和开发流程。
 多节点设计见 [MULTI_NODE.md](docs/plans/MULTI_NODE.md)。`007-node-agents` 已实现并验收，节点管理、独立身份、完整远程 Run、日志/SSE、快照回传和中央下载已接通；两个 macOS 节点与一个真实 Linux 节点闭环通过；SQLite、PostgreSQL 各 51 项实际应用检查，以及 Android 签名构建号 101 的中央下载已通过。全量 test/race/vet、12 次三入口跨平台构建与本机 help/version 已通过；Linux 普通/always 真实取消强化及 Spec Kit 收敛也已通过；整功能本地提交见[实施历史](docs/IMPLEMENTATION_HISTORY.md)，整个 MVP 未完成。
+`008-build-recovery` 已完成并验收：启动核对、临时网络中断的有界处理、显式原快照重试与已确认终态 journal 只读核对已接通。SQLite/PostgreSQL 各36项最终真实应用检查、此前负例与Linux普通/always中断通过；共享停止确认修复及真实ARM Android签名/中央下载/精确取消通过，全量test/race/vet、12构建/6入口与Spec Kit收敛均通过，见[验证记录](specs/008-build-recovery/validation.md)和[实施历史](docs/IMPLEMENTATION_HISTORY.md)。
 客户端已接入 `init`、本地模板、严格配置校验与 `run --dry-run` 脱敏预览；支持单/多 build 选择、参数覆盖和条件三态。
 `001-pipeline-preview` 已实现并通过集成验证，证据见[验证记录](specs/001-pipeline-preview/validation.md)。`002-local-run` 已接入本地顺序执行、进程组取消、预算/post 和 UTC 脱敏日志，已通过验收；`003-build-artifacts` 已接入产物快照与本地结果/步骤日志并通过验收，见[验证记录](specs/003-build-artifacts/validation.md)。审批、通知和上传仍待实现。
 MVP 目标已扩展至原生/Flutter 双平台、多节点构建、Google Play/App Store 分发与用户自定义，见 [构建与分发设计](docs/plans/BUILD_DISTRIBUTION.md)。
@@ -176,7 +177,7 @@ cd "$project_dir"
 
 | 命令端 | 当前命令 |
 |---|---|
-| 客户端 | group create/ls/rename/rm；project init/set/ls/move/rm；trigger；build ls/show/cancel/confirm-stopped；node；logs；artifact ls/download；status；远程 doctor |
+| 客户端 | group create/ls/rename/rm；project init/set/ls/move/rm；trigger；build ls/show/cancel/confirm-stopped/retry；node；logs；artifact ls/download；status；远程 doctor |
 | 服务端本机 | serve/migrate；group create/ls/rename/rm；project add/set/ls/move/rm；token create/ls/revoke |
 
 serve 在线时同一数据库被独占，本机 migrate、project/group/token 管理会拒绝，使用客户端远程管理或鉴权 HTTP API。停止示例控制端后，可创建身份并查看安全列表：
@@ -274,7 +275,22 @@ mkdir -m 0700 ./downloads
   --lease "$LEASE_ID" --epoch "$LEASE_EPOCH" --note '已核实原PID和整个PGID均不存在'
 ```
 
-admin 管理并读取证据；approver 可读脱敏 build/log/artifact，但不管理、不触发、不取消；trigger 只能读 status 和允许的触发入口。节点 token 只用于节点协议。审批、通知、上传、重试和 iOS 签名执行尚未交付；007 的签名 Android 验收不等于 005 Apple 签名验收或全 MVP 完成。
+admin 管理并读取证据；approver 可读脱敏 build/log/artifact，但不管理、不触发、不取消；trigger 只能读 status 和允许的触发入口。节点 token 只用于节点协议。审批、通知、上传和 iOS 签名执行尚未交付；007 的签名 Android 验收不等于 005 Apple 签名验收或全 MVP 完成。
+
+## 重启与原快照重试
+
+控制端在监听前核对持久任务，最多30秒；失败安全退出。合法queued保持原号、原SHA和原配置，有效执行保持原完整租约及预算，过期执行沿原interrupted/停止保护规则处理。短网络中断仅在原执行权限期限内继续，心跳不延长执行权；未知claim仍保留证据并阻止新进程接管。
+
+已停止的成功、失败、取消或中断构建可显式创建新构建。将原构建ID填入 `ORIGINAL_ID`，key为本次非机密请求标识：
+
+```bash
+./bin/mybuilds --config ./client.yml build retry "$ORIGINAL_ID" \
+  --idempotency-key retry-demo-1 --json
+```
+
+retry必须明确提供key，响应丢失后使用同ID、同key和同 `--allow-upload` 输入重发；客户端不自动重发。原SHA、定义、参数和when事实保持，新的编号与attempt从原定义完整预算开始，当前节点授权只收窄。不能用retry替换分支或参数，需另发trigger；活动/queued/skipped/停止未知拒绝。包含upload定义仍要求admin与明确 `--allow-upload`，生效上传尚未实现。列表和详情中的 `retry_of` 指向原构建，原证据保持。
+
+终态响应丢失时，Agent重启先用当前独立节点凭据只读核对精确原回执。只有本地已知停止、完整终态/归属/序号/摘要/制品清单匹配中央才清该条journal；results/spool保持。其余未知journal仍阻止新session，不按旧PID发送信号或重放动作。文件必须是自有0600普通文件，最多128条、每条1MiB；链接、替换、损坏和未确认停止均保留。轮换后先把当前token更新到私有配置；新session仍遵守原注册窗口。
 
 ## 目录结构
 
@@ -323,9 +339,9 @@ mybuilds/
 |---|---|
 | `internal/config` | 流水线、客户端及服务端配置与校验 |
 | `internal/pipeline` | 已接入本地预览、执行、产物与脱敏；审批/上传后续接入 |
-| `cmd/mybuilds-agent`、`internal/cli/agent` | 007 已接入帮助/版本/doctor/serve，实际执行闭环和全量检查通过，最终收敛待完成 |
+| `cmd/mybuilds-agent`、`internal/cli/agent` | 007 已验收帮助/版本/doctor/serve、实际执行闭环与全量检查；008恢复/重试已验收 |
 | `internal/server` | 已接入控制端生命周期、鉴权 HTTP、节点调度、租约、中央日志/制品与停止保护 |
-| `internal/agent` | 已接入诊断/注册/心跳、任务领取/续租、同一 Run 执行与日志/产物回传，全量检查通过，最终收敛待完成 |
+| `internal/agent` | 007 已验收诊断/注册/心跳、任务领取/续租、同一 Run 执行与日志/产物回传；008网络及终态核对已验收 |
 | `internal/protocol` | 控制端与 Agent 共用的任务、租约及回报格式 |
 | `internal/store` | 已接入双数据库独占、业务事务、快照与步骤进度持久化 |
 | `internal/scm` | 已接入只读 Git 固定提交与 SSH 显式凭据；Webhook 来源后续接入 |
@@ -367,9 +383,11 @@ MVP 功能范围为 001–012、014–015、019–020；019/020 分别交付测�
 ## 验证与版本注入
 
 ```bash
-go test ./...
+go test -p 1 ./...
 go vet ./...
 ```
+
+进程安全测试会真实制造不可读的孤儿进程；全套测试用 `-p 1` 隔离跨包故障注入，不与真实应用验收同时运行。未知归属仍保留停止保护，不能为测试并行而放宽。
 
 发布构建可注入版本信息；以下命令在当前模块名下可直接执行：
 

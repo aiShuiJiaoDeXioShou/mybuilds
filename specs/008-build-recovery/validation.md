@@ -1,0 +1,149 @@
+# 008 验证与交接
+
+## 当前阶段
+
+前置007完整验收与整功能本地提交85b46bfaccb45c4626fcffbbcb526b2f7f8c9301；root集成分支008-build-recovery-integration，selector实际定位specs/008-build-recovery。既有19FR/5SC/13AC规范与质量16/16继续使用；B在独立recovery008-planning worktree正式speckit-plan，40项tasks与只读analyze已完成，当前为分区实施及集成验收，尚无008整功能提交。root协议、tasks、主集成与history唯一owner；019由C独立规划，与008交叉共享字段仅root串行接收，不借其未验收代码。
+
+已确认最小设计接入：现有007过期/停止/预算/固定SHA机制不重写；新增用户显式原快照retry与当前独立Node只读核对已确认终态回执。Project.Repository登记后无更新接口且FK RESTRICT，不需新增仓库迁移或拒绝所有旧任务。原快照Facts/Params/Definition/条件保持，只有新的build.id/number身份事实更新；原允许范围与当前授权取交集。Kind/StopKnown仅为真实receipt核对必要字段，旧未存证据不能猜确认；本地私有journal只在全ref/seq/digest/实际停止已知匹配中央终态时清本条，不按旧PIDkill或自动Run。计划、tasks与analyze已完成，按实际红绿门实施；先修阻塞再进入整功能验收。
+
+## 独立环境进展（非008验收）
+
+原007实际三节点/两数据库/Android/最终Go检查证据保留。LinuxAMD64 Android预检完整51任务7m28s成功，APK/AAB1.2.4/43、签名同自有JKS证书905af4ece9d46b8ecde47e7573ca05f8565641067365d6cd8064b21136cfadb4、mapping/ZIP/摘要全部通过；证据/tmp/mybuilds-mvp.zKtK0e/amd64-preflight-evidence、归档SHA4a1d6c0e373d84feef6ec04488456804dd8b9b1676399117efd60ead85509594。只说明真实工具链可运行，不算Agent固定SHA与中央文件门。自有受信repo已固定新76a0f9de2cd98449a27954246498bfc14087d494，linux.yml/linux-settings.gradle/linux-gradle.props配置完整dry-run通过，A负责独立新LinuxAMD Agent真实运行；不触碰原controller/TLS/SSH/VM/PG服务，不以改过的预检目录冒充固定SHA。
+
+005完整48文件仍在ios005-pending，真实Apple/Flutter/商店授权材料缺口保持；全MVP未完成。
+
+LinuxAMD64实际Agent于2026-10-04T14:18:33.685102Z启动PID12897、独立/home/builder/agent007-amd64-data，node6405315c-954b-4387-8584-bb1baa597b9f健康且session_active/no quarantine，容量1；shell/git/Java17.0.20.1/aapt2/apksigner真实passed。IP hostname+自有CA TLS请求实际401/连接成功，受限SSH ls-remote固定76a0f9提交正确，项目linux-android007登记成功；准备真正trigger201，不将启动或预检当构建/中央下载完成。仅新Agent和自有资源，原服务不动。
+
+## Plan / Tasks / Analyze / Implement 门
+
+2026-10-04：B七份Plan逐SHA验证复制，spec/checklist沿原规范（质量16/16），root更新007已验收时态和实际分区。实际setup-tasks --json、check-prerequisites --require-spec --require-tasks --include-tasks定位root绝对008；按resolver返回模板生成40任务，Setup2/Foundation4/US1=6/US2=5/US3=7/US4=10/Polish6，严格格式检查通过。完整范围全部4P1，不按单US提交。
+
+speckit-analyze只读：FR19/SC5覆盖24/24，13AC均有实际门，未映射任务0，原则2.1.0冲突0，critical/high/medium0；唯一LOW为T025标点“根在、”，在analyze外修正文案。再次分析0问题。短断联claim竞争已读实际serve消费者，明确同进程同key/session原起点+LeaseDuration-余量有界幂等核对，未知保留且暂停新claim，绝不能新进程自动接管；未新增协议或执行器。
+
+实际implement prerequisite --require-tasks --include-tasks正确；checklists/requirements.md16已选/0未选，PASS；Git已初始化，忽略Go bin/exe/test/out/vendor、环境与日志，selector实际ignored。extensions hooks={}，before/after tasks/analyze无执行项，implement无before hook。新代码开始前基础门协议由根、Store迁移由C独立WT，B暂只读直到迁移门通过。根唯一protocol/server/client/docs、C唯一Store、B唯一Agent；A真实AMD64Android，019七份Plan冻结无实现。只分区验收后root集成；未知停止/终态保护不跳过。
+
+## Foundation 实际进度
+
+T001–003完成：Git基线85b46bf/当前branch检查、实际README/plans/Store消费者核对、root创建branch008-store独立/tmp/mybuilds-mvp.zKtK0e/store008-implementation并精确复制最新008文档/协议；B使用已有已FF85b的recovery008-planning。protocol新增两个具体只读消息，gofmt及go test ./internal/protocol PASS，SHA755d642b993d725d8d95669467a9be7b3ca5a126134c6684879cc9a89b90cadb，各WT逐SHA一致。
+
+C Foundation真实旧007迁移红测SQLite/PG均缺retry_of失败。加模型后SQLite父表被已有attempt/receipt FK引用，GORM重建conflict；采用已有Migrate内直接ADD NULL-default named REFERENCES列，保外键启用与父表原数据，旧证据逐列不变/旧receipt未知/FK与两次Migrate检查已初步绿。PG测试SELECT * prepared结果形状因合法DDL扩列变化，改显式旧列投影后核验。008测试最初覆盖原node_models_test.go两门，root差异核对发现后要求完全恢复原门，将新迁移测试单独recovery_migration_test.go；覆盖版不计最终门，待恢复后双库三条真实门绿+冻结SHAs才开始故事。
+
+Foundation T004–006最终门通过：C将新测试单独recovery_migration_test.go，旧node_models_test.go与85b完全同字节。SQLite/PG实际三条NodeModelsMigration/NodeModelMetadataConstraints/RecoveryMigrationFrom007 PASS1.208s，gofmt/diffcheck/vet PASS；二次迁移、旧状态/NS/receipt逐字段不变、默认NULL/空Kind/falseStopKnown、新非空约束/坏原ID/FK删除RESTRICT与索引全部实际确认。3source+1test四SHA根逐个验证后复制root/B WT；不等待全race冒充已完成，完整race仍最后必过。Migrate只新增实际SQLite ADD COLUMN namedFK六行，不关闭FK或重建既有父表，无新依赖。正式进入故事实施，各分区先红后绿。
+
+## 实施中真实红绿（未计完整验收）
+
+C Foundation全Store双库race56.601s、vet/diff PASS，四冻结字节未变。B第一组Agent真实4门red→green7.172s：旧30ms HTTP轮次超时误classified cancelled、未知CA反复network_error、真实Store/Git/Run/5s脚本断联2.2s退出误停；调整network-only分类/保守原请求/暂停新Claim后绿，迟grant不能复活。全Agent发现终态丢ACK的旧fixture需重新查中央已提交状态，及多次续租成功但ACK丢失的独立stop-confirmation等待上界需包含最后真实请求窗口；均未冒充全绿，继续闭合，不能延Authority或运行旧动作。
+
+根HTTP真实red：queued retry应409/terminal active应409均原404；损坏自有SQLite快照后ListenAndServe原不检查，真实返回nil红。CLI新command缺失与显式key/丢响应门真实red；接最小command和安全Batch RetryOf字段后，传输契约一次丢响应不自动重发/显式同key重发/拒params-branch-before-network实际绿（首次测试误按pretty空格检查JSON已改解析字段，非生产问题）。真实Store retry尚未接，所以actualCLI仍待绿，不计T023完成。
+
+LinuxAMD独立007强化首次201真实failed/timeout，remaining0、ordinary Started/StopConfirmed/!Cleanup、artifact skipped；约UTC14:50:23实测shell12960/wrapper12962/daemon12987均gone且Agent12897活，未人工kill。A保存原失败与最终PGID/PID证据后仅允许新key202同原SHA完整预算的新构建；晚时gone不能冒充刚StopConfirmed时整执行退出，真实取消还须连续采样此边界。首次失败不覆盖、不以预检结果代中央文件门。
+
+
+根实际API/CLI集成门：损坏queued快照在Listen前database_error、真实TerminalReceipt完整提交/只读/轮换当前token/拒旧终态回写、Retry完整queued-cancel合法来源/角色/严格JSON/无key/201-200/输入冲突/原证据不变，go test ./internal/server -run TestActual(RetryHTTP|TerminalReceiptHTTP|RecoveryRejectsCorruptQueueBeforeListen|StopHTTP) PASS2.313s。真实CLI零动作queued-cancel来源、一次丢响应不自动重发/同key显式重放/参数分支覆写网络前拒绝、关系列表/详情与秘密隐藏，go test ./internal/cli/client对应门PASS1.624s；本地入口配置隔离先前PASS2.736s。Agent首8文件实际root SHA集成后TestRecovery PASS19.121s；当前不是完整Agent/最终应用验收。
+
+C进一步实际红绿：active Node.Session身份矛盾/disabled、step Intent+StopConfirmed/Started+CleanupFailed拒恢复；101页第2页坏snapshot拒、完整中央file/log/NS保持、Expire/Recover/独立Stop竞争双库TestRecover PASS5.019s。Retry真实数据库插入失败全部rollback不占号；原定义含when false的upload仍检查admin+allow。checkout窗口真实负例发现有attempt但全pending的伪terminal不能证明停止，改为需要精确停止或真实已确认build_finished StopKnown；真实checkout_error已确认零动作正例保留。独立停止确认不能冒充旧terminalreceipt；最终三门双库PASS2.545s。真实丢自己的lockfile/PG backend三API拒且无写、cleanup终态StopKnown=false、原完整中央证据与新retry空证据检查通过。C旧全Store test19.880s/race73.953s早于最后修正，仅记阶段通过，等待最终冻结全门。
+
+根自有应用夹具app008-root-472a7ctv已准备新SQLite与独立PG库mybuilds008_app_root，不修改007在线Android中央端口/数据库/Agent/VM。将用实际三入口binary在lease内重启控制端并推进HEAD/settings、两个原快照及20并发retry后中央binary下载证明原SHA/参数，尚未启动，不计PASS。
+
+
+最终Store17文件manifest SHA a6582450fbac5274a303150324815f2eabb2e62f66e018ce5c1f20e3d3a8983e逐SHA与root同字节；最终双库test22.824s/race80.518s/vet/diff PASS。Agent最终9增量全部root逐SHA复制，全Agent95.116s/race107.290s/vet/diff/Windows构建PASS。Linux aarch64真正执行包含13种receipt错误/当前rotate/同inode改写/替换/symlink/未知PID/短断联/unknownClaim/多renewACK丢失的完整TestRecovery与实际终态/续租门exit0，结果agent008-journal-linux-results.txt SHA4fd0cd1251d94bbcdd8e87f05963abcf0ab628898376da80d103fcbe978986c0；native testbinary SHA923095dbcba4efc27bc9445a353b5439834a606a8aa96956ad27d5aa01692621。均实际执行，交叉编译不计此门。
+
+根真实三入口应用app008-root-xkbtgjhx：SQLite与独立PG mybuilds008_app_root2完全相同36项，共72PASS。控制端实际exit0→0.65s停机→Recover前置监听，原脚本PID/PGID、完整Ref/号/SHA/初始预算不变且counter一次，另原queued构建随后执行旧SHA。HEAD与项目参数设置实际推进，20并发CLI retry仅新batch/build/编号3，新的attempt执行原SHA+original参数，中央binary逐字节/大小/SHA匹配。原详情/日志/制品完整JSON前后不变。带真实1artifact+日志+always的完整终态已提交后HTTP连接真实丢响应，Agent非零退出、仅一PendingEvent journal，当前rotate凭据重启只读清精确条，results/spool文件哈希完全不变，旧终态回写409，中央完整证据不变且无第二次用户动作。所有72门实际三个二进制+HTTPS自有CA；evidence.json SHA2ea1713045d74da3680d7d95e99a29456811d227766a4d2d09361999e6400fa6。首次app008-root-472a7ctv由于夹具错误传--ref main（接口固定ref仅SHA）400，保留失败证据；修正夹具为真实SHA后新目录/新库运行，无生产代码修改或覆盖失败。
+
+
+根新增两库实际负例应用app008-negative-zbqmzs5m各12门共24PASS（evidence SHAf13e9e47c17ea20ff8de8f73104cfa27017502b3180351aeb408f2b2868cba8f）：原queued-cancel快照后自有仓库真正替换孤立HEAD并gc使原commit不存在，retry仍原SHA新号2，实际Checkout失败checkout_error，用户脚本与新HEAD脚本均未执行，中央无伪artifact，原构建完全不变；实际Agent JAVA_HOME/SDK指自有不存在目录，doctor失败，原Android runner queued与新retry均保持queued，不绕能力、无脚本。末尾仅取消自有排队测试，不触碰原007服务。
+
+根最终当前源go test ./... PASS（Agent103.915s/client27.776s/Server24.828s/Store23.170s），go vet ./... exit0。首次完整race Agent/Server/Store均PASS，但root新增Retry transport测试中handler计数器与主goroutine读存在真正fixture race，客户端失败；仅测试局部换atomic.Int64/Bool，不改CLI传输语义，等待复验。完整race未通过前不提交。
+
+阻塞新实证：LinuxAMD Android202密采499样本63766B，ordinary finished已经ACK且journal StopConfirmed=true后，脱离原组Gradle daemon14251仍S/同start_ticks1580841，CPU继续增长，直到15:22:53.184Z才Zombie/53.512gone；不以最终gone或仅主进程组消失当作整个真实Android执行停止。原始安全证据process-evidence/retry-stop-confirmed-window.json，归档SHA32cce31494b68964acaa653e5e9da8dbe0bddd786e90f55f51e9affa85c1957f。暂停新Androidtrigger，B独立bug worktree执行SpecKit bug-assess/fix/test，008验收/提交待此阻塞修复并实测。
+
+
+根仅测试fixture计数改atomic后的目标race PASS1.785s，全客户端race PASS25.345s；原完整race其它包均PASS，修改未触及CLI生产逻辑，最终全量门待process缺陷整合后执行。
+
+B独立LinuxARM实际三入口应用长断联门exit0：ordinary/always各13项、26PASS，原repoSHA6872190b5b45b86f0b88519abfa98e61ae4f7b83；真实group6583/child6584和group7213/child7214分别约7.79s/7.45s消失，111次连续采样及额外signal0均ESRCH，自有无关sleep存活；中央interrupted/lease_expired/guard，原Ref/纳秒预算/步骤不改写。新进程未知journal拒绝且counter一次，错epoch确认409/精确admin_observed_stopped204只清guard，旧journal保持。证据app008-linux-authority-pn_5ybzy/results/evidence.json SHA8a8ffdbc7988fcbc7445c724679e63368494664ce738b98387dcd51a63b9c107，manifest SHA6f993a6094b2fb5652fdb6dee29a57393f0850daafb8d35feb53114a6dc13ef1，额外signal0 proof SHA283617c39b15a9231a54df2998ee70f8b93e73f816352ab651d497a0977f2dc9。原online Agent3714完整args前后不变，不碰AMD/共享服务。此门只证明原组普通/always，不能代替新实证脱离组daemon修复。
+
+
+额外Linux快照三入口app008-linux-snapshot-2cj_xtfu实际失败：第一构建succeeded/seq11/fullmanifest后terminal200和随后renew409，Agent execution_unconfirmed保PendingEvent，第二仍queued。没有drop-terminal.flag，真实ACK/续租竞争；失败证据保留，不算Linux恢复/原快照应用PASS。root取得008Agent文件唯一写入（B仅独立process bug WT），在当前功能implement补终态交接。最初计数断言把第二合法执行续租算入的fixture已修为逐Ref；隔离旧冻结8源的真实目标门TestRecoveryActualTerminalACKHandoff（capacity1，真正完整终态提交后延迟800ms）失败：两个实际Run完成但仍有原terminal后的renew。root最小stop-worker→等待current request→原Authority再校验→单post后，目标race PASS7.126s，原Linux失败本身证明可能中止下一queued。完整Agent和新Linux实际二进制复验待执行；不修改私有SHA回执或绕过原租约。
+
+
+修正terminal/renew交接后，root全Agent race PASS113.230s/vet0；在LinuxARM以实际新Agent ELF二进制（SHA54fe60d16eac3a9cc1eef04f06f467d4d31c641b5d9bf80524a668fd665f7e7e）运行新app008-linux-handoff-_d_2msnc，SQLite整套36项真实三入口应用PASS/exit0：controller真实重启、queued旧SHA一次执行、推进HEAD/settings后20retry一个新号及中央binary、完整1artifact终态丢ACK/rotate当前身份只读清journal/原证据与spool/results保持/旧终态409全部复验。源脚本与Mac同套，仅driver限Linux自有SQLite；evidence-native.json SHA48e0f15bb5f032686a5862fd825558d6981f0790c668b6dbc4f0ef85c8540b78。原失败目录未删/未覆盖，原online3714及AMD/共享TLS/SSH服务未动。当前8网络/恢复/终态/重试闭环通过；共享process detached Gradle缺陷仍是整功能提交阻塞，不能冒充已闭合。
+
+## 后续集成门与未闭合实证
+
+终态交接与第一批process修复集成后，独立app008-final-i5qan4d4再次运行相同三入口应用，SQLite/PostgreSQL各36项、72PASS，未触碰原服务；evidence.json SHA119b5dab9bf334fc2750f0121d70ed9bd051345632a0fd9fcf9fa4ab1177405e。三入口×darwin/arm64、linux/amd64、linux/arm64、windows/amd64共12次CGO_ENABLED=0构建及本机6次help/version通过；final008-c4l4j3g9/build-evidence.json SHAc490fdfc141638b3ae0c14b9ff83cdd1de08a7b12754c4e107eb7b1a3d9e1605。这两组检查早于下述Darwin栈修正，不能标为最终统一源码的验收。
+
+首次根全量race发现既有TestActualCLITwentyIdempotentTriggersExecuteOnce真实失败，三个定向复现均失败。临时安全诊断定位Darwin procargs2在并发Git exec切换时成功返回不完整argc/argv；把单对象缺栈永久记为整个scope错误造成checkout cleanup_error。root仅修改scope_darwin.go与其测试：不完整栈作为同birth unreadable候选，实际可读或对象Gone才消解；活对象不可读仍不能确认停止或发信号。超限/全表错误仍闭锁。临时诊断代码全部恢复，无argv/环境/秘密输出。目标20并发CLI race修复后PASS2.690s/5.874s，Darwin/Detached/Shell目标race18.469s通过。当前两文件SHA分别67539523cdf626ec1cf58c9e4d8e9f69761b77083070133afaf29cd63ec78974与c9d1b86d3c39400d68d14b321f2a16c5d6732f1c383d61443a182465ab000354。
+
+上述Darwin修正后，根实际go test ./...全部PASS（Agent120.290s/client36.381s/mobile30.677s/pipeline15.701s/process21.481s/SCM24.230s/server31.039s）；go test -race ./...全部PASS（Agent135.988s/client43.938s/mobile28.135s/pipeline18.476s/process25.546s/SCM24.607s/server42.727s）；go vet ./... exit0。此时Linux字节仍为第一批process修复，后续若修改必须重做有关最终门，不能用该次通过证明未来字节。
+
+真实AMD Android203已中央cancelled且StopConfirmed=true，三进程继承nonce布尔核对通过；但sampler在真正CLIcancel前197.6ms结束，未覆盖ordinary.finished.At，故严格partial。204在checkout阶段CleanupFailed，Agent16330自然错误退出；无Intent/Started/PendingStop，中央之后interrupted/lease_expired并保持stop_unconfirmed/quarantine。原errno未持久化，不能把源码推导scm_cleanup_failed当原错误实测；journal/guard保留，无manual signal/adminConfirm。A的安全12项证据归档cancel203204-safe-evidence.tar.gz SHA54f9d2473c9ae8c950c59c6319ca5ea0c385856eb633913ca14f277db2caf5f8，脱敏交付表SHAd69d42a32e512f2d37d6ce4e15d778310b502bc92bb743274201c08c1289506e。第一批Linux AMD64完整26项process测试实际PASS，但不是Gradle时序门。
+
+B在独立Linux实际诊断中，基线24次只读git status全部通过；同时新建自有SSH连接时24次中2次CleanupFailed，并捕获真实同UID、出生较新的live对象/proc/PID/environ EACCES(errno13)。scope全局永久uncertain会将暂态单对象权限变化扩为不可恢复的清理错误。根批准仅此同birth候选的最小Linux修正与实际负例复验；尚未集成或宣告通过。新验收将使用独立node/data/project及先建立的连续SSH采样，原204保护不变；首cancel自然构建号206，后续正例自然207，原项目205保持未触发。
+
+C的只读意图映射涵盖19FR/5SC/13AC及全部40任务，报告SHA dced834c2805d7713b68e6a2b49a4c2e090e9cc4ec4125ac58256fa9cb3fe87f。它不是converge，也没有重新运行检查；T035–040、实际Gradle完整停止门、最终统一源码检查和整功能提交仍待完成。
+
+Linux最小两文件已按冻结SHA集成：scope_linux.go 8e363f735fcef2f4736bb8dfd466e5e60a30b4a7b98f731a3a6a95ebafcce00e、scope_linux_test.go 7725978ae91b9ad28c2a0a7bce4745da3a5f8df43e7b4dc0aebd720202af50f4。只有真实同birth的live environ EACCES/EPERM转unreadable候选；其它元数据/IO/全表限额错误不放行。实际AMD四定向门通过：已知组真实Gone、错误birth pidfd不发信号、暂态候选Gone后解除、独立PPID1/setsid/PR_SET_DUMPABLE=0活对象无已读nonce/父链时仍不发信号且不能确认停止。既有负例修正为已知组Gone真实语义，并补严格未知持活门，不删安全保证。
+
+root当前Darwin最终源码重新构建三入口，在app008-unified-4c25b7jk使用新SQLite/独立PG库mybuilds008_app_unified完成相同36项各库门、72PASS/exit0；evidence.json SHAbebb01a8ba833b09c9da2eef9c35cc2312b8908766910fc489ced2f087cf7f37，夹具只修改自有DB名字，未动原服务。最终Linux文件集成后的根go test ./...与go test -race ./...均exit0（Go按Darwin相同源码缓存复用前次通过，如实记cached）；go vet ./... exit0。Linux新源码实际原生门由独立作者执行，不能以Darwin缓存替代Linux执行。final008-unified-yptl033z完成三入口四平台最终12次构建/6次本机help-version，全部exit0；build-evidence.json SHA93af41d1499cc7dca7f50657d4cc7f44f7ed7db29d747e901e55a5fdaefb8fa5记录实际process源码SHA。Gradle206实际时序仍待回报。
+
+最终Linux AMD/ARM各29项完整native process PASS/exit0，patched真实SSH并发下24次readonlyGit全exit0/noCleanup，Linux vet exit0。首次AMD旧cancel helper未READY的失败与首次绿色夹具start_timeout（0个Run）原样保留；前者单项真实1.02s通过后安静整套通过，后者修正真实ready握手再执行唯一有效24组。diagnostic-validation.json SHAd8b5000fcd7c15d8037d78d06b19f176264a38df7522cad59c89d94dc707cfda、AMD完整日志b27c6796abd7759ddb909c153a3b76add13cf78b4b6a2b02d0002916b8b4061a、ARM完整日志f6c66fbe35a90dffa9219abe7456453213f33f5b1a64473d54d66dc385e327cd、并发绿日志411651bdd934e1569422d1063316163e56083e7a8c148d4df70dd474c94072ab，根逐SHA核验。B资源全部交A，无旧204变更。
+
+新独立node/project/data实际Gradle206在原76a0/1.8.0/30m运行，Agent为独立已验收007加最终Linuxprocess修复，ELF SHAb78cdcf1a3e4bd7d5a45c4e58116bcf27195e5ac69f5858e895dab746bb9445d。build f99ebe81-096b-4d2b-8127-e206b5a9ff9b，node656c2915-51c4-4be2-820e-9f86c2031975；稳定SSH观察链先于shell出生，actual3nonceMatch及daemon独立PGID/SID确认后host自动一次CLIcancel。原sampling87208B/972实际probe，ordinary.finished.At=17:31:56.719311583Z；shell/wrapper/daemon同birth的Gone上界分别17:31:55.665245403Z/56.137892793Z/56.567651874Z，daemon比finished早151659709ns。全seq1–6/fullRef一致；finished及build_finished StopConfirmed=true/!CleanupFailed，无At后同birth活对象；无关sleep26166同birth一直存活，无manual signal。采样至17:31:58.938959998Z，比terminal.At晚2.049s。
+
+206driver收尾误把summary.ready布尔当READY对象，exit1断言原样保留；异常在实际cancel和完整capture结束后，未改产品或重触206。根逐SHA核验原四安全文件，独立解析原285行，逐seq/ref/stop/cleanup/birth/真实Gone上界/无关进程和terminal后2s重新计算，原取消症状门PASS，root-independent-review.json SHA5681869f144e50d57fd1a25a1114e4696e3a7b965648a9dfead38e0e8e8c8092。归档SHA91fe7096ad7cd24fe287894d24e366b339b93f62b00e0ac43836af497eeef73b，脱敏交付表SHA689b80ad0237615d0c39bc17fc80cc435072971dafb8cdc457b189500e3bf11a。不把夹具exit1隐去，也不把完整原始证据误判为无数据。
+
+正常后续签名207仍待验证，根仅修改自有夹具linux.yml默认version1.9.0/预算60m并本地提交固定SHAec01b9008cb88465757caff73789031470f8cdf8，文件SHA68691ee81236d8361d873fafa7c9f7432459b32378d20a3447cba4f9f2490516；不修改产品预算默认或旧构建快照。207必须真实APK/AAB/mapping/中央原bytes/大小摘要/版本号签名与完整终态；通过前缺陷记录仍partial，008尚未提交。旧204journal/guard与原项目未触发205保持。
+
+## Darwin SIP 环境边界（进行中）
+
+完整argv且空环境不能证明标记已核验。新增真实独立/SIP对象门在前版实际red，空环境保unknown后定向race通过5.061s；随后全process race实际FAIL25.985s（短期限第80轮CleanupFailed），新增两个正常并行系统shell/睡眠门实际FAIL，不能将该候选修正当最终通过。正在核对实际父链排除外部对象；PID1重父对象仍必须未知保护。008 T035/T037重新打开，旧全量、72应用与matrix记录保持，但不当后续Darwin字节的最终门。无提交/无原204保护解除。
+
+## SIP 父链候选修正与最终字节
+
+根在原七文件范围内修正：完整argv但空环境、EIO/EINVAL/ESRCH且同birth仍活均交unreadable；仅对此类对象逐Kinfo实际核对≤64层非零birth/父关系/存活/无P_TRACED及P_oppid，严格早于本次root的非PID1外部祖先再复核全路径才解除unknown，不移除marked/owned、不缓存外部身份。PID1重父、读失败/变化/未就绪/追踪仍保unknown且不信号。普通孤儿/ptrace例外核对官方[XNU exit](https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/bsd/kern/kern_exit.c)、[ptrace](https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/bsd/kern/mach_process.c)、[Kinfo导出](https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/bsd/kern/kern_sysctl.c)，属于普通可信工具条件的保守判断，非永久内核历史证明，Darwin TOCTOU限制仍保留。
+
+新增真实/bin/sh父退出→PPID1的SIP睡眠对象不可误确认/误杀，以及两个正常SIP shell/sleep并行互不影响。父链候选完整process race27.501s PASS；整路径/oppid/非零birth复核后Darwin定向race5.136s PASS；最终errno闭锁字节另跑必要全门，尚未将前次源码检查计为最终。冻结清单SHA256 `8eed83099eb5286801cda63734a01ca3ce5f20a06e1a5d14353ba87c488e40b4`，Darwin源码 `da1721aa4d47d66cb85ec47878d5365cc2277c61695c8d31eb8e481e87b2cbca`、测试 `e57547715710d298a5c5fde75529c89a17cd36160263c9eb60ec96ca4ba88533`；Linux最终两文件不变，原native/206证据仍适用。207正常签名回归与最终统一门仍在运行，无提交。
+
+## 最终字节并行检查失败保留
+
+在同机同时运行多个go test/race与真实应用时，全量进程消费者出现cleanup_error/agent_execution_unconfirmed，双库应用第一库lost-terminal门进入interrupted/lease_expired（失败记录 `/tmp/mybuilds-mvp.zKtK0e/app008-sip-w4o3dzlr/failure.json`，源码无修改）。新SIP负例真实制造PPID1活且环境不可读对象，可能使同birth扫描其它正在执行的Run保守闭锁；这个归因目前待串行隔离证实，不能把失败删去或当通过。四次全包退出1保留在工具输出，后两次为最终Darwin字节。三入口12编译/6本机命令最终字节exit0，证据SHA `7d0585d12ce282cf80065cdbde6f91a642c228d351a11bd4ebd9a5a5265696f7`，不代行为验收。正在以-p 1串行整个包集，normal→race→vet及应用互不重叠，保持未知对象failclosed，不改测试断言或超时掩盖。
+
+## 重新评估：正常TLS派生系统服务
+
+串行-p1全包仍FAIL179.102s，normal日志SHA `98bc2b65e13beee829bfd09de2ae274214504cfb0e0b466a85f336a04b67741f`；race/vet后续未跑。故“只因故障注入互相影响”的初步推断不成立。单独SCM TLS负例真实重现；仅记录pid/parent/group/birth/stat/flags/短comm的私有临时诊断，发现trustevaluationa新生PPID1/独立PGID/无可读环境，扫描unknown导致正常TLS失败也cleanup_failed；不是扫描whole error、不允许按名字忽略。诊断日志 `/tmp/mybuilds-mvp.zKtK0e/darwin-sip-scm-diagnostic.txt`。现有父链无法区分launchd真实服务与本次SIP重父工具；原preferred需补精确内核原父身份能力重新评估，停止继续改修复源码，先实际验证Darwin proc_info parent unique identity可用性。所有临时诊断已移除，七文件逐SHA恢复冻结字节；结果仍partial，008验收未通过/无提交。
+
+## 207真实正常构建未通过（2026-10-04T18:26Z）
+
+独立LinuxAMD node的207（555c2314-0cef-4357-bcb7-37711e9b4b83）实际Gradle BUILD SUCCESSFUL in 45m 41s，50 actionable tasks全部executed，assembleRelease/bundleRelease/signReleaseBundle已执行；ordinary.finished 18:25:58.537493505Z却cleanup_error/StopConfirmed=false/CleanupFailed=true，中央interrupted，artifact步骤skipped、无中央制品，节点隔离。原预算仍848.896s，不是预算到期。不能用本地文件代替中央APK/AAB/hash/签名验收。
+
+原shell/wrapper在finished前Gone，daemon原birth2584388最后live 18:25:57.694468404Z，第一次Gone 18:25:58.559879581Z；采样上界在finished后22.386ms，不证明finished瞬间的状态。没有scope候选/errno记录，不能推断具体原因；terminal后3.091s三对象均Gone、无关sleep26166原birth2523647始终活。未人工signal、未清guard/journal、未重触。原6事件/capture/tar/中央日志保持，安全tarSHA7b1cf8d9fa09db0e4f7ee582e4cad24af9c909b0fe317844b975c50265ce8a32，公开失败摘要SHAe256d894accd7a1cf52c6a942e22cf4fc35f2401c8bc8042a61b381bd8462b59，541项原文件清单SHA5d28a4bf17dea1b181aea366342cdf1602dd5892f939ae869ad7253f4d565aef。206取消严格时序通过不等于207正常构建通过，整功能仍未验收。
+
+Darwin原父身份候选修正后单独process/SCM目标race通过5.102/2.764s，但新全量normal失败108.707s：Agent unknown-claim与CLI失败证据两门cleanup未确认；原日志SHA7d467bbb9d0e130a074f128de8746bdb891b44c4798f65790719978cbc9896cf。独立诊断WT仅此两目标累计Agent8/CLI14次（含并行race）均通过，无法复现，不据此改断言或宣布收敛；下一门需原同批消费者元数据实证。
+
+## 真实故障注入隔离（2026-10-04T18:44Z）
+
+独立WT一次并行全套exit1，仅CLI20幂等门失败；有界元数据捕获一个scope原组已ESRCH、uncertain=false，却发现另测试产生的SIP orphan仍live/原父非init，因此正确保持unknown。该scope调用方PID未记录，不能宣称逐PID直接归属CLI；另两false为预期负门。产品规则不改，仪器逐SHA恢复并移除后一次 `go test -p 1 -count=1 ./...` 于18:41:08–18:44:35全部PASS；Agent101.712s/client18.619s/process21.752s/SCM8.565s/server8.899s/store4.467s。报告SHA1da3ec14a280e568d197ca4ee8f6c66b6151d70e2fecc485081deb2c24dfafce，serial日志SHA77d60db91ed1ee27835aee4fd6ed82429d075227c65709973dd4dcf259b76a0a。README/指南明确-p1隔离；本次前于stale-group补丁与父先Gone再exec新测试，最终字节仍需必要回归。
+
+根已逐SHA集成最终原组signal0复核（scope_unix SHA8ff6baede247382481d8b0d145e458b16e204ac3169f5e8d5fc888fb1944fa3f）与真实late-reap四门；旧红1.350s、新四门race11.334s、完整process race33.198s通过。Darwin父先Gone后exec的真实负门race4.049s通过且不误排除/noSignal。新源码统一完整normal/race/vet正在以-p1顺序检查；新Linux晚回收门与双库应用仍待结果。独立轻量AMD Gradle --version/两个offline实际任务全部exit0/noCleanup，18.566s/162.982s/142.224s；真实unknown记录后续清除可因可读恢复或Gone，不推断其具体进程或207原因。诊断原tarSHAe97e8dcb412fafe5b82f45d79be9993528b4d160e1210e7255ff020ed224b51f，仅补可用性实证，不代真实中央移动构建验收。
+
+## 当前统一生产源码验收（2026-10-04T19:06Z）
+
+根顺序执行go test -p1 -count=1 ./...、go test -p1 -race -count=1 ./...、go vet ./...，全部exit0；实际UTC18:51:52–18:55:29、18:55:29–19:00:51、19:00:51。normal日志SHA960e9baa001ad8c6cf226d13517c1bbc3305db89a53b659d7df5445dd1cd1473，race日志SHAcf0ec9dc7156bc92f5bd8eef77a5dc4f5c0a1d411b0f43f1fe4c561073aecb1a。之后仅测试夹具补严格kernel birth先后（Linuxjiffy可同tick），生产字节全部原样；新夹具Darwin四门race9.902s、LinuxARM/AMD各31顶层完整process门通过，原ARM夹具失败保留。Linux独立验证清单SHAc02ac24a72defbd2596486c445d321b77e5911ebce4ac00f64b12d04914aaca1，根逐项SHA核对，不声称仅此解释207。
+
+当前源三入口四平台12编译/6本机help-version全部通过，矩阵证据SHA4eebba8979fc93d3e5e9d15b29847a8f3327cb9d9e09154183afe80dd5a7624a。新app008-reap-bb1nxhrc及独立PG mybuilds008_app_reap实际SQLite/PG各36检查、72PASS/exit0，三个二进制来自该矩阵；重启、20retry同key原SHA、完整artifact终态丢ACK/当前身份只读清journal与旧原证据保持全部复验，证据SHAee5eaf5d0f7cf669f210335cc845ee311935249f43d2ff0e41b80e57d81190de。根独立核对所有passed计数与当前process源SHA；root_services_touched=false。后续完整nativeARM签名正常与取消质量强化正在独立资源执行，不用本地资源-only APK冒充移动/中央制品。
+
+## 正式收敛与移动端质量强化（2026-10-04T19:25Z）
+
+正式speckit-converge逐项核对19FR/5SC/13AC、40项任务、8项设计和5项原则，零missing/partial/contradicts/unrequested，不追加任务。实际prerequisite选择008，hooks={}；报告已在技能外持久为convergence.md，外部review SHAa60a6886ab57b5a307734292fa5ce52d87655b8a44caafd060d6053d54017ff8。收敛前后tasks SHA4cef288f53411644a7a0ce232c9454227cc94152bc494531c6f8c9778864a8aa完全不变；根随后在技能外勾T039，T040待提交。
+
+原生LinuxARM通过最新真实mybuilds/pipeline.Run完成全新Android工程签名构建，Run普通182467ms、artifact1ms均succeeded/noCleanupFailed。Java17/Gradle8.13为nativeARM，官方x86 aapt2经受限QEMU userspace wrapper执行；不能据此宣称所有Android SDK x86工具均受支持。真实R8/lint/assemble/bundle/sign任务、APK8526B/AAB7130B/mapping465B与三个独立snapshot核对通过，版本1.9.0、手动local310（不是中央计数器）、包com.example.mybuilds，APK/AAB证书SHA905af4ece9d46b8ecde47e7573ca05f8565641067365d6cd8064b21136cfadb4。原有许可证缓存未改，不安装系统包/注册binfmt。
+
+安全tar SHA121dc7bb00cfed26a304340fe2dcbbe1f502fdc992a1b633e628bc3b2544b539，35文件交付清单SHAe1748e67a27ac2e0322f9d34816b90b40edde10cf46a56e58340a8ae1fe9a0e5，root全部Size/SHA独立核验；之前工具preflight清单61项也逐项验证，SHA93950d5a5d1e7cdb777cd5c6111c0119409595d6709636f1068672d1ee7a19f6。第一次verify把SnapshotPath误按workspace解释失败，保留工具失败，仅按实际result_dir修正核验，未重跑或替换构建。
+
+local CLI没有finished.At字段，终观察同birth Gone只能证明观察时点，不能伪造远程At排序。新独立ARM节点真实中央签名正常与精确取消正在准备，旧204/207保护与失败证据保持；这些额外质量门及原process缺陷结论仍待后续实证，不等于全MVP完成。
+
+## 整功能交付结论（2026-10-04T19:41Z）
+
+额外原生ARM签名/中央/取消门已闭合：正常401固定SHA4596f99...，真正中央APK/AAB/mapping下载、1.9.0/401、原临时证书、R8/lint全部通过；daemon Gone早于finished.At242.546012ms。取消402同新节点精确原Ref/6seq、daemon Gone早22.627329ms、无关进程存活，原取消原因保持且无CleanupFailed。root独立重算原48/24行采样及五工具原输出，全部113安全文件Size/SHA和tar核对通过，清单SHAdaa57b68dab70fd35afa4632d7f9c81f03dcbaf43931ffda794f64373687bfd2，tarSHAb4f9a327bd38fc25ceffadfdbf9d1061732f86927f4bb02157f4818882ae28d9；最终独立报告SHA42a2a8c801cc00df980bb971c7af90818afd999599e8359ff454e509092daf36。旧204/207停止未知、journal与原3714保持；旧207原因未归属，不能用新通过回填旧停止。
+
+共享process停止生命周期修复已独立本地提交dd8fb4a86135af1933fed11743ad47d699a697ea（fix(process): 修正派生工具与最终停止确认），不夹带008/Future规范源码。008全部19FR/5SC/13AC、最终全量normal/race/vet、双库相同72正例及此前负例/Linux关键路径、12编译/6本机入口、正式零缺口收敛通过。以下整功能T040只提交008相关记录/代码；005及后续MVP门未验收，不push。

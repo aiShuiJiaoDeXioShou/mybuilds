@@ -131,6 +131,8 @@ type attemptRecord struct {
 func (attemptRecord) TableName() string { return "attempts" }
 
 type executionReceiptRecord struct {
+	Kind      string        `gorm:"not null;default:''"`
+	StopKnown bool          `gorm:"not null;default:false"`
 	ID        string        `gorm:"primaryKey;size:36"`
 	BuildID   string        `gorm:"not null;uniqueIndex:event_sequence;size:36"`
 	Build     buildRecord   `gorm:"foreignKey:BuildID;constraint:OnDelete:RESTRICT"`

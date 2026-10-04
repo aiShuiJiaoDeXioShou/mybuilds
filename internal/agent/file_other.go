@@ -18,3 +18,9 @@ func (*dataLock) resultParent() (string, error) { return "", failure("unsupporte
 func openSnapshot(context.Context, string, localArtifact) (*os.File, error) {
 	return nil, failure("unsupported")
 }
+
+func (*dataLock) readJournalFile(string) ([]byte, os.FileInfo, error) {
+	return nil, nil, failure("unsupported")
+}
+
+func (*dataLock) journalNames() ([]string, error) { return nil, failure("unsupported") }

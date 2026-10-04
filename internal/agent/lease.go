@@ -10,16 +10,17 @@ import (
 
 // 本地租约只接受请求开始时刻推导的保守期限，迟到回执不能复活失权执行。
 type executionLease struct {
-	mu         sync.Mutex
-	ctx        context.Context
-	cancel     context.CancelFunc
-	user       context.Context
-	userCancel context.CancelFunc
-	deadline   time.Time
-	timer      *time.Timer
-	lock       *dataLock
-	ref        protocol.LeaseRef
-	cfg        config.AgentConfig
+	mu             sync.Mutex
+	ctx            context.Context
+	cancel         context.CancelFunc
+	user           context.Context
+	userCancel     context.CancelFunc
+	deadline       time.Time
+	possibleExpiry time.Time
+	timer          *time.Timer
+	lock           *dataLock
+	ref            protocol.LeaseRef
+	cfg            config.AgentConfig
 }
 
 func newExecutionLease(parent context.Context, lock *dataLock, cfg config.AgentConfig, grant protocol.LeaseGrant, requested time.Time) (*executionLease, error) {
@@ -44,10 +45,7 @@ func (lease *executionLease) accept(grant protocol.LeaseGrant, requested time.Ti
 		lease.cancel()
 		return failure("authority_lost")
 	}
-	margin := 2 * time.Second
-	if lease.cfg.HeartbeatInterval > margin {
-		margin = lease.cfg.HeartbeatInterval
-	}
+	margin := leaseMargin(lease.cfg)
 	deadline := requested.Add(time.Duration(grant.TTLNS) - margin)
 	if !now.Before(deadline) {
 		lease.cancel()
@@ -91,27 +89,48 @@ func (lease *executionLease) close() {
 	}
 	lease.mu.Unlock()
 }
-func (lease *executionLease) renew(client *agentHTTP) {
+func (lease *executionLease) renew(client *agentHTTP, stop <-chan struct{}) {
 	ticker := time.NewTicker(lease.cfg.HeartbeatInterval)
 	defer ticker.Stop()
 	for {
 		select {
+		case <-stop:
+			return
 		case <-lease.ctx.Done():
 			return
 		case <-ticker.C:
 			if lease.check() != nil {
 				return
 			}
-			requested := time.Now()
-			var grant protocol.LeaseGrant
-			if err := client.retryPost(lease.ctx, "/api/agent/renew", lease.ref, &grant); err != nil {
-				lease.cancel()
-				return
-			}
-			if grant.Task != nil || lease.accept(grant, requested) != nil {
-				lease.cancel()
-				return
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if lease.check() != nil {
+					return
+				}
+				requested := time.Now()
+				// 丢回执也可能延长中央租约；只用于真实停止确认等待，不延长本地Authority。
+				lease.mu.Lock()
+				lease.possibleExpiry = requested.Add(client.timeout + lease.cfg.LeaseDuration)
+				lease.mu.Unlock()
+				var grant protocol.LeaseGrant
+				err := client.retryPost(lease.ctx, "/api/agent/renew", lease.ref, &grant)
+				if temporaryNetwork(err) && lease.ctx.Err() == nil {
+					continue
+				}
+				if err != nil || grant.Task != nil || lease.accept(grant, requested) != nil {
+					lease.cancel()
+					return
+				}
+				break
 			}
 		}
 	}
+}
+
+func leaseMargin(cfg config.AgentConfig) time.Duration {
+	return max(2*time.Second, cfg.HeartbeatInterval)
 }

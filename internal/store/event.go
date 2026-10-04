@@ -405,7 +405,7 @@ func (s *Store) ApplyEvent(ctx context.Context, actor NodeActor, in protocol.Exe
 		if err = tx.Model(&row).Updates(map[string]any{"status": row.Status, "reason": row.Reason, "post_phase": row.PostPhase, "stop_unconfirmed": row.StopUnconfirmed, "remaining_budget_ns": row.RemainingBudgetNS, "remaining_post_budget_ns": row.RemainingPostBudgetNS, "last_event_seq": row.LastEventSeq}).Error; err != nil {
 			return err
 		}
-		if err = tx.Create(&executionReceiptRecord{ID: uuid.NewString(), BuildID: row.ID, AttemptID: in.Ref.AttemptID, Seq: in.Seq, Digest: in.Digest, CreatedAt: time.Now().UTC()}).Error; err != nil {
+		if err = tx.Create(&executionReceiptRecord{ID: uuid.NewString(), BuildID: row.ID, AttemptID: in.Ref.AttemptID, Seq: in.Seq, Digest: in.Digest, Kind: p.Kind, StopKnown: p.Kind == "build_finished" && p.StopConfirmed && !p.CleanupFailed && !row.StopUnconfirmed, CreatedAt: time.Now().UTC()}).Error; err != nil {
 			return err
 		}
 		ack = protocol.EventAck{Seq: in.Seq, Digest: in.Digest}

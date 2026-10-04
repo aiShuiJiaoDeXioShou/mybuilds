@@ -32,11 +32,12 @@ type journalState struct {
 	ResultDir                             string `json:"result_dir,omitempty"`
 }
 type executionJournal struct {
-	mu    sync.Mutex
-	lock  *dataLock
-	name  string
-	state journalState
-	info  os.FileInfo
+	mu             sync.Mutex
+	lock           *dataLock
+	name           string
+	state          journalState
+	info           os.FileInfo
+	recoveryDigest string
 }
 
 func newJournal(lock *dataLock, claimKey, sessionID string) (*executionJournal, error) {

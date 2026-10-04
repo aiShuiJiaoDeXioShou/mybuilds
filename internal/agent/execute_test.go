@@ -38,7 +38,7 @@ func TestServeActualInvalidPrivateSecretsHasZeroActionTerminal(t *testing.T) {
 func TestServeActualForbiddenTokenReferenceHasZeroActionTerminal(t *testing.T) {
 	serveActualTask(t, false, "secret_token")
 }
-func TestServeActualLostTerminalReceiptRetainsJournalAndRejectsRestart(t *testing.T) {
+func TestServeActualLostTerminalReceiptRetainsJournalThenReadonlyRestart(t *testing.T) {
 	serveActualTask(t, false, "terminal_lost_ack")
 }
 func TestServeActualRenewLossConfirmsStoppedOnlyAfterExpiry(t *testing.T) {
@@ -51,11 +51,22 @@ func serveActualTask(t *testing.T, artifact bool, modes ...string) {
 	}
 	st, admin, cfg, handler := agentControl(t)
 	var dropped atomic.Bool
+	var renewAttempts atomic.Int64
+	groupGoneBeforeCentralExpiry := false
+	var unrelated *exec.Cmd
+	if mode == "renew_network_failure" {
+		unrelated = exec.Command("sleep", "30")
+		if err := unrelated.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { unrelated.Process.Kill(); unrelated.Wait() })
+	}
 	if mode == "renew_network_failure" {
 		original := handler
 		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			original.ServeHTTP(w, r)
 			if r.URL.Path == "/api/agent/renew" {
+				renewAttempts.Add(1)
 				time.Sleep(2 * time.Second)
 			}
 		})
@@ -221,7 +232,25 @@ post:
 
 			return
 		}
+		if mode == "renew_network_failure" && view.Steps[0].Started {
+			if startedPGID == 0 {
+				files, _ := filepath.Glob(filepath.Join(cfg.DataDir, "journal", "*.json"))
+				for _, file := range files {
+					data, _ := os.ReadFile(file)
+					var state journalState
+					if json.Unmarshal(data, &state) == nil && state.Ref != nil && state.Ref.BuildID == view.ID {
+						startedPGID = state.PGID
+					}
+				}
+			}
+			if startedPGID > 0 && unix.Kill(-startedPGID, 0) != nil && view.Status == "running" {
+				groupGoneBeforeCentralExpiry = true
+			}
+		}
 		if mode == "renew_network_failure" && view.Status == "interrupted" && !view.StopUnconfirmed {
+			if renewAttempts.Load() < 2 || !groupGoneBeforeCentralExpiry || unix.Kill(unrelated.Process.Pid, 0) != nil {
+				t.Fatal("lost-ACK retry changed physical Authority boundary", renewAttempts.Load(), groupGoneBeforeCentralExpiry)
+			}
 			if view.Reason != "lease_expired" || view.Post[0].Started {
 				t.Fatal("expired receipt fabricated terminal/post", view)
 			}
@@ -270,8 +299,17 @@ post:
 			if e != nil {
 				t.Fatal(e)
 			}
-			if err := Serve(context.Background(), cfg); err == nil || err.Error() != "agent_journal_unconfirmed" {
-				t.Fatal("restart bypassed journal", err)
+			if err := Serve(context.Background(), cfg); err == nil || err.Error() != "agent_session_conflict" {
+				t.Fatal("readonly terminal proof did not clear journal before legal session window", err)
+			}
+			if inspectData(cfg.DataDir) != "" {
+				t.Fatal("exact confirmed terminal journal retained")
+			}
+			exactAfter, e := st.GetBuild(context.Background(), view.ID)
+			beforeJSON, _ := json.Marshal(view)
+			afterJSON, _ := json.Marshal(exactAfter)
+			if e != nil || !bytes.Equal(beforeJSON, afterJSON) {
+				t.Fatal("readonly recovery changed central terminal", e)
 			}
 			after, e := st.GetNode(context.Background(), admin, cfg.Node)
 			if e != nil || after.LastHeartbeat == nil || node.LastHeartbeat == nil || !after.LastHeartbeat.Equal(*node.LastHeartbeat) {
@@ -372,6 +410,14 @@ post:
 					t.Fatal("process group survived")
 				}
 				return
+			}
+			if mode == "terminal_lost_ack" {
+				latest, e := st.GetBuild(context.Background(), view.ID)
+				if e == nil && latest.Status == "succeeded" {
+					done <- err
+					continue
+				}
+				t.Fatalf("terminal central after actual Serve stopped: %v (%s/%s) steps=%v post=%v", err, latest.Status, latest.Reason, latest.Steps, latest.Post)
 			}
 			t.Fatalf("Serve stopped: %v (%s/%s)", err, view.Status, view.Reason)
 		case <-time.After(20 * time.Millisecond):

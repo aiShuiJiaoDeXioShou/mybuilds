@@ -261,21 +261,25 @@ type BatchView struct {
 	Builds []BuildSummary `json:"builds"`
 }
 type BuildSummary struct {
-	ID     string `json:"id"`
-	Name   string `json:"build_name"`
-	Number *int64 `json:"number"`
-	Status string `json:"status"`
-	Reason string `json:"reason,omitempty"`
+	RetryOf string `json:"retry_of,omitempty"`
+	ID      string `json:"id"`
+	Name    string `json:"build_name"`
+	Number  *int64 `json:"number"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 func batchView(batch store.BatchResult) BatchView {
 	result := BatchView{ID: batch.ID, SHA: batch.SHA, Builds: make([]BuildSummary, 0, len(batch.Builds))}
 	for _, build := range batch.Builds {
-		result.Builds = append(result.Builds, BuildSummary{ID: build.ID, Name: build.Name, Number: build.Number, Status: build.Status, Reason: build.Reason})
+		result.Builds = append(result.Builds, BuildSummary{ID: build.ID, Name: build.Name, Number: build.Number, Status: build.Status, Reason: build.Reason, RetryOf: build.RetryOf})
 	}
 	return result
 }
 func (s *Server) buildRoutes(w http.ResponseWriter, r *http.Request, actor store.Actor) bool {
+	if s.retryRoute(w, r, actor) {
+		return true
+	}
 	if s.artifactReadRoute(w, r, actor) {
 		return true
 	}

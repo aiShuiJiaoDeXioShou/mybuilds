@@ -13,8 +13,9 @@ MVP 批次、真实验证与完成定义见 [执行计划](plans/MVP_EXECUTION.m
 | 004-android-build | 已完成并验收 | [spec](../specs/004-android-build/spec.md)、[validation](../specs/004-android-build/validation.md)；前置b9d23a1，Android/共享process/CLI独立分区；真实APK/AAB为1.2.3/42，签名/mapping/快照/离线/错误密码/取消通过；根全量test/vet/race与Linux/Windows编译通过；集成提交 `2ab8991`：feat(android): 实现原生构建模板与环境检查 |
 | 005-ios-build | 实现与可执行验证中 | 待验收005完整保存于 `/tmp/mybuilds-mvp.zKtK0e/ios005-pending`（48文件双份SHA核对）；mobile签名/doctor/模板、config/CLI、主代理pipeline三个写入分区；原生keychain/P12非交互签名及自有清理原型通过，用户default/search list不变；真实Apple工程/P12/profile/Bundle ID待用户提供，IPA/dSYM验收未闭合 |
 | 006-control-plane | 已完成并验收 | [spec](../specs/006-control-plane/spec.md)、[plan](../specs/006-control-plane/plan.md)、[tasks](../specs/006-control-plane/tasks.md)、[validation](../specs/006-control-plane/validation.md)；003/004基线，20FR/6SC/42任务，零阻塞；store/server+SCM/config+CLI独立worktree；全量/race/vet、真实双库各37项及Linux37项CLI闭环PASS；converge无缺口；集成提交 `8e1397e`：feat(server): 实现控制端与持久化队列 |
-| 007-node-agents | 已完成并验收 | [spec](../specs/007-node-agents/spec.md)、[plan](../specs/007-node-agents/plan.md)、[tasks](../specs/007-node-agents/tasks.md)、[validation](../specs/007-node-agents/validation.md)；28FR/7SC/17AC、74任务；Store/Agent/HTTP-CLI三独立worktree冻结交接；真实三Mac/Linux节点、双库各51项、七种故障/进程停止、日志/SSE/完整快照/中央下载、Android签名101及取消103与Linuxordinary/always取消通过；全量test/race/vet和三入口12次跨平台构建通过，converge零缺口；整功能本地提交按此spec的Git日志定位，信息feat(agent): 实现多节点构建与中央证据 |
-| 008–012、014–015、019–020 | 未开始 | 满足依赖并集成后按 [MVP 批次](plans/MVP_EXECUTION.md#依赖与可并行批次)推进 |
+| 007-node-agents | 已完成并验收 | [spec](../specs/007-node-agents/spec.md)、[plan](../specs/007-node-agents/plan.md)、[tasks](../specs/007-node-agents/tasks.md)、[validation](../specs/007-node-agents/validation.md)；28FR/7SC/17AC、74任务；Store/Agent/HTTP-CLI三独立worktree冻结交接；真实三Mac/Linux节点、双库各51项、七种故障/进程停止、日志/SSE/完整快照/中央下载、Android签名101及取消103与Linuxordinary/always取消通过；全量test/race/vet和三入口12次跨平台构建通过，converge零缺口；集成提交 `85b46bf`：feat(agent): 实现多节点构建与中央证据 |
+| 008-build-recovery | 已完成并验收 | [spec](../specs/008-build-recovery/spec.md)、[tasks](../specs/008-build-recovery/tasks.md)、[validation](../specs/008-build-recovery/validation.md)、[convergence](../specs/008-build-recovery/convergence.md)；19FR/5SC/13AC、40任务，Store/Agent/HTTP-CLI分区；最终双库72应用、Linux关键路径/负例、12编译/6入口、全量normal/race/vet与零缺口收敛通过；真实ARM中央签名401/取消402强化通过；整功能提交以本行spec的Git记录定位，下一交付补实际哈希 |
+| 009–012、014–015、019–020 | 规范与规划准备中 | 依赖满足后按 [MVP 批次](plans/MVP_EXECUTION.md#依赖与可并行批次)推进；规划不代表代码验收 |
 | 013、016–018 | 未开始，后置 | 不作为本轮 MVP 完成前提 |
 
 更新一行时补充实际 specs 链接、当前阶段、验证结论/证据位置、缺失真实条件及功能集成提交；验收未闭合不记“已完成”。提交哈希来自真实 Git 记录，规划状态不代表代码可用。
@@ -26,3 +27,5 @@ MVP 批次、真实验证与完成定义见 [执行计划](plans/MVP_EXECUTION.m
 共享process慢日志排空缺陷按SpecKit bug-assess→fix→test完成，Darwin/Linux真实进程回归及原Android远程签名/日志/中央下载通过，独立本地提交 `58bc9c8`（`fix(process): 防止慢日志回传误判成功进程`）；不包含007未验收实现。验证见[缺陷记录](../.specify/bugs/slow-log-pipe-drain/test.md)。
 
 020保留策略规范在独立worktree `/tmp/mybuilds-mvp.zKtK0e/retention020-planning` 已完成25FR/7SC/16AC、质量16/16，仅specify；可信终态时间、跨build筛选、删除保护及Agent幂等门已明确，待008/019验收后plan/实现。
+
+共享process派生工具/原组最终停止确认修复已通过原AMD取消206、最终ARM签名中央401/取消402、Darwin及两Linux原生门，完整test/race/vet；本地提交 `dd8fb4a`（fix(process): 修正派生工具与最终停止确认）。三项关联缺陷均verified，旧204/207保护未改，原因不回填，见[缺陷验证](../.specify/bugs/detached-gradle-stop/test.md)。

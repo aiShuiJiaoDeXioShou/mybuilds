@@ -21,15 +21,19 @@ func (execution *taskExecution) confirmStopped(parent context.Context) error {
 	if err != nil {
 		return err
 	}
-	// 一次续租可能已在中央提交而回执丢失，截止还须包含一个心跳间隔。
+	// 有界续租重试可能已在中央提交而丢回执，等待覆盖最后实际请求的最大TTL。
 	execution.lease.mu.Lock()
 	deadline := execution.lease.deadline
+	possibleExpiry := execution.lease.possibleExpiry
 	execution.lease.mu.Unlock()
 	margin := 2 * time.Second
 	if execution.lease.cfg.HeartbeatInterval > margin {
 		margin = execution.lease.cfg.HeartbeatInterval
 	}
 	deadline = deadline.Add(margin + execution.lease.cfg.HeartbeatInterval + 2*time.Second)
+	if later := possibleExpiry.Add(2 * time.Second); later.After(deadline) {
+		deadline = later
+	}
 	for {
 		// 服务退出不等整段TTL；只做一次有界的独立确认，失败留下pending材料。
 		callParent := parent

@@ -32,7 +32,10 @@ func Serve(ctx context.Context, cfg config.AgentConfig) (result error) {
 			result = err
 		}
 	}()
-	// 旧执行证据阻止新身份领取，既不重放也不按旧PID发信号。
+	// 当前节点只读确认精确终态；任何旧活动/未知证据仍拒绝，不按旧PID发信号。
+	if err = recoverTerminalJournals(ctx, client, lock, cfg.Node); err != nil {
+		return err
+	}
 	if reason := inspectData(cfg.DataDir); reason != "" && reason != "uninitialized" {
 		return failure(reason)
 	}
@@ -78,6 +81,7 @@ func Serve(ctx context.Context, cfg config.AgentConfig) (result error) {
 		defer workers.Done()
 		ticker := time.NewTicker(cfg.HeartbeatInterval)
 		defer ticker.Stop()
+		lastHeartbeat := time.Now()
 		for {
 			select {
 			case <-live.Done():
@@ -91,6 +95,13 @@ func Serve(ctx context.Context, cfg config.AgentConfig) (result error) {
 				if e == nil {
 					e = checkSessionGrant(cfg, request.SessionID, grant.NodeID, heartbeat)
 				}
+				if e == nil {
+					lastHeartbeat = time.Now()
+					client.paused.Store(false)
+				}
+				if temporaryNetwork(e) && time.Now().Before(lastHeartbeat.Add(cfg.LeaseDuration)) {
+					continue
+				}
 				if e != nil {
 					select {
 					case heartbeatErrors <- e:
@@ -103,6 +114,9 @@ func Serve(ctx context.Context, cfg config.AgentConfig) (result error) {
 	}()
 	completion := make(chan error, cfg.Capacity)
 	active := 0
+	var pending *executionJournal
+	var requested, claimDeadline time.Time
+	claimExpired := false
 	usage := &spoolUsage{}
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
@@ -123,26 +137,51 @@ func Serve(ctx context.Context, cfg config.AgentConfig) (result error) {
 				}
 				return e
 			}
+
 		case <-ticker.C:
-			if active >= cfg.Capacity {
-				continue
-			}
 			if e := lock.Check(); e != nil {
 				return e
 			}
-			journal, e := newJournal(lock, uuid.NewString(), request.SessionID)
-			if e != nil {
-				return e
+			if pending == nil {
+				if active >= cfg.Capacity || client.paused.Load() {
+					continue
+				}
+				var e error
+				pending, e = newJournal(lock, uuid.NewString(), request.SessionID)
+				if e != nil {
+					return e
+				}
+				requested = time.Now()
+				claimDeadline = requested.Add(cfg.LeaseDuration - leaseMargin(cfg))
+				claimExpired = false
 			}
-			requested := time.Now()
+			// 未确认claim只在原请求起点限定的窗口确认，心跳不能清掉未知证据。
+			if claimExpired || !time.Now().Before(claimDeadline) {
+				claimExpired = true
+				continue
+			}
 			var task protocol.LeaseGrant
-			e = client.retryPost(live, "/api/agent/claim", protocol.ClaimRequest{SessionID: request.SessionID, ClaimKey: journal.state.ClaimKey}, &task)
+			claimCtx, stopClaim := context.WithDeadline(live, claimDeadline)
+			e := client.post(claimCtx, "/api/agent/claim", protocol.ClaimRequest{SessionID: request.SessionID, ClaimKey: pending.state.ClaimKey}, &task)
+			stopClaim()
 			if e != nil {
 				if ctx.Err() != nil {
 					return nil
 				}
+				if temporaryNetwork(e) {
+					continue
+				}
+				if !time.Now().Before(claimDeadline) && e.Error() == "agent_cancelled" {
+					claimExpired = true
+					continue
+				}
 				return e
 			}
+			if !time.Now().Before(claimDeadline) {
+				claimExpired = true
+				continue
+			}
+			journal := pending
 			if task.Task == nil {
 				if task.Ref != (protocol.LeaseRef{}) || task.TTLNS != 0 {
 					return failure("invalid_response")
@@ -150,6 +189,7 @@ func Serve(ctx context.Context, cfg config.AgentConfig) (result error) {
 				if e = journal.remove(); e != nil {
 					return e
 				}
+				pending = nil
 				continue
 			}
 			if task.Ref.NodeID != grant.NodeID || task.Ref.SessionID != request.SessionID {
@@ -158,11 +198,22 @@ func Serve(ctx context.Context, cfg config.AgentConfig) (result error) {
 			if e = journal.setLease(task.Ref, task.RemainingBudgetNS, task.RemainingPostBudgetNS); e != nil {
 				return e
 			}
+			if task.TTLNS <= 0 || task.TTLNS > int64(cfg.LeaseDuration) {
+				return failure("invalid_response")
+			}
+			if !time.Now().Before(requested.Add(time.Duration(task.TTLNS) - leaseMargin(cfg))) {
+				claimExpired = true
+				continue
+			}
+			pending = nil
+			// goroutine保存本次原请求时刻，后续claim不能覆盖其Authority起点。
+			taskRequested := requested
+
 			active++
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
-				e := executeTask(live, client, lock, cfg, journal, task, requested, usage)
+				e := executeTask(live, client, lock, cfg, journal, task, taskRequested, usage)
 				select {
 				case completion <- e:
 				case <-live.Done():

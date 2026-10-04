@@ -8,6 +8,8 @@
 
 000–004、006 已验收并按整功能集成。007 已实现并验收，提供三个独立 CLI、节点身份/标签/容量/drain、固定 SHA 执行、租约及预算/步骤/post 证据、UTC 脱敏日志/SSE、中央制品与取消/停止保护；两个 macOS 节点与一个真实 Linux 节点闭环通过。SQLite 与 PostgreSQL 各 51 项相同真实三二进制应用检查、Android 签名构建号 101 的 APK/AAB/mapping 中央下载及实际 Gradle 取消通过；全量 test/race/vet 与 12 次三入口跨平台纯 Go 构建通过。Linux 普通/always 真实取消强化与 Spec Kit 收敛通过；整功能本地提交见[实施历史](../IMPLEMENTATION_HISTORY.md)。
 
+008 原快照重试、启动核对与终态只读核对已完成并验收，最终双库应用各36正例、此前负例及Linux普通/always中断检查通过；共享停止确认修复、真实ARM签名/中央下载/取消、全量test/race/vet及Spec Kit收敛通过。详情见[008验证](../../specs/008-build-recovery/validation.md)。
+
 整个 MVP 未完成。005 真实 Apple profile 与签名 archive/export 尚未验收，当前集成代码不提供 iOS 签名执行；Flutter、审批、发布、Webhook、报告和保留策略等后续门不因 007 通过而放宽。当前生效 approval/upload/reports/notifications 在执行前明确拒绝。
 
 ### 当前可运行入口
@@ -28,7 +30,7 @@
 
 中央仅公开已确认日志和校验后的制品；下载检查大小/SHA-256 后排他发布，不覆盖既有文件。Agent 离线后仍可下载中央已确认内容。日志跟随和下载具有独立预算，普通 API timeout 不截断流。serve 在线时同库本机管理拒绝，使用远程管理；第二控制端拒绝。
 
-同项目同名 build 串行，无 runner 仅使用 default_node，未匹配到授权平台/标签/容量时保持排队。drain 允许原任务续租但不领取新任务；disable/revoke/轮换撤销原执行权，不能再执行 always。取消与失联通过实际进程组回收/证据处理，不靠等待推断；停止未确认的 interrupted 保持 guard 和隔离，管理员完整 fence 的实际停止确认只解除保护，不改变原终态。审批、重试或发布恢复属于后续功能，不能用停止确认代替。
+同项目同名 build 串行，无 runner 仅使用 default_node，未匹配到授权平台/标签/容量时保持排队。drain 允许原任务续租但不领取新任务；disable/revoke/轮换撤销原执行权，不能再执行 always。取消与失联通过实际进程组回收/证据处理，不靠等待推断；停止未确认的 interrupted 保持 guard 和隔离，管理员完整 fence 的实际停止确认只解除保护，不改变原终态。显式retry创建新构建；审批或发布恢复仍属后续功能，不能用停止确认代替结果确认。
 
 ## 实施步骤
 
@@ -144,7 +146,7 @@ Google Play/App Store 接入不自写完整市场协议；具体认证、默认�
 
 使用 [007 快速指南](../../specs/007-node-agents/quickstart.md) 创建自己的普通文件、0700 数据目录、数据库、端口、CA、token 与受信 Git 仓库，实际启动 Server/Client/Agent 三二进制。SQLite 与独立 PostgreSQL 数据库执行相同管理、固定 SHA、ordinary/post、20 次幂等触发、取消/guard、续租、日志/SSE、二进制制品下载、角色与第二控制端检查；记录 UTC、退出码、固定 SHA、实际 PID/PGID 和摘要。旧 journal 不重放，停止确认要求完整执行归属和实际停止依据；不得删除记录或改状态绕过保护。
 
-007 已有同套双库各 51 项实际应用结果及真实两 macOS + Linux 节点证据。以下真实构建与完整 MVP 项目仍是后续验收清单，不表示命令或能力已经交付。本地 approval 交互、审批 API/CLI、retry、通知、Webhook、上传、retention 和 JUnit 尚未交付，不把模拟成功当成验收。
+007 已有同套双库各 51 项实际应用结果及真实两 macOS + Linux 节点证据。以下真实构建与完整 MVP 项目仍是后续验收清单，不表示命令或能力已经交付。本地 approval 交互、审批 API/CLI、通知、Webhook、上传、retention 和 JUnit 尚未交付，不把模拟成功当成验收。
 
 **真实构建验证**
 
