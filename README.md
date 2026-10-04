@@ -105,6 +105,7 @@ iOS 分配到具备 Xcode 和签名资源的 macOS 节点，Android 可分配到
 
 CLI 使用 Cobra；后续流水线配置使用 YAML，服务端 HTTP 使用标准库，数据库使用 GORM，默认 SQLite、可选 PostgreSQL。
 飞书采用官方第三方 `oapi-sdk-go/v3`，其他机器人通知使用标准库 HTTP。
+构建产物由控制端托管下载；后续内置分发目标为 fir.im 与 generic，不属于 MVP。
 这些业务依赖随功能引入并锁定版本，具体边界与安全、恢复要求见 [PLAN.md](docs/plans/PLAN.md)。
 
 ## 验证与版本注入

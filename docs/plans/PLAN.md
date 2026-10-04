@@ -280,10 +280,10 @@ steps:
     notify: [feishu]
 
   - kind: upload                        # 内置分发，非 shell 拼 curl
-    target: pgyer                       # pgyer | fir | generic
+    target: fir                         # fir | generic
     file: "*.apk"                       # 匹配已收集产物；零个或多个匹配均报错
     channel: "{{channel}}"
-    api_key: ${PGYER_API_KEY}
+    api_key: ${FIR_API_KEY}
 ```
 
 步骤类型只做 4 种：`run` / `artifact` / `approval` / `upload`；checkout 是前置操作，最终通知属于统一收尾。
@@ -501,11 +501,11 @@ mybuilds version
 
 ### P5 产物与分发
 
-- [ ] `upload`：蒲公英 / fir.im / generic multipart，上传前保存操作记录，校验产物匹配唯一性
+- [ ] `upload`：fir.im / generic multipart，上传前保存操作记录，校验产物匹配唯一性
 - [ ] 上传结果未知时查询远端或由 admin 用 `resolve-upload` 确认并记录依据，阻止自动重发及未确认的发布重试
 - [ ] 配置快照与上传产物绑定，审批后发布原产物，不重新构建
 - [ ] retention 清理终态构建（保留 N 个 / N 天），保护待审批与未知结果任务
-- [ ] 蒲公英真实上传闭环，验证失败与中断后的状态
+- [ ] fir.im 与 generic 上传闭环，验证失败与中断后的状态
 
 ### P6 部署与打磨
 
@@ -552,7 +552,7 @@ mybuilds approve <id> && mybuilds build show <id>   # 继续并成功
 
 **真实构建验证**
 
-1. 一个真 Android 工程：出 apk + aab + mapping.txt，versionCode 等于构建号，上传到蒲公英成功
+1. 一个真 Android 工程：出 apk + aab + mapping.txt，versionCode 等于构建号，产物可下载并校验摘要
 2. 一个真 iOS 工程：archive → export → ipa + dSYM，签名有效（`codesign -dv` 校验）
 3. GitLab / GitHub / Gitee / 一个自建 Git 各连一次，push 触发成功；把某个 hook 的 secret 改错，确认被拒
 4. 轮询模式：手动在仓库推一次 commit，确认在间隔内被探测并触发
