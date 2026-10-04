@@ -126,6 +126,13 @@ func TestLostLockNeverWrites(t *testing.T) {
 
 func TestLockLostDuringTransactionRollsBack(t *testing.T) {
 	stores(t, func(t *testing.T, s *Store, opt Options) {
+		// 事务占用连接前记录自身会话，故障不得误选同集群其他数据库。
+		var pid int
+		if opt.Driver == "postgres" {
+			if err := s.conn.QueryRowContext(testContext, "SELECT pg_backend_pid()").Scan(&pid); err != nil {
+				t.Fatal("own writer pid")
+			}
+		}
 		started := make(chan struct{})
 		proceed := make(chan struct{})
 		done := make(chan error, 1)
@@ -149,11 +156,6 @@ func TestLockLostDuringTransactionRollsBack(t *testing.T) {
 			}
 		} else {
 			pool, _ := s.db.DB()
-			var pid int
-			if err := pool.QueryRowContext(testContext, "SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND classid = 1973481521 AND objid = 6 AND objsubid = 2 AND granted").Scan(&pid); err != nil {
-				close(proceed)
-				t.Fatal("own writer pid")
-			}
 			if _, err := pool.ExecContext(testContext, "SELECT pg_terminate_backend($1)", pid); err != nil {
 				close(proceed)
 				t.Fatal("terminate own transaction")
