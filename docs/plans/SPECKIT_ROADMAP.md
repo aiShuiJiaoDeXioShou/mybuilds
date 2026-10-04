@@ -1,13 +1,13 @@
 # mybuilds 的 Spec Kit 实施路线
 
-本文件是功能拆分与操作案例，不代表已生成正式 spec 或开始实现。产品与技术决策以 [PLAN.md](PLAN.md) 为准。
+本文件是功能拆分与操作案例，业务案例不代表已生成正式 spec 或开始实现；项目初始化见 specs/000-project-bootstrap。产品与技术决策以 [PLAN.md](PLAN.md) 为准。
 按可独立验收的用户能力拆分 feature，不按 config / store / API 等目录分别开发。
 
 ## 开始前
 
 - 当前使用 Spec Kit 1.0.13，Codex 已设为默认集成，技能位于 `.agents/skills/speckit-*/SKILL.md`；下文使用 `$speckit-xxx` 写法，在 Codex 聊天中逐条调用，不是 shell 命令。
 - Pi 集成保留在 `.pi/prompts/`，使用 `/speckit.xxx` 写法；本项目的 bug 扩展也已注册为 Codex 技能。技能列表未更新时重新打开 Codex 会话。
-- `.specify/memory/constitution.md` 仍是占位模板，先确定项目原则；当前目录尚未初始化 Git，若采用分支工作流，先建立仓库和基线提交。
+- 项目原则已在 `.specify/memory/constitution.md` 确立为 1.0.0；Git 基线与 `000-project-bootstrap` 初始化已建立。后续沿用原则与已有入口。
 - 一次只推进一个 feature。编号为建议顺序，正式目录名以 Spec Kit 的实际生成结果为准；后续 feature 基于已完成的代码继续实现。
 
 项目原则的输入示例：
@@ -27,7 +27,8 @@ $speckit-constitution
 
 | 建议编号与目录后缀 | 阶段 / 依赖 | 实施顺序 | 功能完成的验收点 |
 |---|---|---|---|
-| 001-pipeline-preview | P0；无 | 双 CLI 入口与版本 → init → 配置结构和严格校验 → 按字段插值与脱敏 → dry-run | 可生成配置并预览；错误字段和缺失密钥报错；预览没有外部动作 |
+| 000-project-bootstrap | P0；无 | Go 单模块 → 双 CLI 与共享版本 → README / AI 阅读入口 → 本地提交 | 帮助与版本可运行；规范与文档指引齐全（已完成） |
+| 001-pipeline-preview | P0；000 | 复用双 CLI 入口与版本 → init → 配置结构和严格校验 → 按字段插值与脱敏 → dry-run | 可生成配置并预览；错误字段和缺失密钥报错；预览没有外部动作 |
 | 002-local-run | P1；001 | 顺序执行 run → 分步骤日志 → 失败收尾 → 取消与平台进程控制 | 假项目可运行；失败不继续；取消后无该次构建残留进程；当前工作树不被重置 |
 | 003-build-artifacts | P1；002 | glob 收集 → 路径与符号链接边界 → 产物清单、大小与摘要 | 产物可定位和校验；越界访问与不符合匹配要求的配置被拒绝 |
 | 004-android-build | P1；003 | 本机 Android doctor → 版本和签名环境 → Gradle 模板 → 缓存复用 | 真项目产出 apk / aab / mapping；版本正确；错误 JDK 或签名配置可诊断 |
@@ -67,7 +68,7 @@ CLI 契约写命令、输出和退出码；不为 CLI 功能杜撰 HTTP API 或�
 
 ## 案例：001 流水线初始化与预览
 
-这是可从当前空业务代码状态开始的第一个 feature。下面是输入和期望产物示例，不是已执行的命令。
+这是在 000 初始化基础上开始的第一个业务 feature。下面是输入和期望产物示例，不是已执行的命令。
 
 ### 第一步：描述需求
 
@@ -104,14 +105,14 @@ env 和明确的凭据字段支持引用当前环境变量，缺失时报错；r
 ```text
 $speckit-plan
 读取 docs/plans/PLAN.md 和现有代码，使用 Go、Cobra、go.yaml.in/yaml/v3。
-只建立必要的 cmd/server、cmd/client、internal/cli、internal/config 和 internal/version。
+复用 cmd/mybuilds、cmd/mybuilds-server、internal/cli/client、internal/cli/server 和 internal/version，仅增加本功能需要的 internal/config。
 配置直接解码到结构体并严格校验；env / 凭据按字段解析，run 正文不插值。
 预览渲染不调用执行器，已知运行时变量显示待确定；明确 init / dry-run 的输出与退出码。
 用 Go 自带 testing 编写上述行为测试。不引入 Gin、GORM、Viper、cron 或飞书 SDK，它们在后续功能接入。
 本功能无数据库；数据模型仅说明配置结构，contracts 描述 CLI 契约，quickstart 给出可重复验收步骤。
 ```
 
-`plan.md` 中的实施顺序为：必要入口 → 配置结构与校验 → 字段插值和脱敏 → 命令接入 → CLI 验收。
+`plan.md` 中的实施顺序为：复用入口 → 配置结构与校验 → 字段插值和脱敏 → 命令接入 → CLI 验收。
 两个入口只提供当前阶段所需命令，不提前挂一整棵空子命令树。
 
 ### 第三步：拆成任务
@@ -125,16 +126,16 @@ $speckit-tasks
 `tasks.md` 的粒度示例（具体任务由实际 plan 生成）：
 
 ```text
-- [ ] T001 初始化 go.mod 并锁定 Cobra / YAML，建立 cmd/client/main.go 与 cmd/server/main.go 的版本入口
+- [ ] T001 复用 go.mod、Cobra 与双版本入口，按本功能引入并锁定 YAML
 - [ ] T002 定义 internal/config/pipeline.go 的四种步骤结构与字段规则
-- [ ] T003 [US1] 在 internal/cli/client_test.go 写 init 生成与拒绝覆盖用例
-- [ ] T004 [US1] 在 internal/cli/client.go 实现 init，生成最小可预览配置
+- [ ] T003 [US1] 在 internal/cli/client/root_test.go 写 init 生成与拒绝覆盖用例
+- [ ] T004 [US1] 在 internal/cli/client/root.go 实现 init，生成最小可预览配置
 - [ ] T005 [US2] 在 internal/config/pipeline_test.go 写合法配置、正文原样保留与运行时变量用例
 - [ ] T006 [US2] 在 internal/config/pipeline.go 实现严格解码与按字段变量处理
-- [ ] T007 [US2] 在 internal/cli/client_test.go 写 dry-run 有序输出、无命令执行、无工作区创建用例
-- [ ] T008 [US2] 在 internal/cli/client.go 实现纯预览路径与退出码
-- [ ] T009 [US3] 在 internal/config/pipeline_test.go 和 internal/cli/client_test.go 写未知字段、缺失密钥及输出脱敏用例
-- [ ] T010 [US3] 在 internal/config/pipeline.go 和 internal/cli/client.go 完成错误定位与预览脱敏
+- [ ] T007 [US2] 在 internal/cli/client/root_test.go 写 dry-run 有序输出、无命令执行、无工作区创建用例
+- [ ] T008 [US2] 在 internal/cli/client/root.go 实现纯预览路径与退出码
+- [ ] T009 [US3] 在 internal/config/pipeline_test.go 和 internal/cli/client/root_test.go 写未知字段、缺失密钥及输出脱敏用例
+- [ ] T010 [US3] 在 internal/config/pipeline.go 和 internal/cli/client/root.go 完成错误定位与预览脱敏
 - [ ] T011 按 specs/<实际功能目录>/quickstart.md 验收 init / dry-run，运行 go test ./... 并记录结果
 ```
 

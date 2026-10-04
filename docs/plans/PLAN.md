@@ -1,6 +1,6 @@
 # mybuilds — 移动端构建发布工具（Go / CLI）
 
-> 目标目录：`/Users/linghe/project/mybuilds`（规划阶段，尚无业务代码）
+> 目标目录：`/Users/linghe/project/mybuilds`（项目已初始化，业务功能按路线逐步实现）
 
 ## Context
 
@@ -58,12 +58,12 @@ Git 操作走 `git` 命令行（`os/exec`），不用 go-git —— go-git 体�
 CLI 分发形态：
 
 ```
-cmd/server/  → mybuilds-server   服务端二进制
+cmd/mybuilds-server/  → mybuilds-server   服务端二进制
                  ├─ serve          起 HTTP API + 调度 + 引擎
                  ├─ migrate        建表 / 升级 schema
                  ├─ project add|ls|rm
                  └─ token create|ls|revoke
-cmd/client/  → mybuilds          客户端二进制（连服务端）
+cmd/mybuilds/  → mybuilds          客户端二进制（连服务端）
                  ├─ trigger / build ls|show|logs|cancel|retry
                  ├─ approvals / approve / reject
                  ├─ run           本地调试流水线，不经过服务端
@@ -293,19 +293,26 @@ v1 只处理 push 事件，tag/PR 事件忽略。分支用 `--branches` 的 glob
 
 ## 文件清单
 
+以下为采用的目标结构；业务文件、examples 和 deploy 随对应功能创建，不预建空包。
+当前已实现内容见项目 [README](../../README.md)。
+服务生命周期、HTTP、调度和恢复统一归入 internal/server；客户端与服务端 CLI 分包。
+
 ```
 go.mod
-cmd/server/main.go              # 服务端二进制入口：serve / migrate / project / token
-cmd/client/main.go              # 客户端二进制入口：trigger / build / approvals / run / doctor
+cmd/mybuilds-server/main.go    # 服务端二进制入口：serve / migrate / project / token
+cmd/mybuilds/main.go           # 客户端二进制入口：trigger / build / approvals / run / doctor
 
-internal/cli/server.go          # 服务端子命令（cobra：serve/migrate/project/token）
-internal/cli/client.go          # 客户端子命令（cobra：trigger/build/approvals/run/doctor）
+internal/cli/server/root.go    # 服务端子命令（cobra：serve/migrate/project/token）
+internal/cli/client/root.go    # 客户端子命令（cobra：trigger/build/approvals/run/doctor）
 internal/config/pipeline.go     # YAML 结构体、严格校验、按字段插值，run 正文保留 shell 变量
 internal/config/server.go       # server.yml：listen/dsn/secrets/retention，Viper 覆盖
 internal/config/client.go       # client.yml：server 地址 + token
 internal/version/version.go     # 版本信息（ldflags 注入，两端共用）
 internal/pipeline/engine.go     # 顺序执行、恢复位置、ctx 取消、进程组 kill、统一收尾
-internal/pipeline/steps.go      # 4 种 step 的实现
+internal/pipeline/run.go        # shell 执行与进程取消
+internal/pipeline/artifact.go   # 产物收集与路径校验
+internal/pipeline/approval.go   # 审批挂起与继续
+internal/pipeline/upload.go     # 分发与未知结果处理
 internal/pipeline/mask.go       # 日志 writer，把密钥值替换成 ***
 
 internal/store/store.go         # GORM 模型 + 仓库层，AutoMigrate，sqlite/postgres 双驱动注入
@@ -313,9 +320,10 @@ internal/store/models.go        # Project / Build / Step / Approval / Event / To
 internal/scm/git.go             # clone / fetch / ls-remote / sha / 工作区准备
 internal/scm/hook.go            # webhooks/v6（GitHub/GitLab）+ Gitee/自建解析与事件去重
 
-internal/serve/server.go        # net/http 路由、Bearer 鉴权中间件
-internal/serve/api.go           # JSON API、日志 SSE tail、产物下载
-internal/queue/queue.go         # 定时/轮询 + 并发槽 + 同项目串行 + 审批扫描与启动恢复
+internal/server/server.go       # 服务生命周期、组件组装与优雅关闭
+internal/server/http.go         # net/http 路由、鉴权、JSON API、日志 SSE 与产物下载
+internal/server/scheduler.go    # 定时/轮询 + 并发槽 + 同项目串行 + 审批扫描
+internal/server/recovery.go     # 启动恢复与中断状态处理
 internal/notify/notify.go       # 飞书(oapi-sdk-go) / 企微 / 钉钉 / 通用 webhook
 
 internal/mobile/android.go      # gradle 辅助：版本、keystore 注入、JDK 与 SDK 检查
@@ -389,10 +397,10 @@ mybuilds version
 
 ## 实施步骤
 
-### P0 骨架（可运行的空壳）
+### P0 骨架与流水线预览
 
-- [ ] `go mod init`，先引入 cobra 与 YAML，其他依赖随对应阶段加入并锁定版本
-- [ ] `cmd/server` + `cmd/client` 两个入口，cobra 最小子命令集（`version` / `init`）
+- [x] `000-project-bootstrap`：Go 单模块、Cobra、双 CLI 帮助与共享 version；README 与 AI 阅读入口
+- [ ] `001-pipeline-preview`：复用已有入口，引入 YAML，增加 `init` 和 `run --dry-run`；其他依赖随对应阶段加入并锁定版本
 - [ ] `internal/config/pipeline.go`：严格字段与步骤校验、参数默认值、按字段插值；保留 run 正文中的 shell 变量
 - [ ] `internal/pipeline/mask.go` + 单测
 - [ ] `mybuilds run --dry-run` 打印脱敏计划，不触发命令或外部动作
@@ -464,7 +472,7 @@ App Store / Google Play 上传**不做内置**，文档里给 `kind: run` + fast
 - `internal/store`：**双驱动**跑同一套事务 / 构建号分配 / 去重 / 条件更新 / 分页用例；token 撤销后不得再次初始化
 - `internal/pipeline`：成功 / 失败 / 取消均收尾，分段日志中的密钥被脱敏，产物路径及符号链接不能越界
 - `internal/scm/hook.go`：**四种来源的签名校验**，含 GitHub HMAC 篡改 body 必须拒绝、错误 token 必须拒绝
-- `internal/queue`：同项目串行、审批释放全局槽、重复事件只入队一次、同 SHA 不同参数可触发、轮询游标与入队同时提交
+- `internal/server`：同项目串行、审批释放全局槽、重复事件只入队一次、同 SHA 不同参数可触发、轮询游标与入队同时提交
 - 审批与发布：重复批准 / 取消不能覆盖终态；重启后从正确步骤继续；未知上传结果不能自动重发
 
 **端到端（本地，无需真机）**
