@@ -211,25 +211,13 @@ build_profiles:                         # 可复用构建方案，名称由管�
 retention:
   builds: 100                           # 每项目保留数量
   days: 30                              # 保留天数；活动/待审批/未知上传结果受保护
-notifiers:
-  feishu:                                # 名称由用户定义，可配置多个同类机器人
-    type: feishu                         # oapi-sdk-go
-    webhook: "${FEISHU_WEBHOOK}"
-  app-feishu:
-    type: feishu
-    webhook: "${APP_FEISHU_WEBHOOK}"
-  wechat:
-    type: wechat                         # stdlib POST
-    webhook: "${WECHAT_WEBHOOK}"
-  dingtalk:
-    type: dingtalk                       # stdlib POST
-    webhook: "${DINGTALK_WEBHOOK}"
-
-defaults:                                # 全局默认策略，与渠道定义分开
+defaults:                                # 项目未指定时采用的全局默认通知
   notifications:
     enabled: true
     on: [success, failure, cancelled]
-    to: [feishu]
+    webhooks:
+      - type: feishu                     # 也支持 wechat / dingtalk / generic
+        url: "${DEFAULT_FEISHU_WEBHOOK}"
     template: "{{project}} #{{build.number}} {{build.status}} {{build.url}}"
 ```
 
@@ -243,17 +231,23 @@ token 由数据库管理；首次启动可设置 `MYBUILDS_BOOTSTRAP_ADMIN_TOKEN
 
 ### 项目独立通知与全局默认值（随通知功能实现）
 
-- `notifiers` 定义具名通知渠道，`defaults.notifications` 定义默认发送策略；不使用含义模糊的 `def` 缩写。
-  项目可以使用自己的机器人，也可以引用同一个机器人，Webhooks/密钥仅在控制端受限配置中保存。
+- 项目管理设置、仓库 mybuilds.yml 和构建方案都可以直接填写 notifications.webhooks，
+  每项包含 type 与 url；支持 URL 字面量或环境变量引用，不要求先在服务端注册机器人名称。
+  defaults.notifications 仅提供全局默认值。
 - 通知策略按字段覆盖：项目管理配置 > 选定流水线的 notifications > 全局 defaults.notifications。
   仓库流水线和服务端构建方案都是流水线来源；未填写字段继承下一层，列表整体替换，不追加合并。
-- `enabled: false` 明确关闭项目通知，审批提醒也不发送；`to: []` 表示没有收件渠道，不能误解为继承全局。
-  未配置任何通知层时默认关闭；`null`、未知渠道及无权限渠道在执行前报错，不静默回退到其他机器人。
-- 项目管理员配置 allowed_notifiers；未指定时仅允许全局默认的渠道。仓库只能引用已授权的名称，
-  不能自行指定 Webhook URL、读取控制端密钥或修改渠道授权。审批步骤的 notify 同样校验授权和 enabled。
-- 第一次执行前保存最终通知策略及渠道名称快照，不保存 Webhook/token 明文；处理中项目修改不改变本次策略。
-  retry 沿用原策略引用，发送时仍检查当前授权与渠道存在性；密钥轮换读取当前凭据，撤销后不改投其他渠道。
-  同时记录策略来自项目、流水线还是全局，通知失败不覆盖构建结果。
+- 未指定 webhooks 才继承下一层；项目直接配置后整体替换默认列表，不重复发送到全局机器人。
+  基线默认 enabled: true、on: [success, failure, cancelled]、webhooks: []，直接填地址即可使用。
+  enabled: false 明确关闭通知；webhooks: [] 明确不发送。所有通知层都未配置时不发送。
+  null、未知 type、无效 URL 或缺失环境引用均明确报错；发送失败不改投全局 Webhook。
+- approval.notify 使用布尔值，默认 true，沿用最终 webhooks 并遵守 enabled；不再选择机器人名称。
+- 通知仍由控制端发送；URL 与可选签名密钥属于敏感值，日志、dry-run、错误和详情输出均脱敏。
+  直接填写的敏感值在导入或读取时自动保存至控制端受限凭据文件（0600），数据库/执行快照仅存内部引用，
+  不要求用户预注册；环境引用从控制端受限环境解析，不把通知凭据注入构建进程。
+- 只执行已注册可信项目的通知配置；校验 HTTPS URL 和 type 对应目标，generic 防止请求本机/内网/元数据地址，
+  DNS 解析结果在连接时校验，禁用重定向，设置超时和响应大小上限；不得借通知读取控制端任意文件。
+- 执行前保存最终通知策略和敏感值引用，记录来源；项目修改不改变本次策略，retry 沿用原快照。
+  环境引用按当前凭据解析；失效或发送失败单独记录，不覆盖构建结果，也不回退到其他目的地。
 
 ### 项目管理设置（导入数据库）
 
@@ -267,9 +261,10 @@ pipeline:
   params:
     version: "1.0.0"
     channel: 内测
-allowed_notifiers: [feishu, app-feishu]
 notifications:
-  to: [app-feishu]                        # 该项目独立的飞书群
+  webhooks:
+    - type: feishu
+      url: "https://open.feishu.cn/open-apis/bot/v2/hook/REPLACE_ME"  # 直接填项目机器人地址
   on: [failure]                          # 其余字段继承流水线/全局默认
 ```
 
@@ -348,7 +343,9 @@ env:                                    # 明确支持 ${SECRET} 和 {{var}} 的
 notifications:                          # 可省略；项目设置优先，其次本块，最后全局默认
   enabled: true
   on: [success, failure, cancelled]
-  to: [feishu]
+  webhooks:
+    - type: feishu
+      url: "${APP_FEISHU_WEBHOOK}"        # 也可直接填写该项目 URL，无需全局注册
   template: "{{project}} #{{build.number}} {{build.status}} {{build.url}}"
 
 steps:
@@ -370,7 +367,7 @@ steps:
 
   - kind: approval                      # 挂起等人放行
     name: 发布到内测渠道
-    notify: [feishu]
+    notify: true                        # 使用项目最终通知配置
 
   - kind: upload                        # 内置分发，非 shell 拼 curl
     target: google_play                 # google_play | app_store | custom（MVP）
@@ -510,7 +507,7 @@ GET    /api/artifacts/{id}/{file}          # 产物下载
 | `project add <name>` | `--repo` 必填；`--provider` 默认 generic，可选 github/gitlab/gitee/generic；`--branches` 默认 main | 注册可信仓库与允许分支，分支列表支持 glob |
 | 同上：节点授权 | `--nodes` 必填，逗号分隔；`--default-node` 可选且须在允许集合内 | 限定项目可用节点；未声明 runner 时使用默认节点 |
 | 同上：版本 | `--build-number-start` 默认 1，正整数 | 设置首次分配的构建号，兼容商店既有版本 |
-| 同上：项目设置 | `--settings <本地YAML>` 可选 | 绑定 pipeline 来源/构建方案与默认参数；通知策略、渠道授权后续接入 |
+| 同上：项目设置 | `--settings <本地YAML>` 可选 | 绑定 pipeline 来源/构建方案与默认参数；直接配置通知 Webhook 随通知功能接入 |
 | 同上：自动触发（后续） | `--hook` 默认 false；`--poll` 如 60s；`--schedule` 为五段 cron 表达式 | 接入 Webhook、轮询、定时构建 |
 | `project set <name>` | `--settings <本地YAML>` 必填 | 更新显式提供的设置块；正在执行的构建使用原快照 |
 | `project ls` / `project rm <name>` | ls 支持 `--json` | 列表/删除；有活动、待审批或未知发布结果时拒绝删除 |
@@ -640,7 +637,7 @@ mybuilds doctor --node linux-android-01
 - [ ] 重试固定原 SHA / 配置 / 参数并分配新构建号，不受分支后续提交影响
 - [ ] 飞书使用 `oapi-sdk-go/v3`，先验证自定义机器人 Webhook 的消息、签名与错误处理；企微 / 钉钉 / generic 用 stdlib HTTP
 - [ ] 最终通知覆盖成功 / 失败 / 取消；审批挂起不执行终态通知或删除恢复所需文件
-- [ ] 具名渠道与 defaults.notifications；项目/流水线/全局按字段继承，显式关闭、空列表和渠道授权校验；策略快照与来源可查询
+- [ ] 项目直接配置 Webhook 与 defaults.notifications；按字段继承、列表替换、显式关闭；敏感值受限保存/脱敏、URL 校验、策略快照和失败不改投全局
 - [ ] 重启租约核对、节点断网、审批释放槽、原节点恢复、重复批准、工作区缺失、本地交互审批验证
 
 ### P4 自动触发：Webhook + 轮询

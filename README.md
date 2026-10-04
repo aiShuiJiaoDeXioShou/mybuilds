@@ -110,7 +110,7 @@ CLI 使用 Cobra；后续流水线配置使用 YAML，服务端 HTTP 使用标�
 构建产物由控制端托管下载；MVP 商店渠道为 Google Play 与 App Store，Go 封装第三方 fastlane 工具，节点需 Ruby/Bundler。
 原生/Flutter 提供可编辑的内置模板，用户可使用仓库脚本、本地模板或 custom 上传调用自己的 Fastfile。
 远程项目默认优先仓库 mybuilds.yml，缺失时可使用项目绑定的可复用构建方案；显式支持只用仓库或只用方案。
-通知采用具名渠道与全局 defaults；项目可独立配置、继承或关闭，凭据保存在控制端。
+项目可直接配置通知 Webhook；未配置时继承全局 defaults，也可显式关闭，无需预先注册渠道；敏感值受限保存。
 上传、提交审核、正式上架分别记录；其他内置分发渠道、通知与自动触发后置。
 这些业务依赖随功能引入并锁定版本，具体边界与安全、恢复要求见 [PLAN.md](docs/plans/PLAN.md)。
 
