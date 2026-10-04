@@ -26,16 +26,31 @@ func validArtifactName(name string) bool {
 	return true
 }
 func validArtifactDeclaration(in protocol.ArtifactDeclaration) bool {
+	switch in.Purpose {
+	case "", "artifact":
+		if in.ReportRevision != 0 || in.ReportKey != "" {
+			return false
+		}
+	case "junit":
+		if in.Phase != "ordinary" || in.Size < 1 || in.Size > 8<<20 || in.ReportRevision < 1 || !validDigest(in.ReportKey) {
+			return false
+		}
+	default:
+		return false
+	}
 	return validRef(in.Ref) && validUUID(in.ID) && in.Seq > 0 && slices.Contains([]string{"ordinary", "success", "failure", "always"}, in.Phase) && in.Index > 0 && validName(in.Step) && validArtifactName(in.Name) && in.Size >= 0 && in.Size <= 1<<30 && validDigest(in.SHA256)
 }
 func artifactView(build buildRecord, file artifactRecord) protocol.ArtifactView {
-	return protocol.ArtifactView{ID: file.ID, BuildID: file.BuildID, AttemptID: file.AttemptID, BuildName: build.Name, Phase: file.Phase, Step: file.Step, Name: file.Name, Index: file.Index, Size: file.Size, SHA256: file.SHA256, CompletedAt: file.CreatedAt.UTC()}
+	return protocol.ArtifactView{ID: file.ID, BuildID: file.BuildID, AttemptID: file.AttemptID, BuildName: build.Name, Phase: file.Phase, Step: file.Step, Name: file.Name, Index: file.Index, Size: file.Size, SHA256: file.SHA256, Purpose: file.Purpose, ReportRevision: file.ReportRevision, ReportKey: file.ReportKey, CompletedAt: file.CreatedAt.UTC()}
 }
 func sameArtifact(file artifactRecord, in protocol.ArtifactDeclaration) bool {
-	return file.ID == in.ID && file.BuildID == in.Ref.BuildID && file.AttemptID == in.Ref.AttemptID && file.Seq == in.Seq && file.Phase == in.Phase && file.Step == in.Step && file.Index == in.Index && file.Name == in.Name && file.Size == in.Size && file.SHA256 == in.SHA256
+	return file.ID == in.ID && file.BuildID == in.Ref.BuildID && file.AttemptID == in.Ref.AttemptID && file.Seq == in.Seq && file.Phase == in.Phase && file.Step == in.Step && file.Index == in.Index && file.Name == in.Name && file.Size == in.Size && file.SHA256 == in.SHA256 && file.Purpose == in.Purpose && file.ReportRevision == in.ReportRevision && file.ReportKey == in.ReportKey
 }
 func (s *Store) CommitArtifact(ctx context.Context, actor NodeActor, in ArtifactCommit) (ArtifactCommitted, error) {
 	if !validArtifactDeclaration(in.Declaration) || !validUUID(in.StorageID) {
+		return ArtifactCommitted{}, ErrInvalid
+	}
+	if in.Declaration.Purpose == "junit" && (in.VerifiedJUnit == nil || in.VerifiedJUnit.Diagnostics == nil) || in.Declaration.Purpose != "junit" && in.VerifiedJUnit != nil {
 		return ArtifactCommitted{}, ErrInvalid
 	}
 	var result ArtifactCommitted
@@ -58,22 +73,30 @@ func (s *Store) CommitArtifact(ctx context.Context, actor NodeActor, in Artifact
 		if err != gorm.ErrRecordNotFound {
 			return err
 		}
-		var step stepRecord
-		if err = tx.First(&step, "build_id = ? AND phase = ? AND \"index\" = ?", build.ID, d.Phase, d.Index).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+		verifiedJSON := ""
+		if d.Purpose == "junit" {
+			verifiedJSON, err = validateJUnitArtifact(tx, build, in)
+			if err != nil {
+				return err
+			}
+		} else {
+			var step stepRecord
+			if err = tx.First(&step, "build_id = ? AND phase = ? AND \"index\" = ?", build.ID, d.Phase, d.Index).Error; err != nil {
+				if err == gorm.ErrRecordNotFound {
+					return ErrArtifactConflict
+				}
+				return err
+			}
+			var ids []string
+			if step.Kind != "artifact" || !terminalStep(step.Status) || !step.Started || !step.StopConfirmed || step.CleanupFailed || step.Name != d.Step {
 				return ErrArtifactConflict
 			}
-			return err
-		}
-		var ids []string
-		if step.Kind != "artifact" || !terminalStep(step.Status) || !step.Started || !step.StopConfirmed || step.CleanupFailed || step.Name != d.Step {
-			return ErrArtifactConflict
-		}
-		if json.Unmarshal([]byte(step.ArtifactIDsJSON), &ids) != nil {
-			return errDatabase
-		}
-		if !slices.Contains(ids, d.ID) {
-			return ErrArtifactConflict
+			if json.Unmarshal([]byte(step.ArtifactIDsJSON), &ids) != nil {
+				return errDatabase
+			}
+			if !slices.Contains(ids, d.ID) {
+				return ErrArtifactConflict
+			}
 		}
 		if build.LastArtifactSeq == math.MaxInt64 || d.Seq != build.LastArtifactSeq+1 {
 			return ErrSequenceInvalid
@@ -85,7 +108,7 @@ func (s *Store) CommitArtifact(ctx context.Context, actor NodeActor, in Artifact
 		if totals.Count >= 128 || totals.Size > (4<<30)-d.Size {
 			return ErrArtifactConflict
 		}
-		file := artifactRecord{ID: d.ID, BuildID: build.ID, AttemptID: d.Ref.AttemptID, Seq: d.Seq, Phase: d.Phase, Step: d.Step, Name: d.Name, Index: d.Index, Size: d.Size, SHA256: d.SHA256, StorageID: in.StorageID, CreatedAt: time.Now().UTC()}
+		file := artifactRecord{ID: d.ID, BuildID: build.ID, AttemptID: d.Ref.AttemptID, Seq: d.Seq, Phase: d.Phase, Step: d.Step, Name: d.Name, Index: d.Index, Size: d.Size, SHA256: d.SHA256, StorageID: in.StorageID, Purpose: d.Purpose, ReportRevision: d.ReportRevision, ReportKey: d.ReportKey, VerifiedJUnitJSON: verifiedJSON, CreatedAt: time.Now().UTC()}
 		if err = tx.Create(&file).Error; err != nil {
 			return err
 		}
@@ -93,6 +116,11 @@ func (s *Store) CommitArtifact(ctx context.Context, actor NodeActor, in Artifact
 			return err
 		}
 		result = ArtifactCommitted{View: artifactView(build, file), StorageID: in.StorageID, Created: true}
+		if d.Purpose == "junit" {
+			if _, err = s.captureReportBudget(tx, build); err != nil {
+				return err
+			}
+		}
 		return checkBoundary(tx, actor, d.Ref, expires)
 	})
 	if err != nil {
@@ -139,7 +167,17 @@ func (s *Store) ListArtifacts(ctx context.Context, actor Actor, buildID string, 
 		return nil, safeError(err)
 	}
 	var files []artifactRecord
-	if err = db.Where("build_id = ?", buildID).Order("seq ASC").Limit(page.Limit).Offset(page.Offset).Find(&files).Error; err != nil {
+	query := db.Where("build_id = ?", buildID)
+	sealed, err := sealedReports(build)
+	if err != nil {
+		return nil, safeError(err)
+	}
+	if sealed == nil {
+		query = query.Where("purpose <> ?", "junit")
+	} else {
+		query = query.Where("purpose <> ? OR report_revision = ?", "junit", build.ReportRevision)
+	}
+	if err = query.Order("seq ASC").Limit(page.Limit).Offset(page.Offset).Find(&files).Error; err != nil {
 		return nil, safeError(err)
 	}
 	result := make([]protocol.ArtifactView, 0, len(files))
@@ -166,6 +204,15 @@ func (s *Store) GetArtifact(ctx context.Context, actor Actor, id string) (Artifa
 	var build buildRecord
 	if err := db.First(&build, "id = ?", file.BuildID).Error; err != nil {
 		return ArtifactStored{}, safeError(err)
+	}
+	if file.Purpose == "junit" {
+		sealed, err := sealedReports(build)
+		if err != nil {
+			return ArtifactStored{}, safeError(err)
+		}
+		if sealed == nil || file.ReportRevision != build.ReportRevision {
+			return ArtifactStored{}, ErrNotFound
+		}
 	}
 	return ArtifactStored{View: artifactView(build, file), StorageID: file.StorageID}, nil
 }

@@ -143,8 +143,18 @@ func validateBuild(b *Build, field string) error {
 		if b.Reports.JUnit == nil {
 			return invalid(field+".reports.junit", "缺少必要字段")
 		}
-		if err := validatePaths(b.Reports.JUnit.Paths, field+".reports.junit.paths"); err != nil {
+		paths := b.Reports.JUnit.Paths
+		if len(paths) > 32 {
+			return invalid(field+".reports.junit.paths", "最多允许32个报告模式")
+		}
+		if err := validatePaths(paths, field+".reports.junit.paths"); err != nil {
 			return err
+		}
+		for i, value := range paths {
+			// 模板路径的实际长度在一次渲染后检查，未确定事实保持待定。
+			if !fieldTemplate.MatchString(value) && (len(value) > 1024 || len(path.Base(value)) > 255) {
+				return invalid(indexed(field+".reports.junit.paths", i), "报告路径或叶名称超过大小上限")
+			}
 		}
 	}
 	return validateNotifications(b.Notifications, field+".notifications")

@@ -13,6 +13,7 @@ import (
 )
 
 type journalState struct {
+	Reports                               *reportCheckpoint              `json:"reports,omitempty"`
 	PendingStop                           *protocol.StopConfirmation     `json:"pending_stop,omitempty"`
 	Artifacts                             []localArtifact                `json:"artifacts,omitempty"`
 	ArtifactSteps                         []protocol.ArtifactExpectation `json:"artifact_steps,omitempty"`
@@ -124,7 +125,7 @@ func (journal *executionJournal) prepareEvent(p protocol.ExecutionProgress) (pro
 		journal.state.CleanupFailed = journal.state.CleanupFailed || p.CleanupFailed
 	}
 	// PID/快照路径只存在私有journal；消息摘要取真正网络编码。
-	p.PID, p.PGID, p.LocalResultDir, p.LocalArtifacts = 0, 0, "", nil
+	p.PID, p.PGID, p.LocalResultDir, p.LocalArtifacts, p.LocalReports = 0, 0, "", nil, nil
 	data, err := json.Marshal(p)
 	if err != nil {
 		return protocol.ExecutionEvent{}, failure("persistence_error")

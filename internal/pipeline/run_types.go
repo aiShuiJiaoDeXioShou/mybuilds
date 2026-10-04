@@ -33,12 +33,14 @@ type RunResult struct {
 }
 
 type BuildRun struct {
-	Name       string    `json:"name"`
-	Status     string    `json:"status"`
-	Reason     string    `json:"reason,omitempty"`
-	DurationMS int64     `json:"duration_ms"`
-	Steps      []StepRun `json:"steps"`
-	Post       []StepRun `json:"post,omitempty"`
+	Reports          *protocol.ReportEvidence `json:"reports,omitempty"`
+	ReportSealDigest string                   `json:"report_seal_digest,omitempty"`
+	Name             string                   `json:"name"`
+	Status           string                   `json:"status"`
+	Reason           string                   `json:"reason,omitempty"`
+	DurationMS       int64                    `json:"duration_ms"`
+	Steps            []StepRun                `json:"steps"`
+	Post             []StepRun                `json:"post,omitempty"`
 }
 
 type StepRun struct {

@@ -37,9 +37,16 @@ func newArtifactCommand() *cobra.Command {
 		}
 		rows := make([][]string, 0, len(result.Items))
 		for _, v := range result.Items {
-			rows = append(rows, []string{v.ID, v.Name, strconv.FormatInt(v.Size, 10), v.SHA256})
+			purpose, revision := v.Purpose, ""
+			if purpose == "" {
+				purpose = "artifact"
+			}
+			if purpose == "junit" {
+				revision = strconv.FormatInt(v.ReportRevision, 10)
+			}
+			rows = append(rows, []string{v.ID, v.Name, strconv.FormatInt(v.Size, 10), v.SHA256, purpose, revision, v.ReportKey})
 		}
-		return remoteOutput(cmd, result, []string{"ID", "NAME", "SIZE", "SHA256"}, rows)
+		return remoteOutput(cmd, result, []string{"ID", "NAME", "SIZE", "SHA256", "PURPOSE", "REPORT_REVISION", "REPORT_KEY"}, rows)
 	}}
 	remotePageFlags(list)
 	download := &cobra.Command{Use: "download <artifact-id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {

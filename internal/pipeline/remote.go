@@ -112,8 +112,26 @@ func (r *remoteRun) emit(p protocol.ExecutionProgress) error {
 		p.ArtifactSteps = []protocol.ArtifactExpectation{}
 	}
 	p.LocalResultDir = r.resultDir
-	if err := r.options.Progress(r.authority, p); err != nil {
+	ctx := r.authority
+	if (p.Kind == "reports_checked" || p.Kind == "reports_sealed") && remaining != nil {
+		if *remaining <= 0 {
+			r.fail("persistence_error")
+			return context.DeadlineExceeded
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(*remaining))
+		defer cancel()
+	}
+	if err := r.options.Progress(ctx, p); err != nil {
+		budgetExpired := false
+		if (p.Kind == "reports_checked" || p.Kind == "reports_sealed") && ctx.Err() == context.DeadlineExceeded && r.authority.Err() == nil && remaining != nil {
+			left, _ := r.budgets()
+			budgetExpired = left != nil && *left == 0
+		}
 		r.fail("persistence_error")
+		if budgetExpired {
+			return context.DeadlineExceeded
+		}
 		return errors.New("进度保存失败")
 	}
 	return nil

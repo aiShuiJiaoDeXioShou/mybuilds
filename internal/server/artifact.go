@@ -65,6 +65,22 @@ func artifactDeclaration(r *http.Request, id string) (protocol.ArtifactDeclarati
 	if in.Size < 0 || in.Size > 1<<30 {
 		return in, errTooLarge
 	}
+	switch in.Purpose {
+	case "", "artifact":
+		if in.ReportRevision != 0 || in.ReportKey != "" {
+			return in, store.ErrInvalid
+		}
+	case "junit":
+		_, keyErr := hex.DecodeString(in.ReportKey)
+		if in.Phase != "ordinary" || in.ReportRevision < 1 || len(in.ReportKey) != 64 || keyErr != nil || strings.ToLower(in.ReportKey) != in.ReportKey || in.Size < 1 {
+			return in, store.ErrInvalid
+		}
+		if in.Size > 8<<20 {
+			return in, errTooLarge
+		}
+	default:
+		return in, store.ErrInvalid
+	}
 	if r.ContentLength != in.Size {
 		return in, store.ErrInvalid
 	}
@@ -118,6 +134,19 @@ func (s *Server) nodeArtifactRoute(w http.ResponseWriter, r *http.Request, actor
 		return true
 	}
 	deadline := time.Now().Add(2 * time.Minute)
+	if in.Purpose == "junit" {
+		remaining, budgetErr := s.store.ReportUploadBudget(r.Context(), actor, in.Ref)
+		if budgetErr != nil {
+			writeError(w, budgetErr)
+			return true
+		}
+		if remaining != nil {
+			budgetDeadline := time.Now().Add(time.Duration(*remaining))
+			if budgetDeadline.Before(deadline) {
+				deadline = budgetDeadline
+			}
+		}
+	}
 	if e = controller.SetReadDeadline(deadline); e != nil {
 		writeError(w, errEvidence)
 		return true
@@ -147,6 +176,9 @@ func (s *Server) nodeArtifactRoute(w http.ResponseWriter, r *http.Request, actor
 			case <-ticker.C:
 				check, stop := context.WithTimeout(ctx, 500*time.Millisecond)
 				err := s.store.CheckExecution(check, actor, in.Ref)
+				if err == nil && in.Purpose == "junit" {
+					_, err = s.store.ReportUploadBudget(check, actor, in.Ref)
+				}
 				stop()
 				if err != nil {
 					authorityLost <- err
@@ -163,7 +195,7 @@ func (s *Server) nodeArtifactRoute(w http.ResponseWriter, r *http.Request, actor
 		return true
 	}
 	defer root.Close()
-	candidate, e := publishEvidenceStream(ctx, root, r.Body, in.Size, in.SHA256)
+	candidate, e := publishArtifactEvidenceStream(ctx, root, r.Body, in.Size, in.SHA256, in.Purpose)
 	if e != nil {
 		select {
 		case authority := <-authorityLost:
@@ -176,7 +208,7 @@ func (s *Server) nodeArtifactRoute(w http.ResponseWriter, r *http.Request, actor
 		writeError(w, e)
 		return true
 	}
-	committed, e := s.store.CommitArtifact(ctx, actor, store.ArtifactCommit{Declaration: in, StorageID: candidate.id})
+	committed, e := s.store.CommitArtifact(ctx, actor, store.ArtifactCommit{Declaration: in, StorageID: candidate.id, VerifiedJUnit: candidate.junit})
 	if e != nil {
 		writeError(w, e)
 		return true

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"gorm.io/gorm"
+	"mybuilds/internal/protocol"
 	"slices"
 )
 
@@ -76,6 +77,13 @@ func buildView(db *gorm.DB, row buildRecord) (BuildView, error) {
 		return BuildView{}, err
 	}
 	result := BuildView{ID: row.ID, Project: project.Name, Group: project.Group.Name, BatchID: row.BatchID, Name: row.Name, Number: row.Number, Status: row.Status, Reason: row.Reason, SHA: batch.SHA, Branch: batch.Branch, Source: batch.Source, File: batch.File, SourceDigest: batch.SourceDigest, Condition: row.Condition, InitialBudgetNS: row.InitialBudgetNS, RemainingBudgetNS: row.RemainingBudgetNS, PostBudgetNS: row.PostBudgetNS, CreatedAt: row.CreatedAt.UTC(), Steps: []StepProgress{}, Post: []StepProgress{}}
+	sealed, err := sealedReports(row)
+	if err != nil {
+		return BuildView{}, err
+	}
+	if sealed != nil {
+		result.Reports, result.ReportSealDigest = sealed, row.ReportSealDigest
+	}
 	if row.RetryOf != nil {
 		result.RetryOf = *row.RetryOf
 	}
@@ -126,6 +134,24 @@ func buildView(db *gorm.DB, row buildRecord) (BuildView, error) {
 		}
 	}
 	return result, nil
+}
+
+func sealedReports(row buildRecord) (*protocol.ReportEvidence, error) {
+	if row.ReportSealDigest == "" {
+		return nil, nil
+	}
+	evidence, err := storedReports(row)
+	if err != nil {
+		return nil, err
+	}
+	if evidence == nil || !row.ReportFinal || !evidence.Sealed {
+		return nil, errDatabase
+	}
+	data, err := encode(*evidence)
+	if err != nil || reportKey(data) != row.ReportSealDigest {
+		return nil, errDatabase
+	}
+	return evidence, nil
 }
 func (s *Store) GetBuild(ctx context.Context, id string) (BuildView, error) {
 	if !validID(id) {

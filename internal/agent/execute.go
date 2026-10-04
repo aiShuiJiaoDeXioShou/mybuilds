@@ -53,6 +53,10 @@ func (execution *taskExecution) progress(ctx context.Context, p protocol.Executi
 			return err
 		}
 	}
+	if err := execution.prepareReports(&p); err != nil {
+		execution.lease.cancel()
+		return err
+	}
 	if err := execution.declare(&p); err != nil {
 		execution.lease.cancel()
 		return err
@@ -84,7 +88,7 @@ func (execution *taskExecution) progress(ctx context.Context, p protocol.Executi
 		execution.lease.cancel()
 		return err
 	}
-	if p.Kind == "finished" && p.StepKind == "artifact" {
+	if p.Kind == "finished" && p.StepKind == "artifact" || p.Kind == "reports_checked" && p.Index == 0 {
 		if err = execution.uploadArtifacts(ctx); err != nil {
 			execution.lease.cancel()
 			return err

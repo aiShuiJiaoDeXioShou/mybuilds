@@ -134,7 +134,7 @@ func TestRunBatchPrecheckHasNoScriptSideEffects(t *testing.T) {
 		"env: {SECRET: '${MISSING_RUN_SECRET}'}\n    steps: [{kind: run, run: true}]",
 		"env: {NUMBER: '{{build.number}}'}\n    steps: [{kind: run, run: true}]",
 		"when: {branches: [main]}\n    steps: [{kind: run, run: true}]",
-		"reports: {junit: {paths: [reports/*.xml]}}\n    steps: [{kind: run, run: true}]",
+		"reports: {junit: {paths: ['reports/{{build.number}}/*.xml']}}\n    steps: [{kind: run, run: true}]",
 	} {
 		t.Run(strings.Split(invalid, "\n")[0], func(t *testing.T) {
 			root := t.TempDir()

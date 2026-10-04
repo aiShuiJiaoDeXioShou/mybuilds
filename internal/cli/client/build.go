@@ -84,5 +84,26 @@ func buildDetails(v store.BuildView) [][]string {
 		prefix := fmt.Sprintf("%s[%d]", step.Phase, step.Index)
 		rows = append(rows, []string{prefix, strings.Join([]string{step.Name, step.Kind, step.Condition, step.Status, strings.Join(step.Reasons, ","), "elapsed_ns=" + strconv.FormatInt(step.ElapsedNS, 10), "intent=" + strconv.FormatBool(step.Intent), "started=" + strconv.FormatBool(step.Started), "stop_confirmed=" + strconv.FormatBool(step.StopConfirmed), "cleanup_failed=" + strconv.FormatBool(step.CleanupFailed), "reason=" + step.Reason, "exit_code=" + strconv.Itoa(step.ExitCode)}, " ")})
 	}
+	if report := v.Reports; report != nil && report.Sealed && v.ReportSealDigest != "" {
+		rows = append(rows, [][]string{
+			{"report_revision", strconv.FormatInt(report.Revision, 10)},
+			{"report_sealed", strconv.FormatBool(report.Sealed)},
+			{"report_outcome", report.Outcome},
+			{"report_reason", report.Reason},
+			{"report_required", strconv.FormatBool(report.Required)},
+			{"report_tests", strconv.FormatInt(report.Counts.Tests, 10)},
+			{"report_failures", strconv.FormatInt(report.Counts.Failures, 10)},
+			{"report_errors", strconv.FormatInt(report.Counts.Errors, 10)},
+			{"report_skipped", strconv.FormatInt(report.Counts.Skipped, 10)},
+			{"report_duration_ns", strconv.FormatInt(report.Counts.DurationNS, 10)},
+			{"report_seal_digest", v.ReportSealDigest},
+		}...)
+		for i, file := range report.Files {
+			rows = append(rows, []string{fmt.Sprintf("report_file[%d]", i+1), fmt.Sprintf("id=%s key=%s path=%s source_index=%d source_step=%s size=%d sha256=%s", file.ArtifactID, file.Key, file.Path, file.SourceIndex, file.SourceStep, file.Size, file.SHA256)})
+		}
+		for i, diagnostic := range report.Diagnostics {
+			rows = append(rows, []string{fmt.Sprintf("report_diagnostic[%d]", i+1), strings.Join([]string{diagnostic.PathKey, diagnostic.Case, diagnostic.Outcome, diagnostic.Message}, " ")})
+		}
+	}
 	return rows
 }

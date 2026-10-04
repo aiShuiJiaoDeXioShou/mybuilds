@@ -63,6 +63,8 @@ type LogStored struct {
 type ArtifactCommit struct {
 	Declaration protocol.ArtifactDeclaration
 	StorageID   string
+	// 仅由服务端对稳定stage原XML解析产生，不接受HTTP请求中的自报结果。
+	VerifiedJUnit *protocol.JUnitResult `json:"-"`
 }
 type ArtifactCommitted struct {
 	View      protocol.ArtifactView
@@ -174,6 +176,10 @@ type logChunkRecord struct {
 func (logChunkRecord) TableName() string { return "log_chunks" }
 
 type artifactRecord struct {
+	Purpose                              string        `gorm:"not null;default:''"`
+	ReportRevision                       int64         `gorm:"not null;default:0"`
+	ReportKey                            string        `gorm:"not null;default:''"`
+	VerifiedJUnitJSON                    string        `gorm:"column:verified_junit_json;not null;default:''"`
 	ID                                   string        `gorm:"primaryKey;size:36"`
 	BuildID                              string        `gorm:"not null;index;size:36"`
 	Build                                buildRecord   `gorm:"foreignKey:BuildID;constraint:OnDelete:RESTRICT"`

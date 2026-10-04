@@ -10,7 +10,7 @@
 
 008 原快照重试、启动核对与终态只读核对已完成并验收，最终双库应用各36正例、此前负例及Linux普通/always中断检查通过；共享停止确认修复、真实ARM签名/中央下载/取消、全量test/race/vet及Spec Kit收敛通过。详情见[008验证](../../specs/008-build-recovery/validation.md)。
 
-整个 MVP 未完成。005 真实 Apple profile 与签名 archive/export 尚未验收，当前集成代码不提供 iOS 签名执行；Flutter、审批、发布、Webhook、报告和保留策略等后续门不因 007 通过而放宽。当前生效 approval/upload/reports/notifications 在执行前明确拒绝。
+整个 MVP 未完成。005 真实 Apple profile 与签名 archive/export 尚未验收，当前集成代码不提供 iOS 签名执行；Flutter、审批、发布、Webhook和保留策略等后续门不因 007 通过而放宽。当前生效 approval/upload/notifications 在执行前明确拒绝。019已接通本地与Agent报告检查、中央确认/封存/下载；双库各92应用检查点、20故障192断言、macOS/Linux与全量test/race/vet/12编译通过，Spec Kit收敛无缺口，已完成并验收，见[019验证](../../specs/019-test-reports/validation.md)。
 
 ### 当前可运行入口
 

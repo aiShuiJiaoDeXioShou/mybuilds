@@ -111,9 +111,6 @@ func validatePrepared(prepared PreparedBuild) (PreparedBuild, bool, error) {
 	if err = config.Validate(&config.Document{Version: 1, Builds: map[string]*config.Build{prepared.Name: definition}}); err != nil {
 		return prepared, false, ErrInvalid
 	}
-	if definition.Reports != nil {
-		return prepared, false, ErrInvalid
-	}
 	if definition.Notifications != nil {
 		if definition.Notifications.Enabled == nil || *definition.Notifications.Enabled {
 			return prepared, false, ErrInvalid

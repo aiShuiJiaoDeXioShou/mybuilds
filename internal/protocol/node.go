@@ -2,6 +2,7 @@
 package protocol
 
 import (
+	"encoding/json"
 	"mybuilds/internal/config"
 	"time"
 )
@@ -94,6 +95,81 @@ type CollectedArtifact struct {
 	SnapshotPath, Name, SHA256 string
 	Size                       int64
 }
+
+// 报告计数来自本次原XML；DurationNS为用例耗时，不能代替执行预算。
+type JUnitCounts struct {
+	Tests      int64 `json:"tests"`
+	Failures   int64 `json:"failures"`
+	Errors     int64 `json:"errors"`
+	Skipped    int64 `json:"skipped"`
+	DurationNS int64 `json:"duration_ns"`
+}
+type JUnitDiagnostic struct {
+	PathKey string `json:"path_key"`
+	Case    string `json:"case"`
+	Outcome string `json:"outcome"`
+	Message string `json:"message"`
+}
+type JUnitResult struct {
+	Counts      JUnitCounts       `json:"counts"`
+	Diagnostics []JUnitDiagnostic `json:"diagnostics"`
+}
+type ReportFile struct {
+	Key         string      `json:"key"`
+	Path        string      `json:"path"`
+	ArtifactID  string      `json:"artifact_id"`
+	SourceIndex int         `json:"source_index"`
+	SourceStep  string      `json:"source_step"`
+	Size        int64       `json:"size"`
+	SHA256      string      `json:"sha256"`
+	Counts      JUnitCounts `json:"counts"`
+}
+type ReportEvidence struct {
+	Revision    int64             `json:"revision"`
+	Sealed      bool              `json:"sealed"`
+	Outcome     string            `json:"outcome"`
+	Reason      string            `json:"reason"`
+	Required    bool              `json:"required"`
+	Counts      JUnitCounts       `json:"counts"`
+	Diagnostics []JUnitDiagnostic `json:"diagnostics"`
+	Files       []ReportFile      `json:"files"`
+}
+type ReportManifest struct {
+	SealDigest string   `json:"seal_digest"`
+	IDs        []string `json:"ids"`
+}
+
+// 明确空集合为[]；仅规范输出，输入的null仍由现有严格解码/Store拒绝。
+func (result JUnitResult) MarshalJSON() ([]byte, error) {
+	type wire JUnitResult
+	if result.Diagnostics == nil {
+		result.Diagnostics = []JUnitDiagnostic{}
+	}
+	return json.Marshal(wire(result))
+}
+func (evidence ReportEvidence) MarshalJSON() ([]byte, error) {
+	type wire ReportEvidence
+	if evidence.Diagnostics == nil {
+		evidence.Diagnostics = []JUnitDiagnostic{}
+	}
+	if evidence.Files == nil {
+		evidence.Files = []ReportFile{}
+	}
+	return json.Marshal(wire(evidence))
+}
+func (manifest ReportManifest) MarshalJSON() ([]byte, error) {
+	type wire ReportManifest
+	if manifest.IDs == nil {
+		manifest.IDs = []string{}
+	}
+	return json.Marshal(wire(manifest))
+}
+
+// 实际快照只在本地Run到Agent间传递，绝不公开节点私有路径。
+type CollectedReport struct {
+	File         ReportFile `json:"file"`
+	SnapshotPath string     `json:"-"`
+}
 type ExecutionProgress struct {
 	Kind                  string                `json:"kind"`
 	Phase                 string                `json:"phase,omitempty"`
@@ -120,6 +196,9 @@ type ExecutionProgress struct {
 	PGID                  int                   `json:"-"`
 	LocalResultDir        string                `json:"-"`
 	LocalArtifacts        []CollectedArtifact   `json:"-"`
+	Reports               *ReportEvidence       `json:"reports,omitempty"`
+	ReportManifest        *ReportManifest       `json:"report_manifest,omitempty"`
+	LocalReports          []CollectedReport     `json:"-"`
 }
 type ExecutionEvent struct {
 	Ref      LeaseRef          `json:"ref"`
@@ -153,28 +232,34 @@ type LogAck struct {
 	Digest     string `json:"digest"`
 }
 type ArtifactDeclaration struct {
-	Ref    LeaseRef `json:"ref"`
-	ID     string   `json:"id"`
-	Seq    int64    `json:"seq"`
-	Phase  string   `json:"phase"`
-	Step   string   `json:"step"`
-	Name   string   `json:"name"`
-	Index  int      `json:"index"`
-	Size   int64    `json:"size"`
-	SHA256 string   `json:"sha256"`
+	Ref            LeaseRef `json:"ref"`
+	ID             string   `json:"id"`
+	Seq            int64    `json:"seq"`
+	Phase          string   `json:"phase"`
+	Step           string   `json:"step"`
+	Name           string   `json:"name"`
+	Index          int      `json:"index"`
+	Size           int64    `json:"size"`
+	SHA256         string   `json:"sha256"`
+	Purpose        string   `json:"purpose,omitempty"`
+	ReportRevision int64    `json:"report_revision,omitempty"`
+	ReportKey      string   `json:"report_key,omitempty"`
 }
 type ArtifactView struct {
-	ID          string    `json:"id"`
-	BuildID     string    `json:"build_id"`
-	AttemptID   string    `json:"attempt_id"`
-	BuildName   string    `json:"build_name"`
-	Phase       string    `json:"phase"`
-	Step        string    `json:"step"`
-	Name        string    `json:"name"`
-	Index       int       `json:"index"`
-	Size        int64     `json:"size"`
-	SHA256      string    `json:"sha256"`
-	CompletedAt time.Time `json:"completed_at"`
+	ID             string    `json:"id"`
+	BuildID        string    `json:"build_id"`
+	AttemptID      string    `json:"attempt_id"`
+	BuildName      string    `json:"build_name"`
+	Phase          string    `json:"phase"`
+	Step           string    `json:"step"`
+	Name           string    `json:"name"`
+	Index          int       `json:"index"`
+	Size           int64     `json:"size"`
+	SHA256         string    `json:"sha256"`
+	CompletedAt    time.Time `json:"completed_at"`
+	Purpose        string    `json:"purpose,omitempty"`
+	ReportRevision int64     `json:"report_revision,omitempty"`
+	ReportKey      string    `json:"report_key,omitempty"`
 }
 type StopConfirmation struct {
 	Ref          LeaseRef `json:"ref"`

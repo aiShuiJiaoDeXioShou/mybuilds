@@ -10,14 +10,16 @@ import (
 	"os"
 
 	"github.com/google/uuid"
+	"mybuilds/internal/protocol"
 	"mybuilds/internal/store"
 )
 
 var errEvidence = errors.New("evidence_storage_error")
 
 type publishedEvidence struct {
-	id   string
-	info os.FileInfo
+	id    string
+	info  os.FileInfo
+	junit *protocol.JUnitResult
 }
 
 // logFiles限定到控制端自有目录；路径不来自节点请求。
@@ -72,6 +74,9 @@ func publishEvidence(ctx context.Context, root *os.Root, data []byte) (published
 	return publishEvidenceStream(ctx, root, bytes.NewReader(data), int64(len(data)), hex.EncodeToString(sum[:]))
 }
 func publishEvidenceStream(ctx context.Context, root *os.Root, source io.Reader, size int64, digest string) (publishedEvidence, error) {
+	return publishArtifactEvidenceStream(ctx, root, source, size, digest, "")
+}
+func publishArtifactEvidenceStream(ctx context.Context, root *os.Root, source io.Reader, size int64, digest, purpose string) (publishedEvidence, error) {
 	if e := ctx.Err(); e != nil {
 		return publishedEvidence{}, errEvidence
 	}
@@ -79,7 +84,11 @@ func publishEvidenceStream(ctx context.Context, root *os.Root, source io.Reader,
 		return publishedEvidence{}, e
 	}
 	stage := ".stage-" + uuid.NewString()
-	f, e := root.OpenFile(stage, os.O_WRONLY|os.O_CREATE|os.O_EXCL|evidenceOpenFlags(), 0600)
+	flags := os.O_WRONLY
+	if purpose == "junit" {
+		flags = os.O_RDWR
+	}
+	f, e := root.OpenFile(stage, flags|os.O_CREATE|os.O_EXCL|evidenceOpenFlags(), 0600)
 	if e != nil {
 		return publishedEvidence{}, errEvidence
 	}
@@ -142,6 +151,10 @@ func publishEvidenceStream(ctx context.Context, root *os.Root, source io.Reader,
 	if e == nil {
 		e = f.Sync()
 	}
+	var junit *protocol.JUnitResult
+	if e == nil && purpose == "junit" {
+		junit, e = parseJUnitStage(ctx, f, size, digest)
+	}
 	closed := f.Close()
 	if e != nil {
 		return publishedEvidence{}, e
@@ -179,7 +192,7 @@ func publishEvidenceStream(ctx context.Context, root *os.Root, source io.Reader,
 	if e = checkEvidenceRoot(root); e != nil {
 		return publishedEvidence{}, e
 	}
-	return publishedEvidence{id: id, info: info}, nil
+	return publishedEvidence{id: id, info: info, junit: junit}, nil
 }
 func removeEvidenceCandidate(root *os.Root, candidate publishedEvidence) error {
 	id := candidate.id

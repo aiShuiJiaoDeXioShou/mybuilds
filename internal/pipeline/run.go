@@ -35,6 +35,8 @@ type preparedBuild struct {
 	steps                    []preparedStep
 	success, failure, always []preparedStep
 	timeout, postTimeout     time.Duration
+	reportPatterns           []string
+	reportRequired           bool
 }
 
 type runPreparation struct {
@@ -226,6 +228,13 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 		if remote.blocked() == "" && len(result.Builds) > 0 {
 			b := result.Builds[0]
 			p := protocol.ExecutionProgress{Kind: "build_finished", Status: b.Status, Reason: b.Reason, StopConfirmed: !cleanupFailed, CleanupFailed: cleanupFailed, ExitCode: 0}
+			if b.Reports != nil && b.Reports.Sealed {
+				ids := make([]string, 0, len(b.Reports.Files))
+				for _, file := range b.Reports.Files {
+					ids = append(ids, file.ArtifactID)
+				}
+				p.ReportManifest = &protocol.ReportManifest{SealDigest: b.ReportSealDigest, IDs: ids}
+			}
 			for _, step := range append(append([]StepRun{}, b.Steps...), b.Post...) {
 				p.Started = p.Started || step.started
 			}
@@ -283,9 +292,6 @@ func (p *runPreparation) build(name string, build *config.Build, params map[stri
 		if build.Runner != nil && build.Runner.Platform == "ios" && runtime.GOOS != "darwin" {
 			return b, errors.New("runner: iOS 需要 macOS")
 		}
-		if build.Reports != nil {
-			return b, errors.New("reports: 本地报告尚未支持")
-		}
 	}
 	anyActive, found := false, selected == ""
 	for index, step := range build.Steps {
@@ -302,6 +308,20 @@ func (p *runPreparation) build(name string, build *config.Build, params map[stri
 	}
 	if !found {
 		return b, errors.New("step: 未找到指定步骤")
+	}
+	if !b.skipped && build.Reports != nil {
+		local := maps.Clone(p.facts)
+		delete(local, "workspace")
+		local["build.name"] = name
+		// 报告是build层相对路径，只使用能在控制端核对的构建事实。
+		for _, pattern := range build.Reports.JUnit.Paths {
+			rendered, err := p.render(pattern, "build.reports.junit.paths", params, local)
+			if err != nil {
+				return b, err
+			}
+			b.reportPatterns = append(b.reportPatterns, rendered)
+		}
+		b.reportRequired = build.Reports.JUnit.Required == nil || *build.Reports.JUnit.Required
 	}
 	if build.Post != nil && (anyActive || p.remote != nil) {
 		for _, phase := range []struct {
@@ -366,7 +386,7 @@ func (p *runPreparation) fact(key string) {
 }
 
 func (p *runPreparation) render(value, field string, params, local map[string]string) (string, error) {
-	rendered, missing, err := renderField(value, field, params, local, false, false)
+	rendered, missing, err := config.RenderField(value, field, params, local, false, false)
 	if err != nil {
 		return "", err
 	}
@@ -390,7 +410,7 @@ func (p *runPreparation) render(value, field string, params, local map[string]st
 			}
 			rest = rest[end+2:]
 		}
-		rendered, missing, err = renderField(value, field, params, local, false, false)
+		rendered, missing, err = config.RenderField(value, field, params, local, false, false)
 	}
 	if err != nil {
 		return "", err
@@ -738,6 +758,14 @@ func executeBuild(ctx context.Context, root string, build preparedBuild, logger 
 	start := time.Now()
 	elapsed := time.Duration(0)
 	started, unsafe := false, false
+	var reportSet *reportCollection
+	var reportWorkspace *os.Root
+	reportReady := true
+	defer func() {
+		if reportWorkspace != nil {
+			_ = reportWorkspace.Close()
+		}
+	}()
 	for _, step := range build.steps {
 		if logger.remote != nil && logger.remote.blocked() != "" {
 			reason := logger.remote.blocked()
@@ -778,6 +806,35 @@ func executeBuild(ctx context.Context, root string, build preparedBuild, logger 
 			continue
 		}
 		stepStart := time.Now()
+		if len(build.reportPatterns) != 0 && reportSet == nil {
+			remaining := reportRemaining(build, elapsed, logger.remote)
+			checkCtx, stop, err := reportContext(ctx, remaining, logger.remote, 10*time.Second)
+			if err == nil && logger.remote != nil {
+				err = logger.remote.ensureResult(root, logger)
+			}
+			if err == nil {
+				reportWorkspace, err = os.OpenRoot(root)
+			}
+			if err == nil {
+				secrets := make([]string, len(logger.secrets))
+				for i, value := range logger.secrets {
+					secrets[i] = string(value)
+				}
+				reportSet, err = newReportCollection(checkCtx, reportWorkspace, logger.root, build.reportPatterns, build.reportRequired, secrets)
+			}
+			stop()
+			elapsed += time.Since(stepStart)
+			if err != nil {
+				b.Status, b.Reason = "failed", reportFailureReason(err)
+				reportReady = false
+				b.Steps = append(b.Steps, skippedStep(step, "not_started"))
+				if logger.remote != nil {
+					logger.remote.skipped(step, "not_started")
+				}
+				continue
+			}
+			stepStart = time.Now()
+		}
 		limit := durationLimit(step.step, build.timeout-elapsed, build.timeout > 0)
 		if logger.remote != nil {
 			limit = logger.remote.limit(step)
@@ -790,9 +847,37 @@ func executeBuild(ctx context.Context, root string, build preparedBuild, logger 
 			b.Status, b.Reason = s.Status, s.Reason
 		}
 		unsafe = unsafe || s.CleanupFailed
+		if reportSet != nil && s.Kind == "run" && s.started && !unsafe && logger.failure() == nil && (logger.remote == nil || logger.remote.blocked() == "") {
+			checkStart := time.Now()
+			err := checkBuildReports(ctx, build, &b, logger, reportSet, step.index, step.step.Name, false, reportRemaining(build, elapsed, logger.remote))
+			elapsed += time.Since(checkStart)
+			if err != nil {
+				reportReady = false
+				if b.Status == "succeeded" {
+					b.Status, b.Reason = "failed", reportFailureReason(err)
+				}
+				if logger.remote != nil && logger.remote.blocked() == "" {
+					logger.remote.fail("persistence_error")
+				}
+			}
+		}
 	}
 	if !started && b.Status == "succeeded" {
 		b.Status, b.Reason = "skipped", "condition"
+	}
+	if reportSet != nil && started && !unsafe && reportReady && logger.failure() == nil && (logger.remote == nil || logger.remote.blocked() == "") {
+		checkStart := time.Now()
+		err := checkBuildReports(ctx, build, &b, logger, reportSet, 0, "", true, reportRemaining(build, elapsed, logger.remote))
+		elapsed += time.Since(checkStart)
+		if err != nil {
+			reportReady = false
+			if b.Status == "succeeded" {
+				b.Status, b.Reason = "failed", reportFailureReason(err)
+			}
+			if logger.remote != nil && logger.remote.blocked() == "" {
+				logger.remote.fail("persistence_error")
+			}
+		}
 	}
 	if logger.remote != nil && started && b.Status == "succeeded" {
 		remaining, _ := logger.remote.budgets()
@@ -800,10 +885,13 @@ func executeBuild(ctx context.Context, root string, build preparedBuild, logger 
 			b.Status, b.Reason = "failed", "timeout"
 		}
 	}
+	if logger.remote == nil && started && b.Status == "succeeded" && build.timeout > 0 && elapsed >= build.timeout {
+		b.Status, b.Reason = "failed", "timeout"
+	}
 	if logger.remote != nil && logger.remote.blocked() != "" && b.Status == "succeeded" {
 		b.Status, b.Reason = "failed", logger.remote.blocked()
 	}
-	if started && !unsafe && (logger.remote == nil || logger.remote.blocked() == "") {
+	if started && !unsafe && reportReady && logger.failure() == nil && (logger.remote == nil || logger.remote.blocked() == "") {
 		unsafe = executePost(ctx, root, build, &b, logger)
 	} else if logger.remote != nil {
 		reason := "not_selected"
@@ -817,6 +905,100 @@ func executeBuild(ctx context.Context, root string, build preparedBuild, logger 
 	}
 	b.DurationMS = time.Since(start).Milliseconds()
 	return b, unsafe
+}
+
+func reportRemaining(build preparedBuild, elapsed time.Duration, remote *remoteRun) *int64 {
+	if remote != nil {
+		remaining, _ := remote.budgets()
+		return remaining
+	}
+	if build.timeout == 0 {
+		return nil
+	}
+	remaining := max(int64(0), int64(build.timeout-elapsed))
+	return &remaining
+}
+
+// reportContext允许取消后核对已产生的报告，仍受原预算与独立运行权限制。
+func reportContext(ctx context.Context, remaining *int64, remote *remoteRun, maximum time.Duration) (context.Context, context.CancelFunc, error) {
+	noop := func() {}
+	if remaining != nil {
+		maximum = min(maximum, time.Duration(*remaining))
+	}
+	if maximum <= 0 {
+		return ctx, noop, context.DeadlineExceeded
+	}
+	base := ctx
+	if ctx.Err() != nil {
+		base = context.WithoutCancel(ctx)
+	}
+	stopAuthority := noop
+	if remote != nil {
+		if remote.blocked() != "" {
+			return base, noop, errReportSave
+		}
+		base, stopAuthority = remote.merge(base)
+	}
+	bounded, stop := context.WithTimeout(base, maximum)
+	return bounded, func() { stop(); stopAuthority() }, nil
+}
+
+func checkBuildReports(ctx context.Context, build preparedBuild, result *BuildRun, logger *runLogger, set *reportCollection, index int, name string, final bool, remaining *int64) error {
+	bounded, stop, err := reportContext(ctx, remaining, logger.remote, 10*time.Second)
+	if err != nil {
+		return err
+	}
+	defer stop()
+	pureStart := time.Now()
+	evidence, locals, err := set.check(bounded, index, name, final)
+	if err != nil {
+		return err
+	}
+	pureSpent := time.Since(pureStart)
+	result.Reports = &evidence
+	if evidence.Outcome == "failed" && result.Status == "succeeded" {
+		result.Status, result.Reason = "failed", evidence.Reason
+	}
+	if logger.remote != nil {
+		p := protocol.ExecutionProgress{Kind: "reports_checked", Index: index, ExitCode: -1, Reports: &evidence, LocalReports: locals}
+		if !final {
+			p.Phase, p.Name, p.StepKind = "ordinary", name, "run"
+		}
+		if err = logger.remote.emit(p); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			return errReportSave
+		}
+	}
+	if !final {
+		return nil
+	}
+	sealCtx := bounded
+	if logger.remote != nil {
+		current, _ := logger.remote.budgets()
+		var sealStop context.CancelFunc
+		sealCtx, sealStop, err = reportContext(ctx, current, logger.remote, 10*time.Second-pureSpent)
+		if err != nil {
+			return err
+		}
+		defer sealStop()
+	}
+	sealed, digest, err := set.seal(sealCtx, evidence)
+	if err != nil {
+		return err
+	}
+	if logger.remote != nil {
+		p := protocol.ExecutionProgress{Kind: "reports_sealed", ExitCode: -1, Reports: &sealed}
+		if err = logger.remote.emit(p); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			return errReportSave
+		}
+	}
+	result.Reports, result.ReportSealDigest = &sealed, digest
+	return nil
 }
 
 func executePost(ctx context.Context, root string, build preparedBuild, b *BuildRun, logger *runLogger) bool {

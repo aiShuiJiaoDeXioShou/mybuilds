@@ -8,6 +8,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,7 +16,7 @@ import (
 	"mybuilds/internal/protocol"
 )
 
-var progressReasons = []string{"", "exit", "start_error", "directory_error", "artifact_error", "timeout", "cancelled", "log_error", "cleanup_error", "progress_error", "condition", "not_started", "budget_exhausted", "not_selected", "authority_lost", "persistence_error", "precheck_error", "checkout_error", "post_error"}
+var progressReasons = []string{"", "exit", "start_error", "directory_error", "artifact_error", "timeout", "cancelled", "log_error", "cleanup_error", "progress_error", "condition", "not_started", "budget_exhausted", "not_selected", "authority_lost", "persistence_error", "precheck_error", "checkout_error", "post_error", "report_failed", "report_invalid", "report_missing", "report_secret", "report_error"}
 
 func progressDigest(p protocol.ExecutionProgress) string {
 	b, err := json.Marshal(p)
@@ -27,7 +28,11 @@ func progressDigest(p protocol.ExecutionProgress) string {
 }
 func validProgress(p protocol.ExecutionProgress) bool {
 	_, offset := p.At.Zone()
-	return !p.At.IsZero() && offset == 0 && p.ElapsedNS >= 0 && p.RemainingPostBudgetNS >= 0 && slices.Contains(progressReasons, p.Reason) && slices.Contains([]string{"intent", "started", "finished", "post_selected", "skipped", "build_finished"}, p.Kind) && p.PID == 0 && p.PGID == 0 && p.LocalResultDir == "" && len(p.LocalArtifacts) == 0
+	reportEvent := p.Kind == "reports_checked" || p.Kind == "reports_sealed"
+	if len(p.LocalReports) != 0 || (p.Reports != nil) != reportEvent || p.ReportManifest != nil && p.Kind != "build_finished" {
+		return false
+	}
+	return !p.At.IsZero() && offset == 0 && p.ElapsedNS >= 0 && p.RemainingPostBudgetNS >= 0 && slices.Contains(progressReasons, p.Reason) && slices.Contains([]string{"intent", "started", "finished", "post_selected", "skipped", "build_finished", "reports_checked", "reports_sealed"}, p.Kind) && p.PID == 0 && p.PGID == 0 && p.LocalResultDir == "" && len(p.LocalArtifacts) == 0
 }
 func monotoneBudget(previous, next *int64) bool {
 	if previous == nil {
@@ -72,6 +77,9 @@ func validateArtifactIDs(ids []string) bool {
 func applyStep(db *gorm.DB, row *buildRecord, p protocol.ExecutionProgress) error {
 	if !slices.Contains([]string{"ordinary", "success", "failure", "always"}, p.Phase) || p.Index < 1 || p.PostPhase != "" {
 		return ErrEventConflict
+	}
+	if err := validateReportIntent(db, row, p); err != nil {
+		return err
 	}
 	steps, err := loadSteps(db, row.ID)
 	if err != nil {
@@ -179,6 +187,9 @@ func applyPostSelection(db *gorm.DB, row *buildRecord, p protocol.ExecutionProgr
 	if p.Phase != "" || p.Index != 0 || p.Name != "" || p.StepKind != "" || p.Status != "" || row.PostPhase != "" || !slices.Contains([]string{"success", "failure", "none"}, p.PostPhase) || len(p.ArtifactIDs) != 0 {
 		return ErrEventConflict
 	}
+	if err := validateReportPost(db, row, p); err != nil {
+		return err
+	}
 	steps, err := loadSteps(db, row.ID)
 	if err != nil {
 		return err
@@ -188,7 +199,7 @@ func applyPostSelection(db *gorm.DB, row *buildRecord, p protocol.ExecutionProgr
 		return ErrEventConflict
 	}
 	expected := "success"
-	if failed {
+	if failed || strings.HasPrefix(row.Reason, "report_") {
 		expected = "failure"
 	}
 	if cancelled || row.CancelRequested || !started {
@@ -224,7 +235,9 @@ func verifyManifest(db *gorm.DB, row buildRecord, p protocol.ExecutionProgress, 
 	}
 	byID := map[string]artifactRecord{}
 	for _, file := range artifacts {
-		byID[file.ID] = file
+		if file.Purpose != "junit" {
+			byID[file.ID] = file
+		}
 	}
 	expectedSteps := map[string]stepRecord{}
 	for _, step := range steps {
@@ -259,10 +272,10 @@ func verifyManifest(db *gorm.DB, row buildRecord, p protocol.ExecutionProgress, 
 			seen[id] = true
 		}
 	}
-	if len(seen) != len(artifacts) {
+	if len(seen) != len(byID) {
 		return ErrEventConflict
 	}
-	return nil
+	return validateReportManifest(db, row, p)
 }
 func applyTerminal(db *gorm.DB, row *buildRecord, p protocol.ExecutionProgress) error {
 	if p.Phase != "" || p.Index != 0 || p.Name != "" || p.StepKind != "" || !slices.Contains([]string{"succeeded", "failed", "cancelled", "skipped"}, p.Status) || len(p.ArtifactIDs) != 0 {
@@ -385,10 +398,15 @@ func (s *Store) ApplyEvent(ctx context.Context, actor NodeActor, in protocol.Exe
 			return ErrSequenceInvalid
 		}
 		p := in.Progress
+		budgetBefore := row
 		if !monotoneBudget(row.RemainingBudgetNS, p.RemainingBudgetNS) || p.RemainingPostBudgetNS > row.RemainingPostBudgetNS {
 			return ErrBudgetInvalid
 		}
 		switch p.Kind {
+		case "reports_checked":
+			err = applyReportsChecked(tx, &row, p)
+		case "reports_sealed":
+			err = applyReportsSealed(tx, &row, p)
 		case "post_selected":
 			err = applyPostSelection(tx, &row, p)
 		case "build_finished":
@@ -409,6 +427,11 @@ func (s *Store) ApplyEvent(ctx context.Context, actor NodeActor, in protocol.Exe
 			return err
 		}
 		ack = protocol.EventAck{Seq: in.Seq, Digest: in.Digest}
+		if p.Kind == "reports_sealed" {
+			if _, err = s.captureReportBudget(tx, budgetBefore); err != nil {
+				return err
+			}
+		}
 		return checkBoundary(tx, actor, in.Ref, expires)
 	})
 	if err != nil {

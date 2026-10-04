@@ -2,6 +2,7 @@ package store
 
 import (
 	"mybuilds/internal/config"
+	"mybuilds/internal/protocol"
 	"time"
 )
 
@@ -93,39 +94,41 @@ type BuildFilter struct {
 	Page                                       Page
 }
 type BuildView struct {
-	RetryOf               string         `json:"retry_of,omitempty"`
-	ID                    string         `json:"id"`
-	Project               string         `json:"project"`
-	Group                 string         `json:"group"`
-	BatchID               string         `json:"batch_id"`
-	Name                  string         `json:"build_name"`
-	Number                *int64         `json:"number"`
-	Status                string         `json:"status"`
-	Reason                string         `json:"reason,omitempty"`
-	SHA                   string         `json:"sha"`
-	Branch                string         `json:"branch"`
-	Source                string         `json:"source"`
-	File                  string         `json:"file"`
-	SourceDigest          string         `json:"source_digest"`
-	ParameterKeys         []string       `json:"parameter_keys"`
-	Condition             string         `json:"condition"`
-	Reasons               []string       `json:"reasons"`
-	InitialBudgetNS       *int64         `json:"initial_budget_ns"`
-	RemainingBudgetNS     *int64         `json:"remaining_budget_ns"`
-	PostBudgetNS          int64          `json:"post_budget_ns"`
-	Steps                 []StepProgress `json:"steps"`
-	Post                  []StepProgress `json:"post"`
-	NodeID                string         `json:"node_id,omitempty"`
-	NodeName              string         `json:"node_name,omitempty"`
-	SessionID             string         `json:"session_id,omitempty"`
-	AttemptID             string         `json:"attempt_id,omitempty"`
-	LeaseID               string         `json:"lease_id,omitempty"`
-	LeaseEpoch            int64          `json:"lease_epoch"`
-	CancelRequested       bool           `json:"cancel_requested"`
-	StopUnconfirmed       bool           `json:"stop_unconfirmed"`
-	RemainingPostBudgetNS int64          `json:"remaining_post_budget_ns"`
-	PostPhase             string         `json:"post_phase,omitempty"`
-	CreatedAt             time.Time      `json:"created_at"`
+	Reports               *protocol.ReportEvidence `json:"reports,omitempty"`
+	ReportSealDigest      string                   `json:"report_seal_digest,omitempty"`
+	RetryOf               string                   `json:"retry_of,omitempty"`
+	ID                    string                   `json:"id"`
+	Project               string                   `json:"project"`
+	Group                 string                   `json:"group"`
+	BatchID               string                   `json:"batch_id"`
+	Name                  string                   `json:"build_name"`
+	Number                *int64                   `json:"number"`
+	Status                string                   `json:"status"`
+	Reason                string                   `json:"reason,omitempty"`
+	SHA                   string                   `json:"sha"`
+	Branch                string                   `json:"branch"`
+	Source                string                   `json:"source"`
+	File                  string                   `json:"file"`
+	SourceDigest          string                   `json:"source_digest"`
+	ParameterKeys         []string                 `json:"parameter_keys"`
+	Condition             string                   `json:"condition"`
+	Reasons               []string                 `json:"reasons"`
+	InitialBudgetNS       *int64                   `json:"initial_budget_ns"`
+	RemainingBudgetNS     *int64                   `json:"remaining_budget_ns"`
+	PostBudgetNS          int64                    `json:"post_budget_ns"`
+	Steps                 []StepProgress           `json:"steps"`
+	Post                  []StepProgress           `json:"post"`
+	NodeID                string                   `json:"node_id,omitempty"`
+	NodeName              string                   `json:"node_name,omitempty"`
+	SessionID             string                   `json:"session_id,omitempty"`
+	AttemptID             string                   `json:"attempt_id,omitempty"`
+	LeaseID               string                   `json:"lease_id,omitempty"`
+	LeaseEpoch            int64                    `json:"lease_epoch"`
+	CancelRequested       bool                     `json:"cancel_requested"`
+	StopUnconfirmed       bool                     `json:"stop_unconfirmed"`
+	RemainingPostBudgetNS int64                    `json:"remaining_post_budget_ns"`
+	PostPhase             string                   `json:"post_phase,omitempty"`
+	CreatedAt             time.Time                `json:"created_at"`
 }
 type QueueStatus struct{ Projects, Queued, Skipped, Running, Interrupted, Nodes, HealthyNodes int64 }
 
@@ -188,6 +191,11 @@ type batchRecord struct {
 func (batchRecord) TableName() string { return "batches" }
 
 type buildRecord struct {
+	ReportRevision                                           int64         `gorm:"not null;default:0"`
+	ReportFinal                                              bool          `gorm:"not null;default:false"`
+	ReportsJSON                                              string        `gorm:"not null;default:''"`
+	ReportSealDigest                                         string        `gorm:"not null;default:''"`
+	ReportCheckedIndex                                       int           `gorm:"not null;default:0"`
 	RetryOf                                                  *string       `gorm:"size:36;index"`
 	RetryOriginal                                            *buildRecord  `gorm:"foreignKey:RetryOf;references:ID;constraint:OnDelete:RESTRICT"`
 	ID                                                       string        `gorm:"primaryKey;size:36;index:build_status_created,priority:3"`

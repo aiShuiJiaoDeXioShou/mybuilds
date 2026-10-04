@@ -1,0 +1,47 @@
+version: 1
+builds:
+  junit:
+    reports:
+      junit:
+        paths: [results/*.xml]
+        required: true
+    timeout: 30s
+    steps:
+      - kind: run
+        name: prepare
+        run: mkdir -p results
+      - kind: run
+        name: first-report
+        run: |
+          printf '<testsuite tests="1" failures="0"><testcase name="initial" time="0.1"/></testsuite>' > results/result.xml
+      - kind: run
+        name: replace-report
+        run: |
+          cat > results/result.xml <<'XML'
+          <testsuites tests="5" failures="1" errors="1" skipped="1">
+            <testsuite tests="2" failures="0"><testcase name="pass-a" time="0.1"/><testcase name="pass-b" time="0.2"/></testsuite>
+            <testsuite tests="3" failures="1" errors="1" skipped="1">
+              <testcase name="failed" time="0.3"><failure message="expected mismatch">bounded diagnostic</failure></testcase>
+              <testcase name="errored" time="0.4"><error message="fixture error"/></testcase>
+              <testcase name="skipped" time="0"><skipped/></testcase>
+            </testsuite>
+          </testsuites>
+          XML
+      - kind: run
+        name: must-not-run
+        run: printf unexpected > sentinel.txt
+    post:
+      success:
+        - kind: run
+          name: success-must-not-run
+          run: printf unexpected > success.txt
+      failure:
+        - kind: run
+          name: failure-observed
+          run: printf failure_marker
+      always:
+        - kind: run
+          name: post-diagnostic-rewrite
+          run: |
+            printf '<testsuite tests="1"><testcase name="post-pass"/></testsuite>' > results/result.xml
+            printf cleanup_marker

@@ -60,6 +60,10 @@ func readTerminalJournal(lock *dataLock, name string) (*executionJournal, error)
 			return nil, failure("journal_unconfirmed")
 		}
 	}
+	checkpoint := &executionJournal{state: state}
+	if err := (&taskExecution{journal: checkpoint}).checkSealed(&p); err != nil {
+		return nil, failure("journal_unconfirmed")
+	}
 	encoded, err := json.Marshal(p)
 	if err != nil {
 		return nil, failure("journal_unconfirmed")

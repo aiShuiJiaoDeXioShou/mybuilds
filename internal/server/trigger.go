@@ -191,9 +191,6 @@ func (s *Server) Trigger(ctx context.Context, actor store.Actor, project, key st
 			return store.BatchResult{}, errPipeline
 		}
 		preview := plan.Builds[0]
-		if b.Reports != nil {
-			return store.BatchResult{}, errUnsupported
-		}
 		notification := b.Notifications
 		if notification == nil {
 			notification = document.Notifications

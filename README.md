@@ -29,7 +29,7 @@ MVP 目标已扩展至原生/Flutter 双平台、多节点构建、Google Play/A
 `004-android-build` 已完成本机 `doctor`、可编辑模板和真实工程验收：APK/AAB 版本与签名、mapping、快照摘要、离线缓存、失败和取消均通过，见[验证记录](specs/004-android-build/validation.md)。`005-ios-build` 在独立 worktree 实现，真实 Apple profile 与签名 archive/export 尚未验收；当前已集成代码不提供 iOS 签名执行。Flutter 模板仍待后续功能交付。
 `006-control-plane` 已接入严格管理配置、双数据库 Store、单控制端独占、鉴权 HTTP、只读 Git 固定提交与远程 CLI。已通过最终全量/race/vet、SQLite 与 PostgreSQL 各 37 项真实二进制验收，以及 Linux 上 37 项闭环；Spec Kit 收敛无缺口并按整功能提交，见[验证记录](specs/006-control-plane/validation.md)。006 验收范围只包含 queued/skipped，不含实际远程构建；007 已接入独立 Agent 执行，发布和审批仍待后续功能。
 项目组已经接入：注册时可选组，未指定归入 default，支持普通组改名、空组删除和项目迁移，项目历史与编号保持。
-一个 YAML 的多个命名 build、本地参数/env 映射、when、累计超时、post 和日志时间戳已经实现；无 YAML 绑定双平台方案、自动变更筛选、Webhook 等待窗口、保留策略、JUnit 与发布审批仍待实现。
+一个 YAML 的多个命名 build、本地参数/env 映射、when、累计超时、post 和日志时间戳已经实现；无 YAML 绑定双平台方案、自动变更筛选、Webhook 等待窗口、保留策略与发布审批仍待实现。019 JUnit 已接入本地检查、原XML快照与封存，以及Agent回传、中央详情和下载；双库名义应用各92项、最终20故障192断言及macOS/Linux实机门通过；全量test/race/vet、12编译通过，Spec Kit收敛无缺口，验收通过，整功能提交见[实施历史](docs/IMPLEMENTATION_HISTORY.md)。
 
 ## 开发与运行
 
@@ -77,9 +77,13 @@ go build -o bin/mybuilds-agent ./cmd/mybuilds-agent
 `mybuilds doctor --platform android --json --working-dir <工程目录>` 检查实际 Java、SDK 包和 wrapper。签名检查须显式提供 `--keystore`、`--key-alias`、`--store-password-env`、`--key-password-env`，两个密码仅从指定环境变量读取；未声明签名为 skipped，任一 failed 返回非零。doctor 默认 android；007 支持 `doctor --node NODE` 和 `doctor --server`；节点诊断读取最近实际报告，节点离线明确失败。首次 wrapper 检查可能下载工程锁定的 Gradle 到缓存，普通 run 不会自动调用 doctor。
 `run --dry-run` 只输出脱敏 JSON，不执行脚本、Git 或网络请求，也不读取密钥。多 build 必须用 `--build android,ios` 或 `--all`，参数用重复的 `--param key=value`；`--step` 仅限单 build。
 去掉 `--dry-run` 执行本地脚本：日志写 stderr，脱敏结果 JSON 写 stdout，失败/取消返回非零。配置路径不改变当前工作目录，多个 build 顺序执行；`--step` 只运行选中普通步骤，不自动执行前序依赖。
-先校验整批再启动脚本，当前生效的 approval/reports/notifications 会报未支持；有效通知 `enabled: false` 可关闭。实际上传通过后续远程控制端，生效 upload 在任何流水线脚本前拒绝。
+先校验整批再启动脚本，当前生效的 approval/notifications 会报未支持；有效通知 `enabled: false` 可关闭。实际上传通过后续远程控制端，生效 upload 在任何流水线脚本前拒绝。
 artifact 支持相对根目录递归 glob（`**`）；每个模式须匹配普通文件，按步骤保存独立快照、大小和 SHA-256。结果 JSON 的 `result_dir` 定位临时结果根，`log_path` 定位 UTC 脱敏步骤日志，失败后仍保留完整证据。普通与 post 的快照分开；结果数据不进入源码工作树。预览、预检查失败、全部跳过不创建结果目录。
 可运行的本地例子见 [local-run.yml](examples/local-run.yml) 和 [local-artifacts.yml](examples/local-artifacts.yml)，在临时目录以已构建二进制的绝对路径和 `--file` 指向该例子运行。
+
+JUnit 本地示例见 [local-reports.yml](examples/local-reports.yml)：在独立临时工作目录运行 `mybuilds run --file <示例绝对路径> --build junit`。示例会生成失败报告并返回非零，结果只统计同路径最后一次普通执行生成的5个case；failure/always仍运行，post改写原文件不改变封存结果。实际配置使用 `reports.junit.paths: [results/*.xml]`，`required` 默认true；false只允许缺失，非法XML或测试失败仍失败。开始前的旧XML不计入，报告耗时计入普通构建预算。
+结果JSON包含报告计数、有限诊断、安全相对路径和原XML的大小/SHA-256；独立快照和manifest位于结果目录。未配置报告或全部跳过不生成报告结果。远程构建也使用同一检查流程，最终XML完整上传并经服务端重新解析后才封存。`build show`显示已封存计数、来源和摘要，`artifact ls`列出junit用途，`artifact download`下载中央确认的原字节，节点离线仍可用；admin/approver可读，trigger/node身份不可读取用户报告。019最终故障验收已通过，见[验证记录](specs/019-test-reports/validation.md)。
+报告路径模板支持参数及project、build.name/build.id/build.number、node.name、git.sha/git.branch；本地运行须有相应事实，缺失在执行前报错。workspace、step.name属于私有步骤上下文，不能用于报告路径。
 Android 工程接入、临时测试签名和构建命令见 [Android 示例](examples/android/README.md)；完整包核验见 [004 验收指南](specs/004-android-build/quickstart.md)。
 
 ## 控制端与远程排队

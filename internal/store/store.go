@@ -19,15 +19,16 @@ import (
 )
 
 type Store struct {
-	db, writer        *gorm.DB
-	conn              *sql.Conn
-	lockFile          *os.File
-	lockPath, dbPath  string
-	lockInfo, dbInfo  os.FileInfo
-	driver            string
-	mu                sync.Mutex
-	lost, closed      bool
-	transactionExpiry *time.Time
+	db, writer                *gorm.DB
+	conn                      *sql.Conn
+	lockFile                  *os.File
+	lockPath, dbPath          string
+	lockInfo, dbInfo          os.FileInfo
+	driver                    string
+	mu                        sync.Mutex
+	lost, closed              bool
+	transactionExpiry         *time.Time
+	transactionReportDeadline *time.Time
 }
 
 func Open(ctx context.Context, opt Options) (*Store, error) {
@@ -175,7 +176,11 @@ func (s *Store) write(ctx context.Context, fn func(*gorm.DB) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.transactionExpiry = nil
-	defer func() { s.transactionExpiry = nil }()
+	s.transactionReportDeadline = nil
+	defer func() {
+		s.transactionExpiry = nil
+		s.transactionReportDeadline = nil
+	}()
 	if err := s.checkLock(ctx); err != nil {
 		return err
 	}
@@ -189,6 +194,9 @@ func (s *Store) write(ctx context.Context, fn func(*gorm.DB) error) error {
 		// 最后一次锁查询也可能耗尽原执行权；在COMMIT前再比较捕获值。
 		if s.transactionExpiry != nil && !time.Now().UTC().Before(*s.transactionExpiry) {
 			return ErrLeaseExpired
+		}
+		if s.transactionReportDeadline != nil && !time.Now().UTC().Before(*s.transactionReportDeadline) {
+			return ErrBudgetInvalid
 		}
 		return nil
 	})

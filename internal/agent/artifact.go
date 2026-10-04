@@ -150,7 +150,7 @@ func (client *agentHTTP) putArtifact(ctx context.Context, resultDir string, arti
 	}
 }
 func artifactMatches(view protocol.ArtifactView, d protocol.ArtifactDeclaration) bool {
-	return view.ID == d.ID && view.BuildID == d.Ref.BuildID && view.AttemptID == d.Ref.AttemptID && view.Phase == d.Phase && view.Index == d.Index && view.Step == d.Step && view.Name == d.Name && view.Size == d.Size && view.SHA256 == d.SHA256 && !view.CompletedAt.IsZero()
+	return view.ID == d.ID && view.BuildID == d.Ref.BuildID && view.AttemptID == d.Ref.AttemptID && view.Phase == d.Phase && view.Index == d.Index && view.Step == d.Step && view.Name == d.Name && view.Size == d.Size && view.SHA256 == d.SHA256 && view.Purpose == d.Purpose && view.ReportRevision == d.ReportRevision && view.ReportKey == d.ReportKey && !view.CompletedAt.IsZero()
 }
 func readArtifactResponse(response *http.Response) (protocol.ArtifactView, error) {
 	defer response.Body.Close()
