@@ -24,6 +24,7 @@ type preparedStep struct {
 	skipped     bool
 	command     shellCommand
 	relativeDir string
+	patterns    []string
 }
 
 type preparedBuild struct {
@@ -126,6 +127,26 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 	}
 	logger := newRunLogger(options.Output, p.secrets)
 	result := &RunResult{Builds: make([]BuildRun, 0, len(prepared))}
+	for _, build := range prepared {
+		for _, step := range build.steps {
+			if step.skipped {
+				continue
+			}
+			result.ResultDir, err = resultDirectory(p.root)
+			if err != nil {
+				return nil, err
+			}
+			logger.root, err = os.OpenRoot(result.ResultDir)
+			if err != nil {
+				_ = os.RemoveAll(result.ResultDir)
+				return nil, errors.New("结果目录不可用")
+			}
+			break
+		}
+		if logger.root != nil {
+			break
+		}
+	}
 	failed, cleanupFailed := false, false
 	for _, build := range prepared {
 		if cleanupFailed {
@@ -142,10 +163,46 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 		failed = failed || b.Status == "failed" || b.Status == "cancelled"
 		result.Builds = append(result.Builds, b)
 	}
+	logError := logger.close()
+	if logger.root != nil {
+		if err := logger.root.Close(); err != nil {
+			logError = err
+		}
+	}
+	if logError != nil {
+		for i := range result.Builds {
+			if result.Builds[i].Status == "succeeded" {
+				result.Builds[i].Status, result.Builds[i].Reason = "failed", "log_error"
+			}
+		}
+		failed = true
+	}
 	if failed {
 		return result, batchRunError
 	}
 	return result, nil
+}
+
+// resultDirectory 先检查真实临时目录边界，避免 TMPDIR 把运行数据放入工作区。
+func resultDirectory(workspace string) (string, error) {
+	for _, temporary := range []string{os.TempDir(), "/tmp"} {
+		base, err := filepath.EvalSymlinks(temporary)
+		if err != nil {
+			continue
+		}
+		base, err = filepath.Abs(base)
+		if err != nil {
+			continue
+		}
+		relative, err := filepath.Rel(workspace, base)
+		if err != nil || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
+			continue
+		}
+		if directory, err := os.MkdirTemp(base, "mybuilds-"); err == nil {
+			return directory, nil
+		}
+	}
+	return "", errors.New("结果目录不可用")
 }
 
 func (p *runPreparation) build(name string, build *config.Build, params map[string]string, selected string, notifications *config.Notifications) (preparedBuild, error) {
@@ -325,8 +382,20 @@ func (p *runPreparation) step(buildName string, step config.Step, buildEnv map[s
 	if prepared.skipped {
 		return prepared, nil
 	}
-	if step.Kind != "run" {
+	if step.Kind != "run" && step.Kind != "artifact" {
 		return prepared, fmt.Errorf("%s: 本地能力尚未支持", step.Kind)
+	}
+	local := maps.Clone(p.facts)
+	local["build.name"], local["workspace"], local["step.name"] = buildName, p.root, step.Name
+	if step.Kind == "artifact" {
+		for _, pattern := range step.Paths {
+			rendered, err := p.render(pattern, "artifact.paths", params, local)
+			if err != nil {
+				return prepared, err
+			}
+			prepared.patterns = append(prepared.patterns, rendered)
+		}
+		return prepared, validateArtifactPatterns(prepared.patterns)
 	}
 	if strings.ContainsRune(step.Run, 0) {
 		return prepared, errors.New("run: 正文不允许 NUL")
@@ -343,8 +412,6 @@ func (p *runPreparation) step(buildName string, step config.Step, buildEnv map[s
 	if err != nil {
 		return prepared, errors.New("shell: 解释器不可用")
 	}
-	local := maps.Clone(p.facts)
-	local["build.name"], local["workspace"], local["step.name"] = buildName, p.root, step.Name
 	relative, err := p.render(step.WorkingDir, "step.working_dir", params, local)
 	if err != nil {
 		return prepared, err
@@ -429,10 +496,63 @@ func skippedStep(step preparedStep, reason string) StepRun {
 	return StepRun{Name: step.step.Name, Kind: step.step.Kind, Status: "skipped", Reason: reason, ExitCode: -1}
 }
 
-func executeStep(ctx context.Context, root, build string, step preparedStep, limit time.Duration, logger *runLogger) StepRun {
-	result := StepRun{Name: step.step.Name, Kind: step.step.Kind, ExitCode: -1}
+func executeStep(ctx context.Context, root, build string, step preparedStep, limit time.Duration, logger *runLogger) (result StepRun) {
+	result = StepRun{Name: step.step.Name, Kind: step.step.Kind, ExitCode: -1}
+	defer func() { result.LogPath = logger.logPath(build, step.step.Name) }()
 	if limit < 0 {
 		result.Status, result.Reason = "failed", "timeout"
+		return result
+	}
+	if ctx.Err() != nil {
+		result.Status, result.Reason = "cancelled", "cancelled"
+		return result
+	}
+	runContext := ctx
+	cancel := func() {}
+	if limit > 0 {
+		runContext, cancel = context.WithTimeout(ctx, limit)
+	}
+	defer cancel()
+	if step.step.Kind == "artifact" {
+		start := time.Now()
+		result.Status, result.Reason = "failed", "artifact_error"
+		workspace, err := os.OpenRoot(root)
+		if err == nil && logger.root != nil {
+			prefix := filepath.Join("artifacts", build, step.step.Name)
+			err = logger.root.MkdirAll(filepath.Dir(prefix), 0700)
+			if err == nil {
+				result.started = true
+				result.Artifacts, err = collectArtifacts(runContext, workspace, filepath.Join(logger.root.Name(), prefix), step.patterns)
+			}
+			if err == nil {
+				for i := range result.Artifacts {
+					result.Artifacts[i].SnapshotPath = filepath.ToSlash(filepath.Join(prefix, result.Artifacts[i].SnapshotPath))
+				}
+				result.Status, result.Reason, result.ExitCode = "succeeded", "", 0
+			}
+		}
+		if workspace != nil {
+			if err := workspace.Close(); err != nil && result.Status == "succeeded" {
+				result.Status, result.Reason, result.ExitCode = "failed", "artifact_error", -1
+			}
+		}
+		if runContext.Err() != nil {
+			result.Status, result.Reason, result.ExitCode = "failed", "timeout", -1
+			if ctx.Err() != nil {
+				result.Status, result.Reason = "cancelled", "cancelled"
+			}
+		}
+		stream := logger.stream(build, step.step.Name, "system")
+		if result.Status == "succeeded" {
+			_, err = fmt.Fprintf(stream, "产物收集成功: %d 个文件\n", len(result.Artifacts))
+		} else {
+			_, err = fmt.Fprintf(stream, "产物收集失败: %s\n", result.Reason)
+		}
+		closeError := stream.Close()
+		if (err != nil || closeError != nil) && result.Status == "succeeded" {
+			result.Status, result.Reason, result.ExitCode = "failed", "log_error", -1
+		}
+		result.DurationMS = time.Since(start).Milliseconds()
 		return result
 	}
 	dir, err := runDirectory(root, step.relativeDir)
@@ -442,16 +562,10 @@ func executeStep(ctx context.Context, root, build string, step preparedStep, lim
 	}
 	command := step.command
 	command.Dir = dir
-	runContext := ctx
-	cancel := func() {}
-	if limit > 0 {
-		runContext, cancel = context.WithTimeout(ctx, limit)
-	}
-	defer cancel()
 	stdout, stderr := logger.stream(build, step.step.Name, "stdout"), logger.stream(build, step.step.Name, "stderr")
 	shell := runShell(runContext, command, stdout, stderr)
 	closeOut, closeErr := stdout.Close(), stderr.Close()
-	if (closeOut != nil || closeErr != nil) && shell.Reason == "" {
+	if (closeOut != nil || closeErr != nil) && shell.Reason == "" && shell.ExitCode == 0 && !shell.CleanupFailed {
 		shell.Reason = "log_error"
 		shell.ExitCode = -1
 	}
@@ -470,6 +584,14 @@ func executeStep(ctx context.Context, root, build string, step preparedStep, lim
 	}
 	if ctx.Err() != nil || shell.Reason == "cancelled" {
 		result.Status, result.Reason = "cancelled", "cancelled"
+	}
+	if result.started {
+		stream := logger.stream(build, step.step.Name, "system")
+		_, writeError := fmt.Fprintf(stream, "步骤执行结果: %s %s\n", result.Status, result.Reason)
+		closeError := stream.Close()
+		if (writeError != nil || closeError != nil) && result.Status == "succeeded" {
+			result.Status, result.Reason, result.ExitCode = "failed", "log_error", -1
+		}
 	}
 	return result
 }

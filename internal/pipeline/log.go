@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path"
 	"sort"
 	"sync"
 	"time"
@@ -23,6 +25,9 @@ type runLogger struct {
 	secrets [][]byte
 	mu      sync.Mutex
 	err     error
+	root    *os.Root
+	files   map[string]*os.File
+	closed  bool
 }
 
 type logStream struct {
@@ -56,6 +61,35 @@ func (logger *runLogger) stream(build, step, stream string) io.WriteCloser {
 func (logger *runLogger) failure() error {
 	logger.mu.Lock()
 	defer logger.mu.Unlock()
+	if logger.closed && logger.err == nil {
+		return errLogClosed
+	}
+	return logger.err
+}
+
+func (logger *runLogger) logPath(build, step string) string {
+	logger.mu.Lock()
+	defer logger.mu.Unlock()
+	name := path.Join("logs", build, step+".log")
+	if logger.files[name] != nil {
+		return name
+	}
+	return ""
+}
+
+func (logger *runLogger) close() error {
+	logger.mu.Lock()
+	defer logger.mu.Unlock()
+	if logger.closed {
+		return logger.err
+	}
+	logger.closed = true
+	// 即使先前写入失败，也尝试关闭全部自身文件；Root归Run管理。
+	for _, file := range logger.files {
+		if err := file.Close(); err != nil {
+			logger.err = errLogOutput
+		}
+	}
 	return logger.err
 }
 
@@ -156,11 +190,37 @@ func (stream *logStream) flush() error {
 	if logger.err != nil {
 		return logger.err
 	}
+	if logger.closed {
+		return errLogClosed
+	}
 	record := fmt.Sprintf("[%s] [build=%s] [step=%s] [stream=%s] %s\n", time.Now().UTC().Format(time.RFC3339Nano), stream.build, stream.step, stream.source, stream.line)
 	written, err := io.WriteString(logger.output, record)
 	if err != nil || written != len(record) {
 		logger.err = errLogOutput
 		return logger.err
+	}
+	if logger.root != nil {
+		name := path.Join("logs", stream.build, stream.step+".log")
+		file := logger.files[name]
+		if file == nil {
+			if err := logger.root.MkdirAll(path.Dir(name), 0700); err != nil {
+				logger.err = errLogOutput
+				return logger.err
+			}
+			file, err = logger.root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			if err != nil {
+				logger.err = errLogOutput
+				return logger.err
+			}
+			if logger.files == nil {
+				logger.files = make(map[string]*os.File)
+			}
+			logger.files[name] = file
+		}
+		if written, err := io.WriteString(file, record); err != nil || written != len(record) {
+			logger.err = errLogOutput
+			return logger.err
+		}
 	}
 	stream.line = stream.line[:0]
 	return nil

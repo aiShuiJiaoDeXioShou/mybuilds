@@ -11,14 +11,14 @@
 已完成 `000-project-bootstrap`：Go 单模块、双 CLI 帮助与共享版本、Spec Kit 项目原则和开发流程。
 多节点设计已确定，见 [MULTI_NODE.md](docs/plans/MULTI_NODE.md)，Agent 与节点协议尚未实现。
 客户端已接入 `init`、本地模板、严格配置校验与 `run --dry-run` 脱敏预览；支持单/多 build 选择、参数覆盖和条件三态。
-`001-pipeline-preview` 已实现并通过集成验证，证据见[验证记录](specs/001-pipeline-preview/validation.md)。`002-local-run` 已接入本地顺序执行、进程组取消、预算/post 和 UTC 脱敏日志，已通过验收；HTTP 服务、数据库、审批、通知和上传仍待实现。
+`001-pipeline-preview` 已实现并通过集成验证，证据见[验证记录](specs/001-pipeline-preview/validation.md)。`002-local-run` 已接入本地顺序执行、进程组取消、预算/post 和 UTC 脱敏日志，已通过验收；`003-build-artifacts` 已接入产物快照与本地结果/步骤日志并通过验收，见[验证记录](specs/003-build-artifacts/validation.md)；HTTP 服务、数据库、审批、通知和上传仍待实现。
 MVP 目标已扩展至原生/Flutter 双平台、多节点构建、Google Play/App Store 分发与用户自定义，见 [构建与分发设计](docs/plans/BUILD_DISTRIBUTION.md)。
 项目组列入控制端规划：客户端注册时选择组，未指定归入 default，支持组改名与项目迁移；尚未实现。
 一个 YAML 的多个命名 build、本地参数/env 映射、when、累计超时、post 和日志时间戳已经实现；无 YAML 绑定双平台方案、自动变更筛选、Webhook 等待窗口、保留策略、JUnit 与发布审批仍待实现。
 
 ## 开发与运行
 
-要求 Go **1.25 或更新版本**、Git。首次下载 Go 依赖需要网络；直接依赖为 Cobra 与 YAML v3。
+要求 Go **1.25 或更新版本**、Git。首次下载 Go 依赖需要网络；直接依赖为 Cobra、YAML v3 与 doublestar/v4。
 当前帮助与版本命令无需 Xcode、JDK 或 Android SDK；真正的移动端构建在对应功能接入时再检测工具链。
 本地执行支持 macOS/Linux，需要 sh 或所选 bash；分支/提交模板需要 Git。Windows 客户端可编译，当前本地执行明确未支持。
 
@@ -55,8 +55,9 @@ go build -o bin/mybuilds-server ./cmd/mybuilds-server
 在目标仓库运行 `mybuilds init` 创建最小 `mybuilds.yml`，已有目标拒绝覆盖；`init --template ./ci/template.yml` 使用经校验的本地模板。
 `run --dry-run` 只输出脱敏 JSON，不执行脚本、Git 或网络请求，也不读取密钥。多 build 必须用 `--build android,ios` 或 `--all`，参数用重复的 `--param key=value`；`--step` 仅限单 build。
 去掉 `--dry-run` 执行本地脚本：日志写 stderr，脱敏结果 JSON 写 stdout，失败/取消返回非零。配置路径不改变当前工作目录，多个 build 顺序执行；`--step` 只运行选中普通步骤，不自动执行前序依赖。
-先校验整批再启动脚本，当前生效的 artifact/approval/reports/notifications 会报未支持；有效通知 `enabled: false` 可关闭。实际上传通过后续远程控制端，生效 upload 在任何流水线脚本前拒绝。平台模板尚未实现。
-可运行的本地例子见 [local-run.yml](examples/local-run.yml)，在临时目录以已构建二进制的绝对路径和 `--file` 指向该例子运行。
+先校验整批再启动脚本，当前生效的 approval/reports/notifications 会报未支持；有效通知 `enabled: false` 可关闭。实际上传通过后续远程控制端，生效 upload 在任何流水线脚本前拒绝。平台模板尚未实现。
+artifact 支持相对根目录递归 glob（`**`）；每个模式须匹配普通文件，按步骤保存独立快照、大小和 SHA-256。结果 JSON 的 `result_dir` 定位临时结果根，`log_path` 定位 UTC 脱敏步骤日志，失败后仍保留完整证据。普通与 post 的快照分开；结果数据不进入源码工作树。预览、预检查失败、全部跳过不创建结果目录。
+可运行的本地例子见 [local-run.yml](examples/local-run.yml) 和 [local-artifacts.yml](examples/local-artifacts.yml)，在临时目录以已构建二进制的绝对路径和 `--file` 指向该例子运行。
 
 ## 目录结构
 
@@ -73,10 +74,11 @@ mybuilds/
 │   │   ├── server/root.go        # 服务端命令
 │   │   └── cli_test.go           # 双端 CLI 行为验收
 │   ├── config/                  # YAML 严格解析、约束及参数选择
-│   ├── pipeline/                # 预览、顺序执行、进程、预算/收尾与日志
+│   ├── pipeline/                # 预览、执行、预算/收尾、日志与产物快照
 │   └── version/version.go       # 共享版本与构建信息
 ├── examples/pipeline-preview.yml # 多 build 预览示例
 ├── examples/local-run.yml       # 可执行本地 shell 示例
+├── examples/local-artifacts.yml # 快照、日志与 post 示例
 ├── specs/                       # 各功能规范、计划、任务与验证
 ├── docs/plans/                  # 产品决策与功能实施路线
 ├── .agents/skills/              # 项目内 Codex 技能

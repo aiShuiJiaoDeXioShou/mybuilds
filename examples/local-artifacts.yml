@@ -1,0 +1,28 @@
+# 在临时工作目录执行 mybuilds run --file 本文件绝对路径。
+# JSON的result_dir保存本次日志与独立快照；post不会覆盖普通步骤证据。
+version: 1
+timeout: 1m
+steps:
+  - kind: run
+    name: package
+    run: |
+      mkdir -p output/nested
+      printf 'original-root' > output/app.bin
+      printf 'original-nested' > output/nested/app.bin
+      printf '构建文件已准备\n'
+      printf '示例诊断日志\n' >&2
+  - kind: artifact
+    name: collect
+    paths: [output/**/*.bin, output/**/app.bin]
+post:
+  timeout: 10s
+  always:
+    - kind: run
+      name: rewrite
+      run: |
+        printf 'post-root' > output/app.bin
+        printf 'post-nested' > output/nested/app.bin
+        printf '收尾已修改源文件，普通快照仍保留原内容\n'
+    - kind: artifact
+      name: collect-post
+      paths: [output/**/*.bin]

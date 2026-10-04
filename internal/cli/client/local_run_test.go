@@ -29,6 +29,8 @@ func requireLocalShell(t *testing.T) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		t.Skip("本地执行仅支持 macOS/Linux")
 	}
+	// 本地运行的结果跟随本次测试临时目录清理，不留宿主临时产物。
+	t.Setenv("TMPDIR", t.TempDir())
 }
 
 func TestLocalRunJSONLogsAndCurrentWorkspace(t *testing.T) {
