@@ -1,14 +1,16 @@
 # mybuilds
 
-面向 Android 与 iOS 的构建发布工具，用 Go 实现，以客户端 `mybuilds` 和服务端 `mybuilds-server` 两个 CLI 分发。
-计划在一台 macOS 上构建两个平台，围绕版本、签名、审批与分发组织流水线；客户端通过 HTTP 访问服务端，也支持本地调试流水线。
+面向 Android 与 iOS 的构建发布工具，用 Go 实现。
+目标架构是客户端 `mybuilds`、控制端 `mybuilds-server` 与构建节点 `mybuilds-agent` 三种 CLI。
+一个控制端管理多个构建节点，按平台、标签和容量分配任务；客户端也支持本地调试流水线。
 
 本文是整个项目的概览入口。产品与技术决策见 [产品计划](docs/plans/PLAN.md)，功能顺序见 [实施路线](docs/plans/SPECKIT_ROADMAP.md)。
 
 ## 当前状态
 
 已完成 `000-project-bootstrap`：Go 单模块、双 CLI 帮助与共享版本、Spec Kit 项目原则和开发流程。
-当前仅提供帮助、`version` 及 Cobra 自带补全；`init`、流水线执行、HTTP 服务、数据库、审批、通知和上传均属于后续功能。
+多节点设计已确定，见 [MULTI_NODE.md](docs/plans/MULTI_NODE.md)，Agent 与节点协议尚未实现。
+当前两个入口仅提供帮助、`version` 及 Cobra 自带补全；`init`、流水线执行、HTTP 服务、数据库、审批、通知和上传均属于后续功能。
 下一步是 `001-pipeline-preview`：配置初始化、严格校验与脱敏预览。
 
 ## 开发与运行
@@ -77,7 +79,10 @@ mybuilds/
 |---|---|
 | `internal/config` | 流水线、客户端及服务端配置与校验 |
 | `internal/pipeline` | 本地与服务端共享的执行、产物、审批、上传和脱敏 |
-| `internal/server` | 服务生命周期、HTTP API、调度与重启恢复 |
+| `cmd/mybuilds-agent`、`internal/cli/agent` | 后续 Agent 入口与节点命令 |
+| `internal/server` | 控制端生命周期、HTTP API、节点调度与重启恢复 |
+| `internal/agent` | 任务领取、续租、节点执行、日志与产物回传 |
+| `internal/protocol` | 控制端与 Agent 共用的任务、租约及回报格式 |
 | `internal/store` | 数据模型、事务和数据库访问 |
 | `internal/scm` | Git 工作区与 Webhook 来源处理 |
 | `internal/mobile` | Android / iOS 工具链、版本与签名辅助 |
@@ -86,7 +91,15 @@ mybuilds/
 | `deploy` | 部署模板与操作说明 |
 
 保持单个 Go 模块；测试跟随所在包，必要数据放包内 `testdata/`。
-计划中的服务运行数据位于 `~/.mybuilds`，本地流水线结果写临时目录。
+计划中的控制端数据位于 `~/.mybuilds`；Agent 使用独立 data_dir 保存工作区与日志缓冲，本地流水线结果写临时目录。
+
+## 多节点目标
+
+控制端部署于 Linux/macOS，负责数据库、队列、审批和中央日志/产物；Agent 主动通过 HTTPS 连接控制端。
+iOS 分配到具备 Xcode 和签名资源的 macOS 节点，Android 可分配到 Linux/macOS 节点。
+默认每节点容量和全局并发上限均为 1，可配置；同项目跨节点串行，单次流水线固定一个节点。
+节点失联不自动迁移已开始的构建，审批后在原节点继续；中央数据库由控制端独占，节点不共享 SQLite 文件。
+同机可部署控制端和一个 Agent；一期支持多个构建节点，保留单控制端。
 
 ## 技术方向
 
@@ -125,7 +138,8 @@ $speckit-specify → $speckit-plan → $speckit-tasks → $speckit-analyze → $
 已有功能继续使用原规范；新增功能按路线逐项推进。
 
 - [AGENTS.md](AGENTS.md)：AI 阅读入口、开发流程与提交约定。
-- [项目原则](.specify/memory/constitution.md)：所有功能的稳定约束。
+- [项目原则](.specify/memory/constitution.md)：2.0.0，所有功能的稳定约束。
+- [多节点设计](docs/plans/MULTI_NODE.md)：角色职责、调度、租约与故障边界。
 - [实施路线](docs/plans/SPECKIT_ROADMAP.md)：功能依赖、顺序与 001 操作案例。
 - [初始化规范](specs/000-project-bootstrap/spec.md)：本次范围与验收要求。
 

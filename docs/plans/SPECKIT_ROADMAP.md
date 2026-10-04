@@ -7,16 +7,16 @@
 
 - 当前使用 Spec Kit 1.0.13，Codex 已设为默认集成，技能位于 `.agents/skills/speckit-*/SKILL.md`；下文使用 `$speckit-xxx` 写法，在 Codex 聊天中逐条调用，不是 shell 命令。
 - Pi 集成保留在 `.pi/prompts/`，使用 `/speckit.xxx` 写法；本项目的 bug 扩展也已注册为 Codex 技能。技能列表未更新时重新打开 Codex 会话。
-- 项目原则已在 `.specify/memory/constitution.md` 确立为 1.0.0；Git 基线与 `000-project-bootstrap` 初始化已建立。后续沿用原则与已有入口。
+- 项目原则已在 `.specify/memory/constitution.md` 更新为 2.0.0（单控制端、多构建节点）；Git 基线与 `000-project-bootstrap` 初始化已建立。后续沿用原则与已有入口。
 - 一次只推进一个 feature。编号为建议顺序，正式目录名以 Spec Kit 的实际生成结果为准；后续 feature 基于已完成的代码继续实现。
 
 项目原则的输入示例：
 
 ```text
 $speckit-constitution
-以 docs/plans/PLAN.md 为依据制定项目原则：注释与文档用中文；Go 双 CLI、单机 macOS 执行；
-标准库优先、按功能引入依赖、飞书使用官方第三方 SDK；不增加插件系统、Web UI 或分布式执行器。
-严格校验外部输入；配置和日志不泄露密钥；审批和构建进度持久化；不可确认的上传不得自动重发。
+以 docs/plans/PLAN.md 为依据制定项目原则：注释与文档用中文；Go 单模块、客户端/控制端/Agent 三种 CLI，单控制端管理多个 macOS/Linux 构建节点；
+标准库优先、按功能引入依赖、飞书使用官方第三方 SDK；不增加插件系统、Web UI 或多控制端高可用。
+严格校验外部输入；配置和日志不泄露密钥；节点独立授权与租约持久化；审批固定原节点恢复；不可确认的上传不得自动重发。
 非平凡逻辑必须有最小可运行验证，安全、事务、恢复和进程取消必须有相应测试；不设虚构的覆盖率指标。
 完成标准是验收行为通过，而非仅完成任务勾选。
 ```
@@ -33,18 +33,22 @@ $speckit-constitution
 | 003-build-artifacts | P1；002 | glob 收集 → 路径与符号链接边界 → 产物清单、大小与摘要 | 产物可定位和校验；越界访问与不符合匹配要求的配置被拒绝 |
 | 004-android-build | P1；003 | 本机 Android doctor → 版本和签名环境 → Gradle 模板 → 缓存复用 | 真项目产出 apk / aab / mapping；版本正确；错误 JDK 或签名配置可诊断 |
 | 005-ios-build | P1；003 | 本机 iOS doctor → 临时 keychain 与 DerivedData → archive/export → 资源清理 | 真项目产出签名有效的 ipa / dSYM；失败与取消后临时签名资源清理 |
-| 006-server-builds | P2；004、005 | 双数据库与事务 → 项目 / token 管理 → 固定 SHA 工作区和配置快照 → 持久化排队 → API 与远程 CLI | trigger、ls/show、logs、cancel、产物下载闭环；同项目串行；鉴权、双数据库测试通过 |
-| 007-build-recovery | P3；006 | 启动状态扫描 → 恢复排队 → 中断任务标记 → 原提交重试 | 重启不丢排队任务；普通执行中任务变 interrupted；retry 用原 SHA / 配置 / 参数与新构建号 |
-| 008-build-notifications | P3；006、007 | 飞书 SDK Webhook 验证 → 企微 / 钉钉 / generic → 统一收尾接入 | 成功、失败、取消都有对应通知；通知失败不覆盖构建结果；凭据不泄露 |
-| 009-release-approval | P3；007、008 | 审批位置落库 → 挂起释放槽 → 角色鉴权和决定记录 → 5s 扫描重新入队 → 重启恢复 | 待审批时其他项目可构建；批准后从正确位置继续；重复决定、取消竞态不能覆盖状态 |
-| 010-webhook-trigger | P4；006、007 | 注册 provider → GitHub / GitLab 库适配 → Gitee / 自建解析 → 校验、过滤 → 事件与任务事务入库 | 四类来源可触发；伪造请求被拒；重复事件只入队一次；相同 SHA 不同参数可构建 |
-| 011-scheduled-builds | P4；010 | ls-remote 与分支游标 → 游标和入队事务 → 固定间隔轮询 → cron 定时 | 代码变更能触发；入队失败不丢变更；定时构建复用同一触发入口 |
-| 012-artifact-distribution | P5；003、009 | 唯一产物匹配 → 上传操作记录 → 蒲公英 / fir / generic → 结果查询及人工确认 | 发布审批过的原产物；真上传闭环；远端已接收而本地未记录时不自动重发 |
-| 013-service-operations | P5/P6；012 | retention → launchd → 优雅关闭 → doctor 和日志重连打磨 → 基于测量调并发 | 自动启动；停机状态可恢复；清理保护待审批和未知结果；无敏感信息回显 |
+| 006-control-plane | P2；004、005 | 双数据库与事务 → 项目 / token 管理 → SHA 固定与排队记录 → API 与远程 CLI | trigger 入队、项目/身份管理与 ls/show 闭环；双数据库事务与鉴权通过；构建可排队等待节点 |
+| 007-node-agents | P2；006 | Agent 入口 → 节点注册与独立鉴权 → 平台/标签/容量 → 原子领取与租约 → 固定 SHA 执行 → 日志/产物回传与取消 | 至少两个节点可执行；iOS 不分配到 Linux；同项目串行；过期与越权回报拒绝；断网停止，不自动迁移 |
+| 008-build-recovery | P3；007 | 控制端启动租约核对 → 恢复排队 → 节点中断标记 → 原提交重试 | 控制端重启不误判节点；过期执行不重跑；retry 用原 SHA / 配置 / 参数与新构建号 |
+| 009-build-notifications | P3；007、008 | 飞书 SDK Webhook 验证 → 企微 / 钉钉 / generic → 控制端基于持久化事件通知 | 成功、失败、取消都有通知；重复节点回报不重复处理终态；通知失败不覆盖构建结果；凭据不泄露 |
+| 010-release-approval | P3；008、009 | 产物回传确认 → 审批位置落库 → 释放节点/全局槽 → 角色鉴权和决定记录 → 原节点以新租约恢复 | 待审批其他项目可构建；原节点离线等待；缺失工作区失败；重复决定与取消竞态不覆盖状态 |
+| 011-webhook-trigger | P4；006、008 | 注册 provider → GitHub / GitLab 库适配 → Gitee / 自建解析 → 校验、过滤 → 事件与任务事务入库 | 四类来源可触发；伪造请求被拒；重复事件只入队一次；相同 SHA 不同参数可构建 |
+| 012-scheduled-builds | P4；011 | ls-remote 与分支游标 → 游标和入队事务 → 固定间隔轮询 → cron 定时 | 代码变更能触发；入队失败不丢变更；调度来源复用同一持久化队列 |
+| 013-artifact-distribution | P5；003、010 | 唯一产物匹配 → 控制端保存发布意图 → 当前节点授权上传 → 蒲公英 / fir / generic → 查询及人工确认 | 发布审批过的原产物；真上传闭环；已发送但失联时不自动重发；过期租约不能发起新发布 |
+| 014-service-operations | P5/P6；013 | retention → macOS/Linux 服务部署 → 节点 drain/停机 → 优雅关闭 → doctor 和日志重连 → 基于测量调并发 | 控制端/节点独立自启；清理保护待审批和未知结果；节点滚动维护不接新任务；无敏感信息回显 |
 
-006 包含远程 `doctor`、列表 / 详情 `--json`、构建工具版本与耗时记录、受鉴权的产物下载；
-013 在已有能力上打磨，不重复实现。004、005 尽早验收真实工程，避免服务端完成后才发现签名或 SDK 环境不适用。
-010、011 共同复用 006 的触发入口，不能各建一套队列或构建号分配逻辑。
+006 只建立控制端业务与排队能力，007 才闭合远程构建、节点 doctor、日志 SSE 与产物下载。
+004、005 尽早验收真实工程；007 复用本地引擎，不能重建执行器或让节点直接访问数据库。
+新增 007 后，原 007–013 规划顺延为 008–014；这些业务 feature 尚未创建 spec，无历史目录需要改名。
+001 预先校验 runner 的平台与标签结构，本地 run 只检查宿主能力；节点选择在 007 实现。
+无 runner 的远程构建必须有项目默认节点；无匹配节点时排队并提示，不能任意降级执行。
+协议与故障边界见 [MULTI_NODE.md](MULTI_NODE.md)。所有远程触发复用 006 的队列和构建号分配逻辑。
 
 ## 每个 feature 的工作流
 
@@ -77,11 +81,11 @@ $speckit-specify
 实现 mybuilds 的“流水线初始化与预览”，依据 docs/plans/PLAN.md 的 P0。
 用户能运行 init 在当前目录生成最小 mybuilds.yml，已有文件时拒绝覆盖；
 用户能运行 run --dry-run 预览步骤顺序、名称和参数，不执行命令、checkout、上传、通知或创建构建工作区。
-只接受规划中的四种步骤结构，严格拒绝未知字段、无效步骤及未知模板变量。
+只接受规划中的四种步骤结构；runner 支持 platform: android|ios 与 labels 字符串列表；严格拒绝未知字段、无效步骤及未知模板变量。
 env 和明确的凭据字段支持引用当前环境变量，缺失时报错；run 正文中的 shell 变量保持原样。
 运行时才能确定的已知变量在预览中标为待确定，不伪造实际构建号或状态。
 引用的密钥与敏感字段在预览及错误信息中不得显示明文。
-本功能只解析和预览步骤，不实现任何步骤执行、数据库、HTTP 服务或分发。
+本功能只解析和预览步骤与节点条件，不进行节点选择，也不实现步骤执行、数据库、HTTP 服务或分发。
 请包含必要的配置校验、变量处理、脱敏、无副作用和 init 不覆盖测试。
 ```
 
@@ -127,7 +131,7 @@ $speckit-tasks
 
 ```text
 - [ ] T001 复用 go.mod、Cobra 与双版本入口，按本功能引入并锁定 YAML
-- [ ] T002 定义 internal/config/pipeline.go 的四种步骤结构与字段规则
+- [ ] T002 定义 internal/config/pipeline.go 的四种步骤结构、runner 平台/标签及字段规则
 - [ ] T003 [US1] 在 internal/cli/client/root_test.go 写 init 生成与拒绝覆盖用例
 - [ ] T004 [US1] 在 internal/cli/client/root.go 实现 init，生成最小可预览配置
 - [ ] T005 [US2] 在 internal/config/pipeline_test.go 写合法配置、正文原样保留与运行时变量用例

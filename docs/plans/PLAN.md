@@ -13,7 +13,8 @@
 
 | 维度 | 决策 |
 |---|---|
-| 形态 | **服务端 + 客户端两个二进制，均为 CLI 分发**，无浏览器 UI |
+| 形态 | **客户端 + 控制端 + Agent 三种 CLI**；一个控制端管理多个构建节点，无浏览器 UI |
+| 节点架构 | Agent 主动连接控制端；按平台、标签和容量调度；单次流水线固定节点 |
 | 数据库 | 默认 SQLite，支持 PostgreSQL，统一通过 **ORM（GORM）** 访问 |
 | 技术选型 | 标准库覆盖的能力直接使用；CLI / ORM / Webhook / cron / 飞书等采用成熟第三方库 |
 | 配置 | 仓库内 `mybuilds.yml`（配置即代码） |
@@ -26,9 +27,11 @@
 原规划记录的本机环境：Go 1.25.4 · Xcode 27.0 · JDK 21 · Android SDK 齐全 · Node 24。
 实施前由 `doctor` 重新检测，构建记录保存实际工具版本，不把这份环境记录当成固定要求。
 
-**硬约束**：iOS 打包（`xcodebuild` + 签名）只能在 macOS 上执行。因此**服务端 `mybuilds-server` 部署在 macOS 上**，
-Android 构建也在同一台机器跑 —— 单机即可覆盖两个平台，不引入「远程执行器」这一层。
-客户端 `mybuilds` 可以跑在任何装了 git 的机器上。
+**硬约束**：iOS 打包（`xcodebuild` + 签名）只能在 macOS 构建节点执行。
+控制端 `mybuilds-server` 可部署 Linux/macOS，Agent 在具备工具链的节点执行任务：
+macOS 节点支持 iOS/Android，Linux 节点支持 Android；客户端的远程命令保持跨平台。
+支持一个控制端加一个或多个 Agent，同机部署同样使用 Agent。节点协议、故障边界见 [多节点设计](MULTI_NODE.md)。
+当前仅完成双 CLI 初始化，多节点是设计目标，尚未实现。
 
 ## 关键设计选择
 
@@ -59,29 +62,32 @@ CLI 分发形态：
 
 ```
 cmd/mybuilds-server/  → mybuilds-server   服务端二进制
-                 ├─ serve          起 HTTP API + 调度 + 引擎
+                 ├─ serve          起 HTTP API + 调度，不执行构建 shell
                  ├─ migrate        建表 / 升级 schema
                  ├─ project add|ls|rm
-                 └─ token create|ls|revoke
+                 ├─ token create|ls|revoke
+                 └─ node create|ls|drain|enable|disable|rm
 cmd/mybuilds/  → mybuilds          客户端二进制（连服务端）
                  ├─ trigger / build ls|show|logs|cancel|retry
                  ├─ approvals / approve / reject
                  ├─ run           本地调试流水线，不经过服务端
                  └─ doctor / status / init
+cmd/mybuilds-agent/ → mybuilds-agent      构建节点二进制（待 007 创建）
+                 └─ serve / doctor / version
 ```
 
-两个二进制共享 `internal/` 下的引擎、配置、scm、mobile 等包，各自带 `version` 子命令
-（共享 `internal/version`），不额外开第三个二进制。客户端的 `run` 直接复用同一套引擎，
-本地模式把运行结果写入临时目录，不连接服务端数据库。CLI 的远程命令可跨平台使用；
-本地执行按宿主机能力限制平台，macOS 进程组操作放到平台文件中，避免影响客户端交叉编译。
+三个角色共享 internal 下的配置、流水线、scm、mobile 和 version，入口随功能创建。
+Agent 与客户端本地 run 共用同一套引擎；控制端通过持久化队列和 Agent 协议管理执行。
+本地模式结果写临时目录，不连接控制端数据库；平台进程控制放到对应构建约束文件。
+Agent 使用标准库 HTTPS 主动领取任务、续租并回传日志/产物；一期不引入消息队列或共享文件系统。
 
 ### 2. 不用 Docker
 
 Android/iOS 构建本来就要用宿主机 SDK（Xcode 无法在容器里好好跑）。
 裸机 shell 直接省掉容器调度、镜像管理、缓存挂载一整套复杂度。
 
-只构建管理员注册的可信仓库与分支，不执行外部 PR 或不可信流水线。用专用 macOS 用户运行服务；
-密钥按步骤注入，子进程不继承服务端完整环境。环境变量限制和日志脱敏不是安全隔离，
+只构建管理员注册的可信仓库与分支，不执行外部 PR 或不可信流水线。控制端与各构建节点使用专用系统用户；
+密钥按步骤注入，子进程不继承控制端或 Agent 完整环境。环境变量限制和日志脱敏不是安全隔离，
 同一系统用户执行的任意脚本仍可能读取该用户可访问的文件。
 
 ### 3. 数据库默认 SQLite，可切 PostgreSQL，统一走 GORM
@@ -99,7 +105,8 @@ database:
 - 默认 SQLite：单机部署零运维。用 `github.com/glebarez/sqlite` —— **纯 Go（无 CGO）**驱动，
   不需要 C 编译器，可交叉编译，适合直接把二进制发给用户。
 - PostgreSQL（`gorm.io/driver/postgres`，基于 pgx）作为可选数据库后端，启动时按配置选择。
-  切换配置不会搬迁已有数据，也不提供集群能力；任务抢占、进程归属、工作区与产物共享需要另行设计。
+  切换配置不会搬迁已有数据。数据库仅由单控制端访问，多 Agent 使用 API；SQLite 文件不能跨节点共享。
+  多节点执行不要求 PostgreSQL；多控制端高可用不在一期范围。
 - 两种驱动共用同一套 GORM 模型与仓库层，驱动在启动时按配置注入。
 - SQLite 启用 WAL、外键约束和锁等待超时；保持短事务，日志按文件写入，不逐行入库。
   WAL 允许读写并行，但仍只有一个写入者。见 [SQLite WAL](https://sqlite.org/wal.html)。
@@ -109,13 +116,15 @@ database:
 
 ### 4. 审批与执行进度持久化
 
-引擎到审批节点时保存 `waiting_approval` 并退出本次执行，释放全局构建槽；调度器每 5s 查询数据库，
+引擎到审批节点时保存 `waiting_approval` 并退出本次执行，释放节点与全局构建槽；调度器每 5s 查询数据库，
 已批准的任务重新入队，从审批后的步骤继续。同项目在审批期间仍保持串行，其他项目可以使用空出的槽。
-挂起前清理临时签名资源，保留工作区与产物；挂起不视为成功，不发送最终通知。
+挂起前节点清理临时签名资源，并确认日志和产物已回传控制端；保留工作区与节点归属。
+批准后从原节点以新租约恢复，节点离线时等待并提示；挂起不视为成功，不发送最终通知。
 审批仅允许 `approver/admin`，一期不做审批分组；记录 token 身份、时间、意见，重复或相互冲突的决定不得覆盖。
 
 构建保存 commit SHA、流水线配置快照、当前步骤、工作区、产物记录与工具版本；快照保留密钥引用，不存密钥明文。
-启动时恢复排队与待审批任务；崩溃时正在执行的普通步骤标为 `interrupted`，由用户重试。
+控制端启动时恢复排队与待审批任务，并核对持久化节点租约；不能将控制端重启当作节点中断。
+节点崩溃或租约过期时普通执行步骤标为 `interrupted`，由用户显式重试，不自动迁移重跑。
 工作区或产物缺失时终止恢复并报告原因，不能从头静默重跑。
 
 上传前保存操作记录；若远端接收后本地未记录成功，标为结果未知，优先查询远端状态，无法确认时交由人工处理，
@@ -132,10 +141,10 @@ database:
 
 ### 6. 工作区、收尾与资源控制
 
-- 服务端先按确定的 SHA 准备工作区，再读取该提交的 `mybuilds.yml`，checkout 是前置操作；本地 `run` 使用当前工作树，不重置用户修改。
-- 常规步骤失败即停；成功、失败、取消均执行统一收尾：最终通知、临时 keychain 清理。通知失败单独记录，不覆盖构建结果。
-- 默认全局并发为 1，可配置；记录排队时间、步骤耗时、峰值内存与工作区大小后再提高并发。
-- 工作区按构建隔离，复用工具自身的依赖下载缓存；iOS DerivedData 和临时 keychain 按构建隔离，不新增通用缓存系统。
+- Agent 先按控制端确定的 SHA 准备节点工作区，再读取该提交的 `mybuilds.yml`，checkout 是前置操作；本地 `run` 使用当前工作树，不重置用户修改。
+- 常规步骤失败即停；成功、失败、取消均执行统一收尾：最终通知、临时 keychain 清理。通知由控制端发送，失败单独记录，不覆盖构建结果。
+- 默认每节点容量为 1、全局并发为 1，均可配置；同项目跨节点串行；记录排队时间、步骤耗时、峰值内存与工作区大小后再提高并发。
+- 各节点工作区按构建隔离，复用工具自身的依赖下载缓存；iOS DerivedData 和临时 keychain 按构建隔离，不新增通用缓存系统。
 - 取消先向构建进程组发送 TERM，超时后 KILL 并回收子进程；不得杀同用户的全部 Java / Xcode 进程。Gradle 默认 `--no-daemon`，真实构建验证残留进程。
 
 ### 7. 配置变量与鉴权
@@ -146,48 +155,44 @@ database:
 - token 存数据库，只保存高熵 token 的摘要和身份、角色、撤销状态；创建时仅显示一次明文，列表不回显。
   首次启动且 token 表为空时，可用 `MYBUILDS_BOOTSTRAP_ADMIN_TOKEN` 初始化管理员，之后撤销不会被配置重新创建。
 - 项目管理可由本机管理员 CLI 操作；admin 可访问全部 API，trigger 仅能触发及查询基本服务状态，
-  approver 可列待审批任务、读取其详情 / 日志 / 产物并批准或拒绝。取消、重试、上传结果确认与服务器 doctor 仅限 admin。
+  approver 可列待审批任务、读取其详情 / 日志 / 产物并批准或拒绝。取消、重试、上传结果确认与控制端 / 节点 doctor 仅限 admin。
 
 ## 架构
 
-```
-  git push ──────┐   ┌───────────────────────────────────────────────┐
-  (webhook)      ├──►│  mybuilds-server          (macOS 守护进程)     │
-                 │   │   ├─ HTTP API      net/http (127.0.0.1:8787) │
-  git ls-remote ◄┘   │   ├─ 调度器        cron + ticker             │
-  (轮询)              │   ├─ 调度队列      并发槽 + 同项目串行         │
-                     │   ├─ ORM  GORM ──► SQLite(默认) / PostgreSQL │
-                     │   ├─ 引擎 → 子进程 (gradlew / xcodebuild)     │
-                     │   └─ 存储           产物 / 日志               │
-                     └───────────────────────────────────────────────┘
-                                      ▲
-                                      │ HTTP + Bearer token（role）
-                     ┌────────────────┴───────────────────────┐
-                     │  mybuilds                 客户端二进制    │
-                     │  trigger / approve / logs -f / build ls │
-                     └─────────────────────────────────────────┘
-                              │
-                              │ 直接跑本地流水线（调试用，不经服务端）
-                              └─► mybuilds run → 同一套引擎 → 临时目录
+```text
+客户端 / Webhook / 轮询 / 定时
+              │
+              ▼
+mybuilds-server 控制端（单进程，Linux/macOS）
+  ├─ HTTP API、鉴权、项目、构建号、审批与调度
+  ├─ GORM → SQLite / PostgreSQL
+  └─ 中央日志与产物存储
+              ▲ HTTPS：Agent 主动领取、续租、回传
+              ├─ macOS Agent A → Xcode / Gradle
+              ├─ macOS Agent B → Xcode / Gradle
+              └─ Linux Agent C → Gradle
+
+mybuilds run → 本机同一流水线引擎 → 临时目录
 ```
 
-服务端与客户端是**两个独立二进制**，均以 CLI 形式分发，共享 `internal/` 包。
-客户端 `mybuilds run` 直接复用引擎，在本机跑一次流水线，用于调试 yaml。
+完整约束见 [MULTI_NODE.md](MULTI_NODE.md)：节点注册、授权、能力匹配、并发、租约、
+失联、控制端重启、审批固定节点、日志与产物回传、签名资源和上传结果未知。
+一次流水线固定一个节点；增加节点提高不同项目的并发，不做跨节点分步执行或多控制端高可用。
 
 ## 配置文件
 
 ### 服务端配置 `~/.mybuilds/server.yml`（由 `mybuilds-server serve` 读取）
 
 ```yaml
-listen: 127.0.0.1:8787
+listen: 127.0.0.1:8787       # 本地监听；跨主机通过校验证书的 HTTPS 入口访问
 data_dir: ~/.mybuilds
-concurrency: 1              # 全局并发构建槽，实测资源占用后调整
+concurrency: 1              # 所有节点合计的上限，增加节点时显式提高
 
 database:                   # 见设计选择 3，默认 sqlite
   driver: sqlite            # sqlite | postgres
   dsn: ~/.mybuilds/mybuilds.db
 
-secrets_file: ~/.mybuilds/secrets.env     # 0600，显式引用的 ${VAR} 从这里和环境变量解析
+secrets_file: ~/.mybuilds/secrets.env     # 0600，仅控制端通知等密钥；构建密钥在节点解析
 retention: {builds: 100, days: 30}        # 每个项目保留策略
 notifiers:
   feishu:   {webhook: "${FEISHU_WEBHOOK}"}    # oapi-sdk-go
@@ -198,6 +203,22 @@ notifiers:
 配置覆盖顺序为默认值 < 配置文件 < `MYBUILDS_` 环境变量 < CLI 参数。
 token 由数据库管理；首次启动可设置 `MYBUILDS_BOOTSTRAP_ADMIN_TOKEN`，随后用 `token create/revoke` 管理。
 日志、产物和工作区保留策略不清理排队、运行中、待审批或结果未知的构建。
+
+### Agent 配置 `~/.mybuilds/agent.yml`（待实现）
+
+```yaml
+server: https://build.example.com
+node: mac-ios-01
+token: "${MYBUILDS_AGENT_TOKEN}"   # 管理员创建节点时获取，不能复用用户 token
+capacity: 1
+data_dir: ~/.mybuilds/agent
+secrets_file: ~/.mybuilds/agent-secrets.env  # 0600，Git/构建/上传所需的节点凭据
+heartbeat_interval: 5s
+lease_duration: 30s
+```
+
+平台、标签与项目允许节点由控制端管理；节点报告实际工具能力。
+建议默认时序见 MULTI_NODE，协议细节与参数合法性在对应 feature 中验证；跨主机 HTTPS 必须验证证书。
 
 ### 客户端配置 `~/.mybuilds/client.yml`（由 `mybuilds` 读取）
 
@@ -220,6 +241,9 @@ mybuilds-server project add app-ios --repo ... --poll 60s    # 轮询模式
 
 ```yaml
 version: 1                              # 流水线格式版本
+runner:                                 # 控制端按平台、标签及项目授权调度
+  platform: android                     # android | ios；本地 run 只校验宿主能力
+  labels: [android-sdk]
 params:
   version: "1.0.0"                      # 应用版本，可由手动触发参数覆盖
   channel: 内测
@@ -295,18 +319,22 @@ v1 只处理 push 事件，tag/PR 事件忽略。分支用 `--branches` 的 glob
 
 以下为采用的目标结构；业务文件、examples 和 deploy 随对应功能创建，不预建空包。
 当前已实现内容见项目 [README](../../README.md)。
-服务生命周期、HTTP、调度和恢复统一归入 internal/server；客户端与服务端 CLI 分包。
+控制端生命周期、HTTP、调度和恢复归入 internal/server；节点运行归入 internal/agent。
+CLI 按 client/server/agent 分包，共享的网络消息契约放 internal/protocol，执行引擎不依赖控制端数据库。
 
 ```
 go.mod
 cmd/mybuilds-server/main.go    # 服务端二进制入口：serve / migrate / project / token
 cmd/mybuilds/main.go           # 客户端二进制入口：trigger / build / approvals / run / doctor
+cmd/mybuilds-agent/main.go     # Agent 入口：serve / doctor / version（007 创建）
 
 internal/cli/server/root.go    # 服务端子命令（cobra：serve/migrate/project/token）
 internal/cli/client/root.go    # 客户端子命令（cobra：trigger/build/approvals/run/doctor）
+internal/cli/agent/root.go     # Agent 子命令（cobra：serve/doctor/version）
 internal/config/pipeline.go     # YAML 结构体、严格校验、按字段插值，run 正文保留 shell 变量
 internal/config/server.go       # server.yml：listen/dsn/secrets/retention，Viper 覆盖
 internal/config/client.go       # client.yml：server 地址 + token
+internal/config/agent.go        # agent.yml：控制端、节点凭据、容量与本地目录
 internal/version/version.go     # 版本信息（ldflags 注入，两端共用）
 internal/pipeline/engine.go     # 顺序执行、恢复位置、ctx 取消、进程组 kill、统一收尾
 internal/pipeline/run.go        # shell 执行与进程取消
@@ -316,14 +344,17 @@ internal/pipeline/upload.go     # 分发与未知结果处理
 internal/pipeline/mask.go       # 日志 writer，把密钥值替换成 ***
 
 internal/store/store.go         # GORM 模型 + 仓库层，AutoMigrate，sqlite/postgres 双驱动注入
-internal/store/models.go        # Project / Build / Step / Approval / Event / Token，含上传操作记录
+internal/store/models.go        # Project / Node / Build / Lease / Step / Approval / Event / Token，含上传操作记录
 internal/scm/git.go             # clone / fetch / ls-remote / sha / 工作区准备
 internal/scm/hook.go            # webhooks/v6（GitHub/GitLab）+ Gitee/自建解析与事件去重
 
 internal/server/server.go       # 服务生命周期、组件组装与优雅关闭
 internal/server/http.go         # net/http 路由、鉴权、JSON API、日志 SSE 与产物下载
 internal/server/scheduler.go    # 定时/轮询 + 并发槽 + 同项目串行 + 审批扫描
-internal/server/recovery.go     # 启动恢复与中断状态处理
+internal/server/recovery.go     # 持久化租约核对、启动恢复与中断状态处理
+internal/agent/agent.go         # 领取/续租、节点执行与断网停止
+internal/agent/report.go        # 脱敏日志、事件与产物回传
+internal/protocol/messages.go   # 双端共用的任务、租约与回报格式
 internal/notify/notify.go       # 飞书(oapi-sdk-go) / 企微 / 钉钉 / 通用 webhook
 
 internal/mobile/android.go      # gradle 辅助：版本、keystore 注入、JDK 与 SDK 检查
@@ -340,12 +371,14 @@ examples/ios.mybuilds.yml
 ```
 POST   /hook/{project}                     # webhook（外部，token/HMAC 校验）
 GET    /api/projects                       # 项目列表
-GET    /api/doctor                         # 构建机体检（admin）
+GET    /api/doctor                         # 控制端体检（admin）
+GET    /api/nodes                          # 节点健康、标签与容量（admin）
+GET    /api/nodes/{id}/doctor              # 节点工具链体检（admin）
 POST   /api/projects/{p}/builds            # 手动触发
 GET    /api/builds?project=&status=&limit= # 构建列表（分页）
 GET    /api/builds/{id}                    # 单个构建详情 + 步骤状态
 GET    /api/builds/{id}/log?step=&follow=1 # 日志（follow 走 SSE tail）
-POST   /api/builds/{id}/cancel             # 取消（kill 进程组）
+POST   /api/builds/{id}/cancel             # 保存取消意图，节点终止本次进程组并确认
 POST   /api/builds/{id}/retry              # 原 SHA / 配置 / 参数，新构建号，检查未知上传结果
 POST   /api/builds/{id}/upload-resolution  # 确认未知上传结果并记录证据（admin）
 GET    /api/approvals                      # 待审批列表
@@ -354,12 +387,18 @@ POST   /api/builds/{id}/reject             # 需要 approver/admin 角色
 GET    /api/artifacts/{id}/{file}          # 产物下载
 ```
 
+### Agent HTTP 接口（待 007 契约细化）
+
+节点登录身份从独立 token 推导；领取、续租、步骤事件、日志、产物与发布意图均通过专用节点路由。
+每个执行请求绑定 build/attempt/lease 和节点身份，校验过期执行权、顺序、重复、路径及请求体大小。
+复用标准库 HTTP，不允许节点直接访问数据库或管理员 API。
+
 ## CLI 面
 
 ### 服务端 `mybuilds-server`（运维 / 管理员用）
 
 ```bash
-mybuilds-server serve   --config ~/.mybuilds/server.yml   # 起服务（API + 调度 + 引擎）
+mybuilds-server serve   --config ~/.mybuilds/server.yml   # 起控制端（API + 调度）
 mybuilds-server migrate --config ...                     # 建表 / 升级 schema（sqlite 或 postgres）
 mybuilds-server project add app-android \
     --repo git@gitlab.example.com:team/app.git \
@@ -369,6 +408,16 @@ mybuilds-server project add app-ios --repo ... --poll 60s --schedule "0 9 * * *"
 mybuilds-server project ls|rm
 mybuilds-server token create --role approver             # 生成 approver / trigger / admin token
 mybuilds-server token ls|revoke
+mybuilds-server node create mac-ios-01 --labels xcode,ios-signing  # 一次性显示独立节点 token
+mybuilds-server node ls|drain|enable|disable|rm
+```
+
+### Agent `mybuilds-agent`（构建节点，待 007 实现）
+
+```bash
+mybuilds-agent serve --config ~/.mybuilds/agent.yml
+mybuilds-agent doctor
+mybuilds-agent version
 ```
 
 ### 客户端 `mybuilds`（开发者 / 审批人用）
@@ -384,13 +433,13 @@ mybuilds approvals                        # 看哪些在等人放行
 mybuilds approve <build-id> [--note "已测过"]
 mybuilds reject  <build-id> [--note "打回原因"]
 mybuilds status                           # 连通性 + 服务端版本 + 当前并发
-mybuilds doctor [--server]                # 默认体检本机；--server 体检构建机（需 admin）
+mybuilds doctor [--server] [--node name]    # 本机 / 控制端 / 指定节点（远程需 admin）
 mybuilds version
 ```
 
 列表与详情命令支持 `--json`；`trigger --branch` 在触发时解析并固定最新 SHA，`retry` 始终重跑原提交。
-`doctor --server` 返回构建机检查结果，不返回密钥；`resolve-upload` 记录人工确认依据，已发布则不再上传，未发送才允许重试。
-`build show` 展示配置快照、工具版本、审批记录和上传结果；产物记录包含大小和 SHA-256，下载与收集校验路径边界及符号链接。
+`doctor --server` 返回控制端检查结果，`doctor --node` 返回对应节点工具链状态，两者不返回密钥；`resolve-upload` 记录人工确认依据，已发布则不再上传，未发送才允许重试。
+`build show` 展示执行节点、attempt / 租约状态、配置快照、工具版本、审批记录和上传结果；产物记录包含大小和 SHA-256，下载与收集校验路径边界及符号链接。
 
 `doctor` 不是锦上添花 —— iOS 签名失败是移动端 CI 的头号故障，一个能提前告诉你
 「keychain 没解锁 / 描述文件过期 / Gradle 用错 JDK」的命令能省掉大量排查时间。
@@ -407,9 +456,9 @@ mybuilds version
 
 ### P1 本地执行与真实移动端构建
 
-- [ ] `internal/scm/git.go`：按 SHA 准备服务端工作区；本地 run 使用当前工作树，不改写用户仓库
+- [ ] `internal/scm/git.go`：按 SHA 准备节点工作区；本地 run 使用当前工作树，不改写用户仓库
 - [ ] `run` / `artifact`：顺序执行、失败即停、统一收尾，产物大小与 SHA-256 记录
-- [ ] 服务端工作区 `~/.mybuilds/builds/<project>/<number>/{src,logs,artifacts}`；本地结果写临时目录，日志按步骤分文件
+- [ ] 节点工作区 `<agent.data_dir>/builds/<project>/<number>/{src,logs,artifacts}`；本地结果写临时目录，日志按步骤分文件
 - [ ] ctx 取消、进程组 TERM/KILL 与回收；按平台隔离实现，避免影响远程客户端编译
 - [ ] 假项目验证成功、失败、取消均执行收尾，日志与 dry-run 脱敏
 - [ ] Android 模板：Gradle 版本参数、keystore 注入、apk / aab / mapping 收集，复用依赖缓存
@@ -417,26 +466,29 @@ mybuilds version
 - [ ] 基础 `doctor`：git 凭据、JDK / Android SDK、Xcode、签名证书及描述文件检查
 - [ ] 一个真实 Android 与一个真实 iOS 工程构建成功，核对版本、产物、签名和取消后的残留进程
 
-### P2 服务端 + 调度
+### P2 控制端 + 多节点调度
 
 - [ ] 加入 Viper、GORM 与双驱动；验证纯 Go SQLite 驱动兼容性，设置 WAL / 外键 / 锁等待
 - [ ] 模型保存构建配置快照、参数、SHA、当前步骤、工具版本与产物；项目构建号事务分配
 - [ ] SQLite 与 PostgreSQL 跑相同的 CRUD / 事务 / 条件状态更新 / 唯一约束 / 分页用例
 - [ ] token 摘要存储、一次性管理员初始化、创建 / 撤销 / 身份审计，统一读写权限检查
-- [ ] 数据库持久化队列、默认并发 1、同项目串行，状态变更使用条件更新；一期单服务进程执行
-- [ ] `net/http` JSON API、鉴权、日志 SSE tail、受鉴权的产物下载与服务器 doctor
-- [ ] `mybuilds-server serve` + 客户端 `trigger` + `build ls/show` + `logs -f` 闭环
+- [ ] 数据库持久化队列、默认并发 1、同项目串行，状态变更使用条件更新；单控制端分配给多个 Agent 执行
+- [ ] `net/http` JSON API、鉴权、日志 SSE tail、受鉴权的产物下载与控制端/节点 doctor
+- [ ] 节点注册/独立 token/标签/容量/drain，Agent 跨主机 HTTPS 主动领取与续租
+- [ ] 原子节点分配、attempt/租约归属、过期回报拒绝、断网停止，无匹配节点时保持排队
+- [ ] 节点脱敏日志与校验产物回传；中央保存，不共享数据库或工作区
+- [ ] `mybuilds-server serve` + 多个 `mybuilds-agent serve` + `trigger` + `build ls/show` + `logs -f` 闭环
 - [ ] 列表 / 详情支持 `--json`；记录排队、步骤耗时、峰值内存与磁盘占用
 
 ### P3 重启恢复与审批
 
 - [ ] approval 保存进度并释放全局槽；5s 扫描已批准任务重新入队，保持同项目串行
 - [ ] `approve` / `reject` API + CLI：角色、身份、时间、意见、重复决定与取消竞态检查
-- [ ] 启动时恢复排队与待审批任务；正在执行的任务标为 interrupted，不自动重跑 shell
+- [ ] 启动时恢复排队与待审批任务；控制端恢复与节点核对；节点租约过期的普通执行任务标为 interrupted，不自动迁移重跑 shell
 - [ ] 重试固定原 SHA / 配置 / 参数并分配新构建号，不受分支后续提交影响
 - [ ] 飞书使用 `oapi-sdk-go/v3`，先验证自定义机器人 Webhook 的消息、签名与错误处理；企微 / 钉钉 / generic 用 stdlib HTTP
 - [ ] 最终通知覆盖成功 / 失败 / 取消；审批挂起不执行终态通知或删除恢复所需文件
-- [ ] 重启恢复、审批释放槽、重复批准、工作区缺失、本地交互审批验证
+- [ ] 重启租约核对、节点断网、审批释放槽、原节点恢复、重复批准、工作区缺失、本地交互审批验证
 
 ### P4 自动触发：Webhook + 轮询
 
@@ -457,8 +509,8 @@ mybuilds version
 
 ### P6 部署与打磨
 
-- [ ] `launchd` plist 模板（开机自启，日志走 `~/.mybuilds/serve.log`）
-- [ ] 优雅关闭：停止接新任务，取消构建进程并保存状态；专用用户和可信分支部署说明
+- [ ] macOS `launchd` 与 Linux `systemd` 模板；控制端/Agent 分别自动启动，运行目录独立
+- [ ] 优雅关闭：控制端停止分配，Agent 停止领取并取消自身构建进程，按租约保存状态；专用用户和可信分支部署说明
 - [ ] `build ls` 过滤与分页、日志流重连、doctor 输出打磨
 - [ ] 基于真实构建数据调整并发；按实际瓶颈优化依赖缓存，不新增通用缓存系统
 
@@ -473,14 +525,16 @@ App Store / Google Play 上传**不做内置**，文档里给 `kind: run` + fast
 - `internal/pipeline`：成功 / 失败 / 取消均收尾，分段日志中的密钥被脱敏，产物路径及符号链接不能越界
 - `internal/scm/hook.go`：**四种来源的签名校验**，含 GitHub HMAC 篡改 body 必须拒绝、错误 token 必须拒绝
 - `internal/server`：同项目串行、审批释放全局槽、重复事件只入队一次、同 SHA 不同参数可触发、轮询游标与入队同时提交
-- 审批与发布：重复批准 / 取消不能覆盖终态；重启后从正确步骤继续；未知上传结果不能自动重发
+- `internal/agent` / 节点协议：独立身份、双节点竞争、错误平台、租约过期、断网取消、幂等回报、日志与产物回传
+- 审批与发布：重复批准 / 取消不能覆盖终态；重启后原节点正确继续；未知上传结果不能自动重发
 
 **端到端（本地，无需真机）**
 
 ```bash
 mybuilds run                       # fake 项目验证 run/artifact；本地 approval 交互确认
 mybuilds run --dry-run             # 脱敏输出，不执行任何外部动作
-mybuilds-server serve --config ~/.mybuilds/server.yml &   # 起服务端
+mybuilds-server serve --config ~/.mybuilds/server.yml &   # 起控制端
+# 按节点配置，另行启动至少两个 mybuilds-agent serve 进程
 mybuilds trigger demo --branch main --version 1.0.0 --channel 内测
 # 四类 Webhook 使用对应 testdata 与请求头签名 / token 发送，不能用 URL token 代替 GitHub HMAC
 mybuilds logs <id> -f               # 看到流式日志
@@ -488,7 +542,8 @@ mybuilds approvals                  # 卡在 approval 步骤
 mybuilds approve <id> && mybuilds build show <id>   # 继续并成功
 # 构建失败 / 取消 → 收尾通知与 keychain 清理仍执行，进程无残留
 # 一个任务等审批 → 其他项目仍可构建，同项目保持串行
-# kill 服务端 → 重启 → 恢复排队 / 待审批；普通执行中任务为 interrupted
+# kill 控制端 → 重启 → 核对节点租约并恢复排队 / 待审批，不误判仍在续租的构建
+# 节点断网 / 崩溃 → 租约过期，本次进程停止；不把已开始构建自动迁移到另一节点
 # 分支更新后 retry → 原 SHA / 配置 / 参数、新构建号；缺失工作区不能静默重跑
 # 模拟远端收到上传但本地未写成功 → 结果未知且不会自动重发
 # 数据保留清理 → 不删除待审批和未知结果任务
@@ -502,20 +557,22 @@ mybuilds approve <id> && mybuilds build show <id>   # 继续并成功
 3. GitLab / GitHub / Gitee / 一个自建 Git 各连一次，push 触发成功；把某个 hook 的 secret 改错，确认被拒
 4. 轮询模式：手动在仓库推一次 commit，确认在间隔内被探测并触发
 5. 飞书官方 SDK：真实 Webhook 发消息成功，错误凭据 / 签名能报告失败，日志不泄露密钥
-6. Android / iOS 取消与失败后无本次构建残留进程、临时 keychain；复用缓存且不共享构建工作区
+6. Android / iOS 取消与失败后无本次构建残留进程、临时 keychain；节点独立缓存且不共享构建工作区
+7. 两个真实节点执行不同项目，同项目跨节点串行；iOS 不分配给 Linux，无合格节点明确排队
+8. 暂停原 Agent 后模拟过期回报，确认拒绝；审批后原节点离线不迁移，失联上传不自动重发
 
 ## 明确不做（一期）
 
 - 不做 Web UI（纯 CLI）
 - 不做插件系统 / 自定义步骤 DSL
-- 不做 Docker 隔离、不做分布式远程执行器
+- 不做 Docker 隔离；支持多构建节点，不做多控制端高可用或单条流水线跨节点迁移
 - 不做 RBAC / 多租户（token 角色只三档）
 - 不做 App Store / Google Play 内置上传
 - 不做并行步骤块、矩阵构建
 
 ## 已确定的部署与范围
 
-1. 服务端（`mybuilds-server`）部署在这台 macOS 上（Android 与 iOS 同机构建），客户端可跑在任意装了 git 的机器上。
+1. 一个控制端（Linux/macOS）管理多个 Agent。iOS 仅在 macOS 节点构建，Android 可在 Linux/macOS；客户端远程命令跨平台。
 2. 数据库默认 SQLite，支持 PostgreSQL；初期用 GORM `AutoMigrate` 建表，需要改名或回填时再增加显式版本迁移。
 3. 审批通知渠道按 飞书（oapi-sdk-go）/ 企业微信 / 钉钉 / 通用 webhook 实现，无内置邮件与短信；企微与钉钉机器人走 stdlib HTTP POST。
 4. 构建号用「每项目自增整数」，不做语义化版本自动推导；应用版本由 YAML 参数或触发参数提供，一期忽略 tag 事件。
