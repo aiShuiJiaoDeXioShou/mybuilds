@@ -103,7 +103,7 @@ runner:
 控制端独占 SQLite 或 PostgreSQL；多个 Agent 通过 API 访问，不共享 SQLite 文件，也不直接访问数据库。
 控制端 `~/.mybuilds` 保存数据库、日志与中央产物；节点独立 data_dir 保存工作区、日志缓冲和临时资源。
 增加 PostgreSQL 不等于多控制端高可用；启动须取得 SQLite 进程文件锁或 PostgreSQL 专用连接 advisory lock，拒绝第二调度进程。
-完整状态、请求幂等和文件入库规则统一见 [PLAN 架构](PLAN.md#架构)，不在 Agent 另建状态定义。
+完整状态、请求幂等和文件入库规则统一见 [架构与状态](ARCHITECTURE.md#架构)，不在 Agent 另建状态定义。
 
 按路线先完成 006 控制端与持久化队列，再完成 007 Agent 多节点闭环，随后 008 重启恢复。
 007 必须验证双节点竞争领取、不同项目及同项目不同 build 并行、同项目同名 build 串行、能力不匹配、节点越权、过期租约回报、

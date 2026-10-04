@@ -10,6 +10,7 @@
 - 功能开发必须使用项目内的 Spec Kit 技能。首次开发前，用 `$speckit-constitution` 根据规划补全项目原则。
 - 每个功能依次执行 `$speckit-specify` → `$speckit-plan` → `$speckit-tasks` → `$speckit-analyze` → `$speckit-implement` → `$speckit-converge`；需求有实质歧义时使用 `$speckit-clarify`。
 - 已有功能继续使用其 `specs/` 文档；先修正分析发现的阻塞问题，再实现。收敛发现缺口时继续 implement / converge，直到验收与必要检查通过。
+- 不同功能在前置依赖验收并集成后可用独立 worktree 并行，plan 先声明文件归属；共享文件由主代理串行集成并复验，同一文件不并发改写。每个功能仍独立走完整 Spec Kit、验收后一次本地提交，不自动 push。批次和交接见 [`MVP_EXECUTION.md`](docs/plans/MVP_EXECUTION.md)。
 - 缺陷修复使用 `$speckit-bug-assess` → `$speckit-bug-fix` → `$speckit-bug-test`。
 
 ## Git 提交

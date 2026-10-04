@@ -10,8 +10,8 @@
 
 已完成 `000-project-bootstrap`：Go 单模块、双 CLI 帮助与共享版本、Spec Kit 项目原则和开发流程。
 多节点设计已确定，见 [MULTI_NODE.md](docs/plans/MULTI_NODE.md)，Agent 与节点协议尚未实现。
-当前两个入口仅提供帮助、`version` 及 Cobra 自带补全；`init`、流水线执行、HTTP 服务、数据库、审批、通知和上传均属于后续功能。
-下一步是 `001-pipeline-preview`：配置初始化、严格校验与脱敏预览。
+客户端已接入 `init`、本地模板、严格配置校验与 `run --dry-run` 脱敏预览；支持单/多 build 选择、参数覆盖和条件三态。
+`001-pipeline-preview` 已实现并通过集成验证，证据见[验证记录](specs/001-pipeline-preview/validation.md)。实际流水线执行、HTTP 服务、数据库、审批、通知和上传仍待实现。
 MVP 目标已扩展至原生/Flutter 双平台、多节点构建、Google Play/App Store 分发与用户自定义，见 [构建与分发设计](docs/plans/BUILD_DISTRIBUTION.md)。
 项目组列入控制端规划：客户端注册时选择组，未指定归入 default，支持组改名与项目迁移；尚未实现。
 同仓库多命名 build 已列入规划：一个项目定义多个独立构建，支持无 YAML 绑定双平台方案；shell 参数与执行约定见产品计划，均尚未实现。
@@ -19,7 +19,7 @@ MVP 新增 when、参数约束、build 总超时、post 收尾、日志时间戳
 
 ## 开发与运行
 
-要求 Go **1.25 或更新版本**、Git。首次下载 Go 依赖需要网络；当前已安装的直接依赖只有 Cobra。
+要求 Go **1.25 或更新版本**、Git。首次下载 Go 依赖需要网络；直接依赖为 Cobra 与 YAML v3。
 当前帮助与版本命令无需 Xcode、JDK 或 Android SDK；真正的移动端构建在对应功能接入时再检测工具链。
 
 在项目根目录运行：
@@ -30,6 +30,7 @@ go run ./cmd/mybuilds --help
 go run ./cmd/mybuilds version
 go run ./cmd/mybuilds-server --help
 go run ./cmd/mybuilds-server version
+go run ./cmd/mybuilds run --file examples/pipeline-preview.yml --all --dry-run
 ```
 
 两个版本命令默认输出相同：
@@ -51,6 +52,10 @@ go build -o bin/mybuilds-server ./cmd/mybuilds-server
 `bin/` 不进入 Git。未指定远端仓库，Go 模块名暂为 `mybuilds`。
 无参数运行显示帮助；未知子命令或 `version` 多余参数返回非零退出码。
 
+在目标仓库运行 `mybuilds init` 创建最小 `mybuilds.yml`，已有目标拒绝覆盖；`init --template ./ci/template.yml` 使用经校验的本地模板。
+`run --dry-run` 只输出脱敏 JSON，不执行脚本、Git 或网络请求，也不读取密钥。多 build 必须用 `--build android,ios` 或 `--all`，参数用重复的 `--param key=value`；`--step` 仅限单 build。
+没有 `--dry-run` 的执行与平台模板选项目前明确报未支持。
+
 ## 目录结构
 
 当前已经创建的目录：
@@ -65,8 +70,11 @@ mybuilds/
 │   │   ├── client/root.go        # 客户端命令
 │   │   ├── server/root.go        # 服务端命令
 │   │   └── cli_test.go           # 双端 CLI 行为验收
+│   ├── config/                  # YAML 严格解析、约束及参数选择
+│   ├── pipeline/                # 纯预览与模板/条件校验
 │   └── version/version.go       # 共享版本与构建信息
-├── specs/000-project-bootstrap/ # 当前功能规范、计划、任务与验证
+├── examples/pipeline-preview.yml # 多 build 预览示例
+├── specs/                       # 各功能规范、计划、任务与验证
 ├── docs/plans/                  # 产品决策与功能实施路线
 ├── .agents/skills/              # 项目内 Codex 技能
 ├── .specify/                    # Spec Kit 原则、模板、脚本与集成配置
@@ -109,7 +117,7 @@ iOS 分配到具备 Xcode 和签名资源的 macOS 节点，Android 可分配到
 
 ## 技术方向
 
-CLI 使用 Cobra；后续流水线配置使用 YAML，服务端 HTTP 使用标准库，数据库使用 GORM，默认 SQLite、可选 PostgreSQL。
+CLI 使用 Cobra，流水线配置使用 YAML；后续服务端 HTTP 使用标准库，数据库使用 GORM，默认 SQLite、可选 PostgreSQL。
 飞书采用官方第三方 `oapi-sdk-go/v3`，其他机器人通知使用标准库 HTTP。
 构建产物由控制端托管下载；MVP 商店渠道为 Google Play 与 App Store，Go 封装第三方 fastlane 工具，节点需 Ruby/Bundler。
 原生/Flutter 提供可编辑的内置模板，默认只构建/收集产物，单/双平台均生成对应名称的 builds；无参数 init 生成最小 default shell 配置。
@@ -151,15 +159,17 @@ $speckit-specify → $speckit-plan → $speckit-tasks → $speckit-analyze → $
 ```
 
 需求有实质歧义时先 clarify；缺陷使用 bug-assess → bug-fix → bug-test。
-每个功能的规范、计划、任务与验收记录保存在 `specs/`，每完成并验收一个功能自动本地提交一次，不自动 push。
+每个功能的规范、计划、任务与验收记录保存在 `specs/`；契约稳定且依赖满足后允许独立 worktree 并行实现，由主代理集成，每完成并验收一个功能自动本地提交一次，不自动 push。
 已有功能继续使用原规范；新增功能按路线逐项推进。
 
 - [AGENTS.md](AGENTS.md)：AI 阅读入口、开发流程与提交约定。
 - [项目原则](.specify/memory/constitution.md)：2.1.0，所有功能的稳定约束。
 - [多节点设计](docs/plans/MULTI_NODE.md)：角色职责、调度、租约与故障边界。
 - [构建与分发设计](docs/plans/BUILD_DISTRIBUTION.md)：内置模板、两大商店、第三方工具与用户扩展。
-- [配置与命令设计](docs/plans/PLAN.md#配置文件)：server/client/agent 配置结构；同文件 CLI 面列出拟定参数与默认值。
+- [配置设计](docs/plans/CONFIGURATION.md#配置文件)：server/client/agent 配置结构；命令面见 [INTERFACES.md](docs/plans/INTERFACES.md#cli-面)。
 - [实施路线](docs/plans/SPECKIT_ROADMAP.md)：功能依赖、顺序与 001 操作案例。
+- [MVP 执行计划](docs/plans/MVP_EXECUTION.md)：并行批次、worktree 分区、集成与验收标准。
+- [实施历史](docs/IMPLEMENTATION_HISTORY.md)：功能状态、规范与验证索引。
 - [初始化规范](specs/000-project-bootstrap/spec.md)：本次范围与验收要求。
 
 变更入口、目录、运行方式或已实现能力时，同步更新本文。

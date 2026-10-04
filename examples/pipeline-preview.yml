@@ -1,0 +1,51 @@
+# 仅用于校验与安全预览；001 尚不执行脚本或调用移动工具链。
+version: 1
+builds:
+  android:
+    runner:
+      platform: android
+    timeout: 1h
+    params:
+      channel:
+        default: internal
+        description: 发布渠道
+        required: true
+        choices: [internal, production]
+    env:
+      BUILD_CHANNEL: "{{channel}}"
+    when:
+      changes: [android/**, shared/**, mybuilds.yml]
+    steps:
+      - kind: run
+        name: package
+        run: echo "请替换为 Android 构建脚本"
+      - kind: artifact
+        name: collect
+        paths: [output/android/*.aab]
+      - kind: approval
+        name: approve
+        notify: false
+        when:
+          branches: [main]
+          params: {channel: production}
+  ios:
+    runner:
+      platform: ios
+    timeout: 1h
+    params:
+      channel:
+        default: internal
+        description: 发布渠道
+        required: true
+        choices: [internal, production]
+    env:
+      BUILD_CHANNEL: "{{channel}}"
+    steps:
+      - kind: run
+        name: package
+        run: echo "请替换为 iOS 构建脚本"
+      - kind: artifact
+        name: collect
+        paths: [output/ios/*.ipa]
+        when:
+          params: {channel: internal}

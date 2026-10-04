@@ -76,7 +76,7 @@ repo 文件路径限制在仓库内；方案文件由管理员在控制端加载
 无需在服务端注册渠道，通知敏感值由控制端受限保存并发送，执行/上传凭据仍在授权节点。
 执行前将展开后的完整流水线、参数、来源名称/路径及摘要保存为快照；重试不重新读取已变化的方案。
 项目节点限制和发布授权对两种来源都生效；不预建方案嵌套、多层 steps 合并或批量项目编排。
-具体服务端、项目设置结构见 [PLAN.md](PLAN.md)。
+具体服务端、项目设置结构见 [配置设计](CONFIGURATION.md#配置文件)。
 
 ## 一个仓库多个命名 build
 
@@ -147,7 +147,7 @@ MVP 不能只做 TestFlight 上传而将其称为 App Store 发布；TestFlight 
 构建扩展优先使用普通 run 步骤和仓库脚本，产物仍通过 artifact 明确声明。
 run 支持 sh/bash、working_dir、步骤 env 与 timeout；params 由 --param key=value 覆盖，经 env 显式映射给脚本，可作为位置参数传入。
 远程构建注入 MYBUILDS_PROJECT、MYBUILDS_BUILD_NAME、MYBUILDS_BUILD_ID、MYBUILDS_BUILD_NUMBER、Git/节点/工作区等上下文，
-不自动导出全部 params，也不继承控制端/Agent 完整环境。每步独立 shell，cd/export 不跨步保留；完整字段、变量表与脚本案例见 PLAN 的 shell 小节。
+不自动导出全部 params，也不继承控制端/Agent 完整环境。每步独立 shell，cd/export 不跨步保留；完整字段、变量表与脚本案例见[配置设计的 shell 小节](CONFIGURATION.md#shell-执行与脚本参数)。
 用户已有 Fastfile/lane 可通过 upload 的 custom target 调用，其他渠道也使用同一入口。
 不预建插件市场、动态 Go 插件或通用适配器注册服务。
 

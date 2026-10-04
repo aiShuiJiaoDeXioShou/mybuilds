@@ -1,6 +1,6 @@
 # mybuilds 的 Spec Kit 实施路线
 
-本文件是功能拆分与操作案例，业务案例不代表已生成正式 spec 或开始实现；项目初始化见 specs/000-project-bootstrap。产品与技术决策以 [PLAN.md](PLAN.md) 为准。
+本文件是功能拆分与操作案例，业务案例不代表已生成正式 spec 或开始实现；项目初始化见 [specs/000-project-bootstrap](../../specs/000-project-bootstrap/spec.md)。产品与技术决策以 [PLAN.md](PLAN.md) 为准。
 按可独立验收的用户能力拆分 feature，不按 config / store / API 等目录分别开发。
 
 ## 开始前
@@ -8,7 +8,7 @@
 - 当前使用 Spec Kit 1.0.13，Codex 已设为默认集成，技能位于 `.agents/skills/speckit-*/SKILL.md`；下文使用 `$speckit-xxx` 写法，在 Codex 聊天中逐条调用，不是 shell 命令。
 - Pi 集成保留在 `.pi/prompts/`，使用 `/speckit.xxx` 写法；本项目的 bug 扩展也已注册为 Codex 技能。技能列表未更新时重新打开 Codex 会话。
 - 项目原则已在 `.specify/memory/constitution.md` 更新为 2.1.0（多节点、内置构建模板与两大商店分发）；Git 基线与 `000-project-bootstrap` 初始化已建立。后续沿用原则与已有入口。
-- 一次只推进一个 feature。编号为建议顺序，正式目录名以 Spec Kit 的实际生成结果为准；后续 feature 基于已完成的代码继续实现。
+- 不同 feature 在前置依赖验收并集成后可并行，各用独立 worktree，并在 plan 中声明文件归属；同功能仍完整执行 Spec Kit 流程。主代理串行集成共享文件并复验，每个功能验收后一次本地提交，不自动 push。编号不代表执行顺序，正式目录名以 Spec Kit 的实际生成结果为准，具体批次见 [MVP 执行计划](MVP_EXECUTION.md)。
 
 项目原则的输入示例：
 
@@ -23,7 +23,7 @@ $speckit-constitution
 
 ## 功能路线
 
-每一行对应一个 feature 的 spec / plan / tasks。阶段对应 PLAN 中的 P0–P6；依赖表示需要复用哪些已完成能力。
+每一行对应一个 feature 的 spec / plan / tasks。阶段对应 [实施专题](DELIVERY.md#实施步骤) 的 P0–P6；依赖表示需要复用哪些已完成能力。
 
 | 建议编号与目录后缀 | 阶段 / 依赖 | 实施顺序 | 功能完成的验收点 |
 |---|---|---|---|
@@ -62,7 +62,7 @@ $speckit-constitution
 001 先建立 default/builds 格式、--build/--all 与 --param 的预览规则，002 执行 shell 及本地多 build，预检查拒绝生效 upload；平台模板随 004/005/009 接入。
 006 支持一个仓库选择多个 build，固定一个 SHA 并原子创建独立执行；007 将互斥细化为同项目同名 build，不同 build 可在容量允许时并行。
 012 接入无需 YAML 的 --framework/--platform 方案绑定，双平台组合已有模板，不新增执行器；此前相关选项明确报未支持。
-shell 的字符串 params、显式 env 映射、位置参数、受限上下文和 working_dir/timeout 在 PLAN 中统一定义，不另外设计 Jenkins 参数 DSL。
+shell 的字符串 params、显式 env 映射、位置参数、受限上下文和 working_dir/timeout 在[配置设计](CONFIGURATION.md#shell-执行与脚本参数)中统一定义，不另外设计 Jenkins 参数 DSL。
 项目组用于归属和查询，构建方案用于配置复用；改组不改变项目身份、构建号、节点授权、通知或运行中的配置快照。
 013 增加项目直接配置 Webhook 与全局默认值，不要求仓库配置存在；方案切换不能扩大项目节点或发布授权。
 014 不依赖 013，MVP 审批通过 CLI 查询/放行，notify 默认 false；通知模块接入后显式开启，不提前注册空通知能力。
@@ -79,7 +79,7 @@ shell 的字符串 params、显式 env 映射、位置参数、受限上下文�
 specify → clarify（有实质歧义时）→ plan → tasks → analyze → implement → converge
 ```
 
-1. `specify`：描述本功能的用户行为、范围、验收与前置依赖；把 PLAN 中的相关要求带入 spec，不只放一个文档链接。
+1. `specify`：描述本功能的用户行为、范围、验收与前置依赖；把 PLAN 及对应专题的相关要求带入 spec，不只放一个文档链接。
 2. `plan`：选择本功能的实现方式，读取已有代码，列出文件和接口；复用现有能力，不提前实现后续 feature。
 3. `tasks`：按用户故事拆成有路径、有完成条件的任务，显式包含必要测试，避免模板的“测试可选”导致漏项。
 4. `analyze`：检查 spec / plan / tasks 是否一致，要求与验收是否均有任务覆盖；修正阻塞问题后再实现。
@@ -101,7 +101,7 @@ CLI 契约写命令、输出和退出码；不为 CLI 功能杜撰 HTTP API 或�
 
 ```text
 $speckit-specify
-实现 mybuilds 的“流水线初始化与预览”，依据 docs/plans/PLAN.md 的 P0。
+实现 mybuilds 的“流水线初始化与预览”，依据 docs/plans/DELIVERY.md 的 P0 与 docs/plans/CONFIGURATION.md。
 用户能运行 init 在当前目录生成最小 mybuilds.yml，已有文件时拒绝覆盖；
 用户能运行 run --dry-run 预览步骤顺序、名称和参数，不执行命令、checkout、上传、通知或创建构建工作区。
 支持原单流水线作为 default，以及一份文件内的命名 builds，拒绝混写；--build/--all 选择，多个定义不允许隐式全选。
@@ -137,7 +137,7 @@ notifications.webhooks 接受 type/url 列表，直接填写的 Webhook URL 同�
 
 ```text
 $speckit-plan
-读取 docs/plans/PLAN.md 和现有代码，使用 Go、Cobra、go.yaml.in/yaml/v3。
+读取 docs/plans/PLAN.md、docs/plans/ARCHITECTURE.md、docs/plans/CONFIGURATION.md、docs/plans/INTERFACES.md 和现有代码，使用 Go、Cobra、go.yaml.in/yaml/v3。
 复用 cmd/mybuilds、cmd/mybuilds-server、internal/cli/client、internal/cli/server 和 internal/version，仅增加本功能需要的 internal/config。
 配置直接解码到结构体并严格校验；env / 凭据按字段解析，run 正文不插值。
 预览渲染不调用执行器，已知运行时变量显示待确定；明确 init / dry-run 的输出与退出码。
