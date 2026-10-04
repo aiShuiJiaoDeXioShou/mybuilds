@@ -1,0 +1,17 @@
+# 本地构建与测试产物
+/bin/
+*.exe
+*.test
+*.out
+/vendor/
+
+# 本地环境与编辑器文件
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.tmp
