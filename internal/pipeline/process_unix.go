@@ -85,13 +85,13 @@ func stopProcessGroup(pgid int) bool {
 	if pgid <= 1 {
 		return false
 	}
-	if err := signalProcessGroup(pgid, syscall.SIGTERM); err != nil {
+	if err := signalProcessGroup(pgid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.EPERM) {
 		return errors.Is(err, syscall.ESRCH)
 	}
 	if waitProcessGroupGone(pgid, processTermGrace) {
 		return true
 	}
-	if err := signalProcessGroup(pgid, syscall.SIGKILL); err != nil {
+	if err := signalProcessGroup(pgid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.EPERM) {
 		return errors.Is(err, syscall.ESRCH)
 	}
 	// 信号发送成功不等于停止已确认；只等待本组消失，孙进程由其父/系统回收。
@@ -105,7 +105,8 @@ func waitProcessGroupGone(pgid int, budget time.Duration) bool {
 		if errors.Is(err, syscall.ESRCH) {
 			return true
 		}
-		if err != nil || !time.Now().Before(deadline) {
+		// Darwin 退出/回收边界可能暂时返回 EPERM；它不证明停止，只能在原窗口内复查。
+		if (err != nil && !errors.Is(err, syscall.EPERM)) || !time.Now().Before(deadline) {
 			return false
 		}
 		time.Sleep(10 * time.Millisecond)

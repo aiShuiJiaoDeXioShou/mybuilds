@@ -259,3 +259,36 @@ func TestRunShellLogFailureCancels(t *testing.T) {
 		}
 	}
 }
+
+func TestRunShellShortTimeoutConfirmsCleanup(t *testing.T) {
+	command := shellTestCommand(t, "sleep 1")
+	// 重复真实退出/回收边界，捕获 Darwin 偶发的瞬时 EPERM；预算保持原报告的30ms。
+	for i := 0; i < 100; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+		result := runShell(ctx, command, io.Discard, io.Discard)
+		cancel()
+		if !result.Started || result.Reason != "timeout" || result.CleanupFailed {
+			t.Fatalf("第%d轮短超时未确认清理: %+v", i, result)
+		}
+	}
+}
+
+func TestWaitProcessGroupGoneRequiresDisappearance(t *testing.T) {
+	command := exec.Command("sleep", "30")
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = command.Process.Kill(); _ = command.Wait() }()
+	if waitProcessGroupGone(command.Process.Pid, 20*time.Millisecond) {
+		t.Fatal("活进程组被误判已经消失")
+	}
+	if err := command.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatal("探测误杀活进程", err)
+	}
+	for _, pgid := range []int{-1, 0, 1} {
+		if stopProcessGroup(pgid) {
+			t.Fatal("无效或全局进程组不应确认成功", pgid)
+		}
+	}
+}

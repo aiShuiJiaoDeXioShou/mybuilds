@@ -19,3 +19,8 @@
 
 ## 全局环境预检（不作为平台功能验收）
 Darwin arm64，Go1.25.4；Xcode27.0/27A266a；Flutter3.38.6/Dart3.10.7；JDK21.0.2；Android SDK存在，platforms到android-36、build-tools到36.0.0；系统返回3个有效代码签名身份。尚未核对真实工程、profile、商店应用、授权凭据或Linux测试节点。只记录存在与版本，不把它们当作签名/分发验证已通过。
+
+## 后续短超时清理修复
+
+003集成时重复原预算检查发现首次停止未确认并未由EINTR处理穷尽：Darwin短超时退出边界存在瞬时EPERM随后ESRCH。独立缺陷[评估](../../.specify/bugs/short-timeout-cleanup/assessment.md)→[修复](../../.specify/bugs/short-timeout-cleanup/fix.md)→[验证](../../.specify/bugs/short-timeout-cleanup/test.md)已执行；只在原有限窗口内复查EPERM，不把它当作成功，仍以ESRCH确认且保持500ms grace。
+主代理003集成树复验新增100轮30ms/活组保护与原两预算count3通过（14.755s），全量test/vet通过（pipeline10.385s），真实002二进制SIGINT/timeout/子进程消失/无关进程保护smoke再通过。缺陷源码/测试与三报告单独本地提交，不夹带未提交003。
