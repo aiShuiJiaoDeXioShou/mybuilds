@@ -20,6 +20,9 @@ cmd/mybuilds、cmd/mybuilds-server 与 cmd/mybuilds-agent 进入，入口随对�
 必须先检查现有代码和标准库，只为当前功能引入必要依赖并锁定版本。
 不得预建空业务包、插件系统、Web UI 或容器调度；一期不实现多控制端高可用或跨节点拆分单次流水线。
 飞书接入必须采用官方第三方 Go SDK，并验证真实机器人消息闭环。
+构建框架与发布渠道必须独立配置；原生 Android/iOS 和 Flutter 提供项目维护的可编辑模板，
+用户扩展通过仓库内配置、脚本或外部命令完成，不加载动态 Go 插件或另建步骤 DSL。
+MVP 必须支持 Google Play 与 App Store 分发，优先复用成熟第三方工具并锁定节点工具版本。
 
 ### IV. 输入与执行边界明确
 
@@ -40,6 +43,8 @@ README 必须区分已实现能力与规划，并随入口、运行方式和结�
 产品和技术决策以 docs/plans/PLAN.md 为依据，功能路线见 docs/plans/SPECKIT_ROADMAP.md。
 CLI 使用 Cobra，HTTP 使用标准库；数据库默认 SQLite、可选 PostgreSQL，统一通过 GORM。
 流水线顺序执行，步骤仅 run、artifact、approval、upload；运行数据存用户目录，不能混入源码。
+构建模板调用原生工具链；商店上传统一封装 fastlane，用户自定义上传沿用相同授权、日志与结果记录边界。
+上传、提交审核与正式上架必须区分，不得将工具进程成功退出视为商店已公开发布。
 业务依赖和具体文件随对应功能创建，不在初始化阶段安装全部依赖。
 
 ## 开发流程与验收
@@ -60,4 +65,8 @@ converge 发现缺口则继续实现和收敛。缺陷使用 bug-assess → bug-
 影响：PLAN、MULTI_NODE 与实施路线、README 同步更新；已完成的 000 初始化文档保留为历史验收，
 新 Agent 与节点协议由后续功能实现，当前无业务数据库或执行器需要迁移。
 
-**Version**: 2.0.0 | **Ratified**: 2026-10-04 | **Last Amended**: 2026-10-04
+2.1.0 变更依据：MVP 新增 Flutter、两大商店分发与用户自定义扩展；原有多节点和四种步骤保持。
+影响：BUILD_DISTRIBUTION、PLAN、MULTI_NODE、实施路线与 README 同步；业务功能未实现，
+当前无需代码或数据库迁移，依赖在对应 Spec Kit 功能接入时安装。
+
+**Version**: 2.1.0 | **Ratified**: 2026-10-04 | **Last Amended**: 2026-10-04

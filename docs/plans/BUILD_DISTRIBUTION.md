@@ -1,0 +1,107 @@
+# 构建框架、商店分发与用户扩展
+
+本文件是 [PLAN.md](PLAN.md) 的组成部分，描述待实现的 MVP 范围。
+当前仍只有 CLI 初始化，以下模板、上传适配和扩展契约尚未实现。
+
+## 构建框架与目标平台分开
+
+Android/iOS 是目标平台，原生、Flutter 是构建框架，Google Play/App Store 是发布渠道。
+原生与 Flutter 构建都生成同类平台产物，共用签名、收集、节点调度和商店上传能力。
+
+| MVP 内置模板 | 调用工具 | 发布产物 | 节点要求 |
+|---|---|---|---|
+| 原生 Android | Gradle wrapper | AAB；APK 用于下载/测试 | Linux/macOS、JDK、Android SDK |
+| 原生 iOS | xcodebuild archive/export | IPA 与调试符号 | macOS、Xcode、分发签名 |
+| Flutter → Android | flutter build appbundle | AAB | Android 工具链、Flutter |
+| Flutter → iOS | flutter build ipa | IPA、archive 与可用符号文件 | macOS、iOS 工具链、Flutter |
+
+Flutter 构建与 fastlane 发布已有 [Flutter 官方持续交付指南](https://docs.flutter.dev/deployment/cd)。
+iOS 的版本参数与导出选项见 [Flutter iOS 发布说明](https://docs.flutter.dev/deployment/ios)。
+工具版本由项目声明和节点环境锁定，doctor 报告实际版本；不自动更新节点 SDK。
+React Native、Kotlin Multiplatform 等先由用户配置调用其工具链，不承诺 MVP 内置适配。
+
+## 内置支持采用模板，保持流水线可编辑
+
+拟定 CLI（待实现）：
+
+```text
+mybuilds init --framework native --platform android
+mybuilds init --framework native --platform ios
+mybuilds init --framework flutter --platform android
+mybuilds init --framework flutter --platform ios
+mybuilds init --template ./ci/mybuilds.template.yml
+```
+
+项目维护四套模板和对应 doctor 检查。init 生成普通 mybuilds.yml，复用
+run、artifact、approval、upload 四种步骤，不添加 build/flutter 等新步骤类型。
+用户可编辑生成结果，增加仓库脚本、测试、flavor、签名配置与工具参数；已有文件仍拒绝覆盖。
+自定义模板仅加载明确指定的本地 YAML，严格校验字段；不下载或执行远端模板。
+内置模板增加需要的节点标签，Flutter iOS 同时要求 Flutter、Xcode 与签名能力。
+本地 run 检查宿主工具，远程调度匹配节点，不在 Android 节点隐式执行 iOS 构建。
+
+## 两大商店进入 MVP
+
+统一使用 fastlane 的第三方工具与 Ruby 库，Go 通过 os/exec 调用，仍由本项目提供 upload 入口。
+它不是 Go 包；节点增加 Ruby/Bundler，使用受控 Gemfile/Gemfile.lock 锁定依赖，执行 bundle exec fastlane。
+锁文件在接入原型确认兼容版本后生成并提交，不在本次规划中安装工具或编造版本。
+安装方式依据 [fastlane 官方说明](https://docs.fastlane.tools/getting-started/ios/setup/)。
+
+| 内置 target | 第三方能力 | MVP 范围 |
+|---|---|---|
+| google_play | supply / upload_to_play_store | 上传 AAB、指定 track，支持测试轨道及显式 production 发布 |
+| app_store | deliver / upload_to_app_store | 上传签名 IPA 至 App Store Connect，显式提交 App Review 及选择审核后是否自动发布 |
+| custom | 用户指定的仓库命令 | 通过同一发布记录与租约调用自定义渠道或 Fastfile |
+
+Google 的 AAB、轨道与发布参数见 [supply 文档](https://docs.fastlane.tools/actions/upload_to_play_store/)。
+Apple 的 API key、上传与提交审核参数见 [deliver 文档](https://docs.fastlane.tools/actions/upload_to_app_store/)。
+默认 Google track 为 internal；默认 Apple 只上传、不提交审核、不自动正式上架。
+Apple 支持 submit_for_review 与 automatic_release 参数，默认均为 false；真实字段在 feature contracts 中约束。
+公开发布须在配置/请求中明确选择，远程发布须由管理员授权；含 upload 的构建仅允许 admin 发起，trigger 身份不能借流水线发布；项目内 approval 节点可再次人工放行。
+MVP 不能只做 TestFlight 上传而将其称为 App Store 发布；TestFlight 可作为后续独立 target 增加。
+
+## 商店身份、状态与安全
+
+- Google 使用已授权的 service account；Apple 使用 App Store Connect API key，分别核对应用 ID 与权限。
+  认证依据 [fastlane Apple 认证说明](https://docs.fastlane.tools/getting-started/ios/authentication/)。
+  密钥仅保存在授权节点的受限凭据文件，配置保存引用，不把 JSON/p8 明文放入 argv、日志或数据库。
+- 前提是商店账号、应用记录、授权、签名与发布所需元数据已由用户准备。
+  Google 首次接入的前置上传要求见 supply 的 setup/quick start；doctor 将缺失前提明确报告。
+  MVP 不自动注册账号、接受协议、生成商店截图、补全隐私声明或管理内购。
+- 构建号需与商店既有版本兼容；首次注册项目可设置起始构建号，校验冲突，不替换已存在版本。
+- 上传只接受唯一已收集产物，核对 AAB/IPA、应用标识、版本和摘要，审批后不能重新构建替换。
+  发布意图在控制端持久化，绑定 node/build/attempt/lease、商店、应用与产物摘要。
+- 发布结果分别记录 uploaded、processing、submitted、published、failed、unknown 与远端标识。
+  节点进程退出 0 只证明相应动作完成，不能推断已经通过审核或公开上架。
+  商店处理/审核状态在任务结束后通过显式查询更新，不长期占用构建槽等待审核。
+  Apple 的提交、审核与发布状态依照 [官方状态说明](https://developer.apple.com/help/app-store-connect/reference/app-information/app-and-submission-statuses)。
+- 断网或取消时，已开始上传的结果可能未知。适配器先按应用/版本/构建号查询远端，再允许人工确认；
+  本项目不得自动重跑整个发布命令。接入原型须核实 fastlane 的内部重试，限制不可确认的非幂等重发。
+
+## 用户自定义与内置能力共用执行边界
+
+构建扩展优先使用普通 run 步骤和仓库脚本，产物仍通过 artifact 明确声明。
+用户已有 Fastfile/lane 可通过 upload 的 custom target 调用，其他渠道也使用同一入口。
+不预建插件市场、动态 Go 插件或通用适配器注册服务。
+
+自定义发布的最小契约：
+
+- 配置给出 argv 列表和工作目录，不把用户参数拼接进 shell；命令必须在可信仓库和授权节点执行。
+- 输入包含已校验的产物路径、摘要、应用/版本、发布参数与凭据引用；没有完整控制端环境或管理员 token。
+- 引擎负责租约、取消、脱敏、发布意图和结果记录；自定义命令输出一个结构化结果文件；限制路径、大小与字段，回传前脱敏。
+- 退出 0 且结果声明动作完成才确认成功；进程启动后失败或缺失有效回执则默认 unknown。
+  确认未发出外部请求才可记 failed；没有远端查询能力时由管理员确认，不自动重发。
+- 可选指定查询命令用于人工触发核对，沿用鉴权与输出校验；协议字段在发布 feature 的 contracts 中确定。
+
+约定所有发布动作放在 upload 中，run 用于构建与测试。
+任意 shell 内自行发布的远端副作用无法由系统自动识别，不能获得内置上传的结果核对保证。
+
+## MVP 交付路线与验收
+
+完成基础配置、引擎与产物 → 原生/Flutter 构建 → 控制端/多 Agent → 发布记录及原提交恢复 → 两大商店与 custom 上传。
+具体拆分见 [实施路线](SPECKIT_ROADMAP.md)；MVP 基础测试覆盖官方模板和自定义命令同一执行路径。
+飞书通知、项目发布审批流程、Webhook、cron、fir.im/generic 内置渠道与部署打磨继续后置；商店发布本身进入 MVP。
+
+必须验收：四套模板的真实产物与版本；自定义脚本构建；两节点调度；Google Play internal 实际可见版本；
+App Store Connect 可见构建与显式提交审核路径；custom 结果文件解析；错误凭据、产物不匹配、租约过期拒绝、
+上传成功但回报丢失保持 unknown，重复请求不执行第二次上传。
+正式审核和上架由商店决定，不以外部审核通过时间作为本项目测试通过条件。

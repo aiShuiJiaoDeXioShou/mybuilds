@@ -22,8 +22,10 @@
 | 触发 | Webhook（含签名校验）+ 轮询，外加手动触发 |
 | 审批 | 支持发布审批（流水线中途挂起等人放行） |
 | 隔离 | 裸机 shell，不用 Docker |
-| 工程类型 | 先原生 Android(Gradle) + iOS(xcodebuild) |
+| 工程类型 | MVP 内置原生 Android / iOS 与 Flutter 模板，支持仓库脚本和用户本地模板 |
+| 主要分发渠道 | MVP 支持 Google Play / App Store，统一封装第三方 fastlane；自定义发布共用 upload 契约 |
 
+节点工具链增加 Flutter 与商店发布所需的 Ruby/Bundler/fastlane，按实际任务安装与锁定版本。
 原规划记录的本机环境：Go 1.25.4 · Xcode 27.0 · JDK 21 · Android SDK 齐全 · Node 24。
 实施前由 `doctor` 重新检测，构建记录保存实际工具版本，不把这份环境记录当成固定要求。
 
@@ -31,7 +33,8 @@
 控制端 `mybuilds-server` 可部署 Linux/macOS，Agent 在具备工具链的节点执行任务：
 macOS 节点支持 iOS/Android，Linux 节点支持 Android；客户端的远程命令保持跨平台。
 支持一个控制端加一个或多个 Agent，同机部署同样使用 Agent。节点协议、故障边界见 [多节点设计](MULTI_NODE.md)。
-当前仅完成双 CLI 初始化，多节点是设计目标，尚未实现。
+当前仅完成双 CLI 初始化，多节点、构建模板和商店分发均尚未实现。
+MVP 构建、分发及扩展边界见 [BUILD_DISTRIBUTION.md](BUILD_DISTRIBUTION.md)。
 
 ## 关键设计选择
 
@@ -51,6 +54,8 @@ macOS 节点支持 iOS/Android，Linux 节点支持 Android；客户端的远程
 | CLI 列表渲染 | stdlib `text/tabwriter` + `encoding/json` | 默认表格，`--json` 供脚本使用 |
 | 飞书通知 | `github.com/larksuite/oapi-sdk-go/v3` | 保留官方第三方 SDK，接入时先验证自定义机器人 Webhook 发消息闭环 |
 | 企微 / 钉钉 / 通用通知 | stdlib `net/http` | 机器人本质是「POST 一个 JSON」，SDK 不带来增益 |
+| Google Play / App Store 分发 | 第三方 fastlane（supply / deliver） | Go 封装子进程，使用成熟商店能力；节点 Ruby/Bundler 与 Gemfile.lock 锁定版本 |
+| 原生 / Flutter 构建与扩展 | 官方工具链 + 本项目可编辑模板 + 仓库命令 | 构建框架、目标平台与分发渠道独立组合，不新增步骤 DSL |
 
 Git 操作走 `git` 命令行（`os/exec`），不用 go-git —— go-git 体积大、行为细节和真 git 有偏差，
 而我们本来就要求机器上装了 git。
@@ -68,7 +73,8 @@ cmd/mybuilds-server/  → mybuilds-server   服务端二进制
                  ├─ token create|ls|revoke
                  └─ node create|ls|drain|enable|disable|rm
 cmd/mybuilds/  → mybuilds          客户端二进制（连服务端）
-                 ├─ trigger / build ls|show|logs|cancel|retry
+                 ├─ trigger / build ls|show|cancel|retry|resolve-upload
+                 ├─ logs / artifact ls|download
                  ├─ approvals / approve / reject
                  ├─ run           本地调试流水线，不经过服务端
                  └─ doctor / status / init
@@ -154,7 +160,7 @@ database:
 - 支持既定的 `{{var}}`，但 `run` 正文不做模板替换；未知模板变量报错，`--dry-run` 输出不展示密钥。
 - token 存数据库，只保存高熵 token 的摘要和身份、角色、撤销状态；创建时仅显示一次明文，列表不回显。
   首次启动且 token 表为空时，可用 `MYBUILDS_BOOTSTRAP_ADMIN_TOKEN` 初始化管理员，之后撤销不会被配置重新创建。
-- 项目管理可由本机管理员 CLI 操作；admin 可访问全部 API，trigger 仅能触发及查询基本服务状态，
+- 项目管理可由本机管理员 CLI 操作；admin 可访问全部 API，trigger 仅能触发不含 upload 的构建及查询基本服务状态，
   approver 可列待审批任务、读取其详情 / 日志 / 产物并批准或拒绝。取消、重试、上传结果确认与控制端 / 节点 doctor 仅限 admin。
 
 ## 架构
@@ -192,8 +198,12 @@ database:                   # 见设计选择 3，默认 sqlite
   driver: sqlite            # sqlite | postgres
   dsn: ~/.mybuilds/mybuilds.db
 
-secrets_file: ~/.mybuilds/secrets.env     # 0600，仅控制端通知等密钥；构建密钥在节点解析
-retention: {builds: 100, days: 30}        # 每个项目保留策略
+secrets_file: ~/.mybuilds/secrets.env     # 0600，控制端 Git 只读凭据和通知密钥
+
+# 以下为后续运维/通知功能，MVP 可省略
+retention:
+  builds: 100                           # 每项目保留数量
+  days: 30                              # 保留天数；活动/待审批/未知上传结果受保护
 notifiers:
   feishu:   {webhook: "${FEISHU_WEBHOOK}"}    # oapi-sdk-go
   wechat:   {webhook: "${WECHAT_WEBHOOK}"}    # stdlib POST
@@ -201,6 +211,10 @@ notifiers:
 ```
 
 配置覆盖顺序为默认值 < 配置文件 < `MYBUILDS_` 环境变量 < CLI 参数。
+环境变量示例：`MYBUILDS_LISTEN`、`MYBUILDS_CONCURRENCY`、`MYBUILDS_DATABASE_DRIVER`、`MYBUILDS_DATABASE_DSN`。
+未知字段、无效地址、非正并发或无效数据库配置在启动前报错；路径支持展开 `~`，相对路径以配置文件目录为基准。
+跨主机部署在监听地址前设置 HTTPS 反向代理，客户端与 Agent 校验证书；不提供跳过证书校验开关。
+项目、节点、token 与发布记录存数据库；流水线随代码保存，签名和商店凭据在 Agent 节点解析。
 token 由数据库管理；首次启动可设置 `MYBUILDS_BOOTSTRAP_ADMIN_TOKEN`，随后用 `token create/revoke` 管理。
 日志、产物和工作区保留策略不清理排队、运行中、待审批或结果未知的构建。
 
@@ -218,6 +232,7 @@ lease_duration: 30s
 ```
 
 平台、标签与项目允许节点由控制端管理；节点报告实际工具能力。
+有效容量取管理员设置上限和 Agent 本地 capacity 的较小值，两者默认 1。
 建议默认时序见 MULTI_NODE，协议细节与参数合法性在对应 feature 中验证；跨主机 HTTPS 必须验证证书。
 
 ### 客户端配置 `~/.mybuilds/client.yml`（由 `mybuilds` 读取）
@@ -225,16 +240,17 @@ lease_duration: 30s
 ```yaml
 server: http://127.0.0.1:8787
 token: "${MYBUILDS_CLIENT_TOKEN}"   # 也支持环境变量覆盖
+timeout: 30s                     # 普通 API 请求超时，不作为日志流总时长上限
 ```
 
-### 项目注册（`mybuilds-server project` 写入数据库）
+### 项目注册（`mybuilds-server project` 写入数据库，自动触发后续接入）
 
 ```bash
 mybuilds-server project add app-android \
   --repo git@gitlab.example.com:team/app.git \
-  --provider gitlab --branches main,release/* \
-  --hook          # 打印 webhook URL 和 secret
-mybuilds-server project add app-ios --repo ... --poll 60s    # 轮询模式
+  --provider gitlab --branches 'main,release/*' \
+  --nodes linux-android-01 --default-node linux-android-01 \
+  --hook          # 后续 Webhook 功能：打印 URL 和 secret
 ```
 
 ### `<repo>/mybuilds.yml`（流水线，随代码走）
@@ -280,17 +296,20 @@ steps:
     notify: [feishu]
 
   - kind: upload                        # 内置分发，非 shell 拼 curl
-    target: fir                         # fir | generic
-    file: "*.apk"                       # 匹配已收集产物；零个或多个匹配均报错
+    target: google_play                 # google_play | app_store | custom（MVP）
+    file: "*.aab"                       # 匹配已收集产物；零个或多个匹配均报错
     channel: "{{channel}}"
-    api_key: ${FIR_API_KEY}
+    track: internal                     # production 必须显式选择并授权
+    credentials: "${GOOGLE_PLAY_CREDENTIALS_FILE}"  # 节点受限文件，配置只保存引用
 ```
 
 步骤类型只做 4 种：`run` / `artifact` / `approval` / `upload`；checkout 是前置操作，最终通知属于统一收尾。
 服务端固定到触发时确定的 SHA，浅克隆无法取得该 SHA 时补充 fetch，不退回分支最新提交。
 本地 `run` 遇到 approval 时交互确认，无终端时拒绝执行该步骤；`--dry-run` 不运行命令、不发通知、不上传。
-**不做插件系统** —— 非内置能力（App Store、Google Play、自定义市场）就是 `kind: run` 调它们的 CLI / fastlane。
-这些市场 API 又长又会变，硬编码进来只会变成维护负担。
+内置原生 Android/iOS 与 Flutter 模板，生成上述四种步骤，用户可编辑 run 和 artifact。
+Google Play / App Store 的 upload 由 Go 封装第三方 fastlane；其他渠道或用户 Fastfile 使用 custom target，
+同样受租约、授权、取消、脱敏与发布意图记录约束。自定义构建可用仓库脚本或本地 YAML 模板。
+不加载动态 Go 插件、不建插件市场或另造 DSL，字段和结果契约见 BUILD_DISTRIBUTION。
 
 v1 步骤**顺序执行**；多渠道先通过参数分别触发，`parallel:` 和矩阵构建等真实需求出现后再加。
 
@@ -359,9 +378,14 @@ internal/notify/notify.go       # 飞书(oapi-sdk-go) / 企微 / 钉钉 / 通用
 
 internal/mobile/android.go      # gradle 辅助：版本、keystore 注入、JDK 与 SDK 检查
 internal/mobile/ios.go          # archive/export、exportOptions、独立 keychain 与 DerivedData
+internal/mobile/flutter.go      # Flutter doctor、Android/iOS 构建模板与版本参数
+internal/distribute/fastlane.go  # Google Play / App Store 的受控第三方调用
+internal/distribute/custom.go    # 自定义命令与结果回执，复用发布授权和状态记录
 
 examples/android.mybuilds.yml
 examples/ios.mybuilds.yml
+examples/flutter-android.mybuilds.yml
+examples/flutter-ios.mybuilds.yml
 ```
 
 文件按实际实现需要拆分，不把文件数当作架构目标；平台相关进程控制另用构建约束文件。
@@ -395,24 +419,45 @@ GET    /api/artifacts/{id}/{file}          # 产物下载
 
 ## CLI 面
 
+以下为拟定接口，除双端帮助与 version 外均待实现；最终行为、输出和退出码在对应 Spec Kit feature 的 contracts 中确认。
+`<name>` / `<id>` 表示必填位置参数；列表与详情支持 `--json`，默认输出表格。token 通过环境变量或受限配置文件读取，不提供明文 token 参数。
+
 ### 服务端 `mybuilds-server`（运维 / 管理员用）
 
+在控制端主机执行，读取本机配置；全局 `--config` 默认 `~/.mybuilds/server.yml`，`-h/--help` 查看帮助。
+
+| 命令 | 参数与默认值 | 用途 |
+|---|---|---|
+| `serve` | `--listen`、`--data-dir`、`--concurrency`，未传时取配置值 | 启动 API 与调度，不执行构建 shell |
+| `migrate` | 共用 `--config`，数据库参数取文件/环境变量 | 建表或升级 schema；升级前停止服务并备份 |
+| `project add <name>` | `--repo` 必填；`--provider` 默认 generic，可选 github/gitlab/gitee/generic；`--branches` 默认 main | 注册可信仓库与允许分支，分支列表支持 glob |
+| 同上：节点授权 | `--nodes` 必填，逗号分隔；`--default-node` 可选且须在允许集合内 | 限定项目可用节点；未声明 runner 时使用默认节点 |
+| 同上：版本 | `--build-number-start` 默认 1，正整数 | 设置首次分配的构建号，兼容商店既有版本 |
+| 同上：自动触发（后续） | `--hook` 默认 false；`--poll` 如 60s；`--schedule` 为五段 cron 表达式 | 接入 Webhook、轮询、定时构建 |
+| `project ls` / `project rm <name>` | ls 支持 `--json` | 列表/删除；有活动、待审批或未知发布结果时拒绝删除 |
+| `token create` | `--role` 必填：admin/trigger；approver 随后续审批接入 | 创建用户 token，仅显示一次明文 |
+| `token ls` / `token revoke <id>` | ls 支持 `--json` | 查看身份/角色/撤销状态；不显示明文 |
+| `node create <name>` | `--labels` 逗号分隔；`--capacity` 默认 1 | 注册节点并仅显示一次独立 Agent token |
+| `node ls` | `--json` | 查看平台、能力、标签、容量和心跳 |
+| `node drain/enable/disable/rm <name>` | 节点名必填 | 停接新任务/启用/撤销执行授权/删除；有活动或待审批构建不得删除 |
+| `version` | 无参数 | 输出二进制版本 |
+
+注册示例（待实现）：
+
 ```bash
-mybuilds-server serve   --config ~/.mybuilds/server.yml   # 起控制端（API + 调度）
-mybuilds-server migrate --config ...                     # 建表 / 升级 schema（sqlite 或 postgres）
+mybuilds-server serve --config ~/.mybuilds/server.yml --concurrency 2
+mybuilds-server node create linux-android-01 --labels android-sdk,flutter --capacity 1
 mybuilds-server project add app-android \
     --repo git@gitlab.example.com:team/app.git \
-    --provider gitlab --branches main,release/* \
-    --hook          # 打印 webhook URL 与 secret
-mybuilds-server project add app-ios --repo ... --poll 60s --schedule "0 9 * * *"
-mybuilds-server project ls|rm
-mybuilds-server token create --role approver             # 生成 approver / trigger / admin token
-mybuilds-server token ls|revoke
-mybuilds-server node create mac-ios-01 --labels xcode,ios-signing  # 一次性显示独立节点 token
-mybuilds-server node ls|drain|enable|disable|rm
+    --provider gitlab --branches 'main,release/*' \
+    --nodes linux-android-01 --default-node linux-android-01 \
+    --build-number-start 1000
+mybuilds-server token create --role admin
 ```
 
 ### Agent `mybuilds-agent`（构建节点，待 007 实现）
+
+全局 `--config` 默认 `~/.mybuilds/agent.yml`；serve 从文件读取连接、容量和租约参数，doctor 检查本机工具链，version 无参数。
 
 ```bash
 mybuilds-agent serve --config ~/.mybuilds/agent.yml
@@ -422,23 +467,48 @@ mybuilds-agent version
 
 ### 客户端 `mybuilds`（开发者 / 审批人用）
 
+| 全局参数 | 默认值 / 用途 |
+|---|---|
+| `--config` | `~/.mybuilds/client.yml`，客户端连接配置 |
+| `--server-url` | 覆盖配置中的 server；使用不同名称避免与 doctor --server 冲突 |
+| `--timeout` | 默认取配置中的 timeout（30s），普通 API 请求超时 |
+| `-h/--help` | 查看帮助 |
+
+本地 init/run/doctor 不要求服务端或 token；远程命令才读取和校验连接凭据。
+
+| 命令 | 参数与默认值 | 用途 |
+|---|---|---|
+| `init` | `--framework`：native/flutter，默认 native；`--platform`：android/ios，选择内置模板时必填 | 生成 mybuilds.yml，已有文件拒绝覆盖 |
+| 同上：用户模板 | `--template <本地文件>`，不能与 framework/platform 混用 | 校验并生成用户模板 |
+| `run` | `--file` 默认 mybuilds.yml；`--step <name>` 可选；`--dry-run` 默认 false | 本地执行或脱敏预览；指定步骤仍须校验输入与产物依赖 |
+| `trigger <project>` | `--branch` 默认 main；`--ref <sha>` 与 branch 显式传入互斥；`--version`、`--channel` 可选 | 远程触发，参数未覆盖时取流水线值；ref 必须属于授权分支 |
+| `build ls` | `--project`、`--status` 可选；`--limit` 默认 20；`--offset` 默认 0；`--json` | 过滤与分页 |
+| `build show <id>` | `--json` | 查看节点、步骤、工具版本、产物与发布记录 |
+| `build cancel <id>` / `build retry <id>` | admin 权限 | 请求取消/用原 SHA、配置和参数生成新构建号 |
+| `build resolve-upload <id>` | `--step`、`--result sent/not-sent`、`--note` 均必填；admin 权限 | 依据远端证据确认未知上传；sent 确认远端已接收，不推断已上架 |
+| `logs <build-id>` | `--step <name>` 可选；`-f/--follow` 默认 false | 历史日志或 SSE 跟随 |
+| `artifact ls <build-id>` | `--json` | 列出产物 ID、名称、大小与摘要 |
+| `artifact download <artifact-id>` | `--output <文件>` 必填，已存在拒绝覆盖 | 下载并校验 SHA-256 |
+| `status` | `--json` | 查询连通性、版本和全局容量 |
+| `doctor` | 无参数检查本机；`--server` / `--node <name>` 互斥；`--json` | 控制端/节点检查需要 admin，不返回密钥 |
+| `approvals`（后续） | `--json` | 列出待审批任务 |
+| `approve/reject <build-id>`（后续） | `--note` 可选；approver/admin 权限 | 批准或拒绝并记录身份、时间和意见 |
+| `version` | 无参数 | 输出客户端版本 |
+
+使用示例（待实现）：
+
 ```bash
-mybuilds init                             # 在当前仓库生成 mybuilds.yml 模板
-mybuilds run [--step name] [--dry-run]    # 本地直接跑流水线，不经服务端（调试用）
-mybuilds trigger <project> [--branch main] [--ref sha] [--version 1.0.0] [--channel 内测]
-mybuilds build ls|show|cancel|retry
-mybuilds build resolve-upload <id> --step name --result sent|not-sent --note "确认依据"
-mybuilds logs <build-id> [-f]             # -f 流式 tail（SSE）
-mybuilds approvals                        # 看哪些在等人放行
-mybuilds approve <build-id> [--note "已测过"]
-mybuilds reject  <build-id> [--note "打回原因"]
-mybuilds status                           # 连通性 + 服务端版本 + 当前并发
-mybuilds doctor [--server] [--node name]    # 本机 / 控制端 / 指定节点（远程需 admin）
-mybuilds version
+mybuilds init --framework flutter --platform android
+mybuilds run --file mybuilds.yml --dry-run
+mybuilds trigger app-android --branch main --version 1.0.0 --channel 内测
+mybuilds build ls --project app-android --limit 20 --json
+mybuilds logs 123 --follow
+mybuilds artifact ls 123
+mybuilds doctor --node linux-android-01
 ```
 
 列表与详情命令支持 `--json`；`trigger --branch` 在触发时解析并固定最新 SHA，`retry` 始终重跑原提交。
-`doctor --server` 返回控制端检查结果，`doctor --node` 返回对应节点工具链状态，两者不返回密钥；`resolve-upload` 记录人工确认依据，已发布则不再上传，未发送才允许重试。
+`doctor --server` 返回控制端检查结果，`doctor --node` 返回对应节点工具链状态，两者不返回密钥；`resolve-upload` 记录人工确认依据，远端已接收则不再上传，确认未发送才允许重试。
 `build show` 展示执行节点、attempt / 租约状态、配置快照、工具版本、审批记录和上传结果；产物记录包含大小和 SHA-256，下载与收集校验路径边界及符号链接。
 
 `doctor` 不是锦上添花 —— iOS 签名失败是移动端 CI 的头号故障，一个能提前告诉你
@@ -454,7 +524,7 @@ mybuilds version
 - [ ] `internal/pipeline/mask.go` + 单测
 - [ ] `mybuilds run --dry-run` 打印脱敏计划，不触发命令或外部动作
 
-### P1 本地执行与真实移动端构建
+### P1 本地执行与原生 / Flutter 构建
 
 - [ ] `internal/scm/git.go`：按 SHA 准备节点工作区；本地 run 使用当前工作树，不改写用户仓库
 - [ ] `run` / `artifact`：顺序执行、失败即停、统一收尾，产物大小与 SHA-256 记录
@@ -464,7 +534,9 @@ mybuilds version
 - [ ] Android 模板：Gradle 版本参数、keystore 注入、apk / aab / mapping 收集，复用依赖缓存
 - [ ] iOS 模板：archive/export、按当前 Xcode 支持值生成 ExportOptions、独立 DerivedData 和临时 keychain、ipa / dSYM 收集与清理
 - [ ] 基础 `doctor`：git 凭据、JDK / Android SDK、Xcode、签名证书及描述文件检查
-- [ ] 一个真实 Android 与一个真实 iOS 工程构建成功，核对版本、产物、签名和取消后的残留进程
+- [ ] Flutter Android / iOS 模板与 doctor：复用底层签名/收尾，flutter build appbundle / ipa，支持版本、flavor 和用户参数
+- [ ] 内置模板可编辑，自定义本地模板和仓库脚本构建；不新增执行器或新步骤 DSL
+- [ ] 原生 Android / iOS 与 Flutter 双平台真实构建成功，核对版本、产物、签名和取消后的残留进程
 
 ### P2 控制端 + 多节点调度
 
@@ -499,13 +571,18 @@ mybuilds version
 - [ ] 每项目 ticker + `git ls-remote`，游标与任务入队事务提交；cron 实现定时构建
 - [ ] 分支 glob 过滤，忽略 tag / PR / 分支删除事件
 
-### P5 产物与分发
+### P5 商店分发（MVP）与后续产物运维
 
-- [ ] `upload`：fir.im / generic multipart，上传前保存操作记录，校验产物匹配唯一性
+- [ ] 发布前保存操作记录，核对应用、版本与唯一 AAB/IPA、摘要、节点/attempt/租约，管理员授权发布
+- [ ] Google Play 使用 fastlane supply，service account 认证，支持 internal 与显式 production
+- [ ] App Store 使用 fastlane deliver 与 API key，支持上传 IPA、显式提交审核及选择审核后自动发布；不把上传成功等同公开上架
+- [ ] custom 上传接用户命令/Fastfile，共用输入、结果文件、租约、取消、脱敏与未知结果确认
 - [ ] 上传结果未知时查询远端或由 admin 用 `resolve-upload` 确认并记录依据，阻止自动重发及未确认的发布重试
 - [ ] 配置快照与上传产物绑定，审批后发布原产物，不重新构建
 - [ ] retention 清理终态构建（保留 N 个 / N 天），保护待审批与未知结果任务
-- [ ] fir.im 与 generic 上传闭环，验证失败与中断后的状态
+- [ ] 两大商店真实上传与可查询回执，自定义命令结果校验，验证凭据错误、失败与回报丢失的 unknown 状态
+- [ ] 原型验证工具内置重试、非交互认证及版本兼容；Ruby/Bundler/fastlane 按节点锁定
+- [ ] fir.im / generic 内置分发不属于 MVP，后续有需求再接入
 
 ### P6 部署与打磨
 
@@ -514,7 +591,9 @@ mybuilds version
 - [ ] `build ls` 过滤与分页、日志流重连、doctor 输出打磨
 - [ ] 基于真实构建数据调整并发；按实际瓶颈优化依赖缓存，不新增通用缓存系统
 
-App Store / Google Play 上传**不做内置**，文档里给 `kind: run` + fastlane 的示例即可。
+MVP 包含手动触发、原生与 Flutter 双平台、多节点执行、日志/产物下载及两大商店分发与 custom 扩展。
+Webhook、cron、机器人通知、项目发布审批流程和部署打磨可以后置；发布授权、租约与上传结果未知处理不能后置。
+Google Play/App Store 接入不自写完整市场协议；具体认证、默认发布模式、前置条件及验收见 BUILD_DISTRIBUTION。
 
 ## Verification
 
@@ -560,6 +639,9 @@ mybuilds approve <id> && mybuilds build show <id>   # 继续并成功
 6. Android / iOS 取消与失败后无本次构建残留进程、临时 keychain；节点独立缓存且不共享构建工作区
 7. 两个真实节点执行不同项目，同项目跨节点串行；iOS 不分配给 Linux，无合格节点明确排队
 8. 暂停原 Agent 后模拟过期回报，确认拒绝；审批后原节点离线不迁移，失联上传不自动重发
+9. Flutter Android/iOS 真实构建，核对版本、flavor、签名与产物；自定义仓库脚本同路径执行
+10. Google Play internal 轨道可见真实 AAB；App Store Connect 可见真实 IPA，显式提交审核路径可验证
+11. custom 上传按结果文件确认；远端接收后失联时保持 unknown，不重发；上传/审核/公开状态分别记录
 
 ## 明确不做（一期）
 
@@ -567,7 +649,7 @@ mybuilds approve <id> && mybuilds build show <id>   # 继续并成功
 - 不做插件系统 / 自定义步骤 DSL
 - 不做 Docker 隔离；支持多构建节点，不做多控制端高可用或单条流水线跨节点迁移
 - 不做 RBAC / 多租户（token 角色只三档）
-- 不做 App Store / Google Play 内置上传
+- 不自动注册商店账号或代填合规元数据；不在 MVP 内置其他分发渠道
 - 不做并行步骤块、矩阵构建
 
 ## 已确定的部署与范围
@@ -575,4 +657,5 @@ mybuilds approve <id> && mybuilds build show <id>   # 继续并成功
 1. 一个控制端（Linux/macOS）管理多个 Agent。iOS 仅在 macOS 节点构建，Android 可在 Linux/macOS；客户端远程命令跨平台。
 2. 数据库默认 SQLite，支持 PostgreSQL；初期用 GORM `AutoMigrate` 建表，需要改名或回填时再增加显式版本迁移。
 3. 审批通知渠道按 飞书（oapi-sdk-go）/ 企业微信 / 钉钉 / 通用 webhook 实现，无内置邮件与短信；企微与钉钉机器人走 stdlib HTTP POST。
-4. 构建号用「每项目自增整数」，不做语义化版本自动推导；应用版本由 YAML 参数或触发参数提供，一期忽略 tag 事件。
+4. 构建号用「每项目自增整数」，首次注册允许指定兼容商店既有版本的起始值；应用版本由 YAML 参数或触发参数提供，一期忽略 tag 事件。
+5. 原生与 Flutter 模板及用户脚本进入 MVP；Google Play/App Store 与 custom upload 进入 MVP，平台与商店身份分别校验。

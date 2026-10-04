@@ -1,6 +1,6 @@
 # mybuilds
 
-面向 Android 与 iOS 的构建发布工具，用 Go 实现。
+面向原生 Android/iOS 与 Flutter 工程的构建发布工具，用 Go 实现。
 目标架构是客户端 `mybuilds`、控制端 `mybuilds-server` 与构建节点 `mybuilds-agent` 三种 CLI。
 一个控制端管理多个构建节点，按平台、标签和容量分配任务；客户端也支持本地调试流水线。
 
@@ -12,6 +12,7 @@
 多节点设计已确定，见 [MULTI_NODE.md](docs/plans/MULTI_NODE.md)，Agent 与节点协议尚未实现。
 当前两个入口仅提供帮助、`version` 及 Cobra 自带补全；`init`、流水线执行、HTTP 服务、数据库、审批、通知和上传均属于后续功能。
 下一步是 `001-pipeline-preview`：配置初始化、严格校验与脱敏预览。
+MVP 目标已扩展至原生/Flutter 双平台、多节点构建、Google Play/App Store 分发与用户自定义，见 [构建与分发设计](docs/plans/BUILD_DISTRIBUTION.md)。
 
 ## 开发与运行
 
@@ -85,7 +86,8 @@ mybuilds/
 | `internal/protocol` | 控制端与 Agent 共用的任务、租约及回报格式 |
 | `internal/store` | 数据模型、事务和数据库访问 |
 | `internal/scm` | Git 工作区与 Webhook 来源处理 |
-| `internal/mobile` | Android / iOS 工具链、版本与签名辅助 |
+| `internal/mobile` | 原生/Flutter 模板、doctor、版本与签名辅助 |
+| `internal/distribute` | fastlane 商店封装与 custom 上传，共用发布记录 |
 | `internal/notify` | 飞书等通知渠道 |
 | `examples` | 可运行的配置与工程示例 |
 | `deploy` | 部署模板与操作说明 |
@@ -105,7 +107,9 @@ iOS 分配到具备 Xcode 和签名资源的 macOS 节点，Android 可分配到
 
 CLI 使用 Cobra；后续流水线配置使用 YAML，服务端 HTTP 使用标准库，数据库使用 GORM，默认 SQLite、可选 PostgreSQL。
 飞书采用官方第三方 `oapi-sdk-go/v3`，其他机器人通知使用标准库 HTTP。
-构建产物由控制端托管下载；后续内置分发目标为 fir.im 与 generic，不属于 MVP。
+构建产物由控制端托管下载；MVP 商店渠道为 Google Play 与 App Store，Go 封装第三方 fastlane 工具，节点需 Ruby/Bundler。
+原生/Flutter 提供可编辑的内置模板，用户可使用仓库脚本、本地模板或 custom 上传调用自己的 Fastfile。
+上传、提交审核、正式上架分别记录；其他内置分发渠道、通知与自动触发后置。
 这些业务依赖随功能引入并锁定版本，具体边界与安全、恢复要求见 [PLAN.md](docs/plans/PLAN.md)。
 
 ## 验证与版本注入
@@ -139,8 +143,10 @@ $speckit-specify → $speckit-plan → $speckit-tasks → $speckit-analyze → $
 已有功能继续使用原规范；新增功能按路线逐项推进。
 
 - [AGENTS.md](AGENTS.md)：AI 阅读入口、开发流程与提交约定。
-- [项目原则](.specify/memory/constitution.md)：2.0.0，所有功能的稳定约束。
+- [项目原则](.specify/memory/constitution.md)：2.1.0，所有功能的稳定约束。
 - [多节点设计](docs/plans/MULTI_NODE.md)：角色职责、调度、租约与故障边界。
+- [构建与分发设计](docs/plans/BUILD_DISTRIBUTION.md)：内置模板、两大商店、第三方工具与用户扩展。
+- [配置与命令设计](docs/plans/PLAN.md#配置文件)：server/client/agent 配置结构；同文件 CLI 面列出拟定参数与默认值。
 - [实施路线](docs/plans/SPECKIT_ROADMAP.md)：功能依赖、顺序与 001 操作案例。
 - [初始化规范](specs/000-project-bootstrap/spec.md)：本次范围与验收要求。
 
