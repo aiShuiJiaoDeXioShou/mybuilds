@@ -89,6 +89,8 @@ cmd/mybuilds-agent/ → mybuilds-agent      构建节点二进制（待 007 创�
 三个角色共享 internal 下的配置、流水线、scm、mobile 和 version，入口随功能创建。
 Agent 与客户端本地 run 共用同一套引擎；控制端通过持久化队列和 Agent 协议管理执行。
 本地模式结果写临时目录，不连接控制端数据库；平台进程控制放到对应构建约束文件。
+MVP 本地 run 只执行构建、产物和交互审批；有生效的 upload 步骤时在执行任何命令前拒绝，dry-run 可预览全部步骤。
+实际发布统一经控制端和 Agent，即使二者在同一台机器；共用引擎按执行上下文检查发布权限，不新增本地发布数据库。
 Agent 使用标准库 HTTPS 主动领取任务、续租并回传日志/产物；一期不引入消息队列或共享文件系统。
 
 ### 2. 不用 Docker
@@ -126,18 +128,22 @@ database:
 
 ### 4. 审批与执行进度持久化
 
-引擎到审批节点时保存 `waiting_approval` 并退出本次执行，释放节点与全局构建槽；调度器每 5s 查询数据库，
-已批准的任务重新入队，从审批后的步骤继续。同项目同名 build 在审批期间仍保持串行，其他 build 可以使用空出的槽。
-挂起前节点清理临时签名资源，并确认日志和产物已回传控制端；保留工作区与节点归属。
+引擎到审批节点时完成以下检查点后保存 `waiting_approval` 并退出本次执行，释放节点与全局构建槽；调度器每 5s 查询数据库，
+已批准的任务进入固定原节点的恢复队列，从审批后的步骤继续。同项目同名 build 在审批期间仍保持串行，其他 build 可以使用空出的槽。
+挂起前节点确认本次步骤进程已退出、清理临时签名资源，并确认日志、产物及已有测试报告已回传控制端；发布审批还必须满足完整报告检查并封存证据。
+控制端事务提交审批检查点后才释放租约和容量；保留工作区、产物/报告摘要与节点归属。
 批准后从原节点以新租约恢复，节点离线时等待并提示；挂起不视为成功，不发送最终通知。
 审批仅允许 `approver/admin`，一期不做审批分组；记录 token 身份、时间、意见，重复或相互冲突的决定不得覆盖。
 
 构建保存 commit SHA、流水线配置快照、当前步骤、工作区、产物记录与工具版本；快照保留密钥引用，不存密钥明文。
 控制端启动时恢复排队与待审批任务，并核对持久化节点租约；不能将控制端重启当作节点中断。
 节点崩溃或租约过期时普通执行步骤标为 `interrupted`，由用户显式重试，不自动迁移重跑。
+无法确认进程停止时另存 stop_unconfirmed 保护标志，保留同项目同名 build 互斥、隔离原节点并禁止清理；租约过期不等于物理进程已停止。
+原节点经独立身份回报进程组已回收，或管理员记录已停机/终止进程的证据后，才能解除停止保护；上传 unknown 另行处理。
 工作区或产物缺失时终止恢复并报告原因，不能从头静默重跑。
 
-上传前保存操作记录；若远端接收后本地未记录成功，标为结果未知，优先查询远端状态，无法确认时交由人工处理，
+上传前由控制端事务保存发布意图、取得应用互斥并授权当前租约；授权后缺少可信终态回执即标为 unknown，不能假设节点尚未发送。
+优先查询远端状态，无法确认时交由人工处理，
 禁止自动重发。普通重试生成新的构建号，复用原 SHA、配置和构建参数；未知上传结果确认前不能重试发布。
 管理员可查询或人工确认上传结果，记录证据与意见后解除未知状态；确认已发布时不再执行该次上传。
 
@@ -147,13 +153,15 @@ database:
 `{{version}}` 模板变量，直接喂给 `versionCode` / `CURRENT_PROJECT_VERSION`。
 
 显式记录移动端版本与渠道参数，同一 SHA 可构建不同渠道；一期同一平台、同一应用的渠道放在同一项目内，
-避免多个项目独立分配构建号后出现冲突。版本规则按平台校验，不假设 Android 与 iOS 完全一致。
+避免多个项目独立分配构建号后出现冲突。发布接入时将已核验的 (store, app_identifier) 唯一绑定项目，拒绝其他项目使用独立计数器发布同一应用；
+同项目多个 build 共用此绑定和应用上传锁。核对商店既有版本；外部工具占用新版本时明确失败，不覆盖也不自动改号。版本规则按平台校验，不假设 Android 与 iOS 完全一致。
 
 ### 6. 工作区、收尾与资源控制
 
 - 控制端按固定 SHA 只读选择仓库定义或构建方案、校验并保存所选 build 快照后入队；
   Agent 检出该 SHA 准备隔离工作区并执行快照，checkout 是前置操作。本地 `run` 使用当前工作树，不重置用户修改。
-- 常规步骤失败即停；成功、失败、取消均执行统一收尾：最终通知、临时 keychain 清理。通知由控制端发送，失败单独记录，不覆盖构建结果。
+- 常规步骤失败即停；系统资源清理独立于用户 post，最终通知随通知功能接入，由控制端发送且失败不覆盖构建结果。
+  用户 post 仅由持有效执行权的原节点运行；未开始执行的取消、审批挂起后的取消或拒绝不启动用户脚本，记录未执行原因。
 - 默认每节点容量为 1、全局并发为 1，均可配置；同项目同名 build 跨节点串行，不同 build 可并行；记录实际资源使用后再提高并发。
 - 各节点工作区按构建隔离，复用工具自身的依赖下载缓存；iOS DerivedData 和临时 keychain 按构建隔离，不新增通用缓存系统。
 - 取消先向构建进程组发送 TERM，超时后 KILL 并回收子进程；不得杀同用户的全部 Java / Xcode 进程。Gradle 默认 `--no-daemon`，真实构建验证残留进程。
@@ -206,6 +214,40 @@ mybuilds run → 本机同一流水线引擎 → 临时目录
 失联、控制端重启、审批固定节点、日志与产物回传、签名资源和上传结果未知。
 一次流水线固定一个节点；增加节点提高不同项目或同项目不同 build 的并发，不做跨节点分步执行或多控制端高可用。
 
+### 模块边界与持久化规则
+
+- CLI 只解析输入、调用业务入口并展示结果；server 管理鉴权、配置快照、队列与持久化，agent 管理领取、续租和宿主资源。
+  pipeline 执行已解析的定义，不直接访问数据库或 HTTP；protocol 只定义传输数据。store 不依赖 CLI/执行器，mobile/distribute 不依赖 server。
+  本地上下文与 Agent 上下文提供所需执行能力；遇到实际替换或测试隔离需求再提取接口，不预建注册器、事件总线或插件框架。
+- 单控制端约束必须在启动时执行：SQLite 用规范化数据库路径旁的进程文件锁，PostgreSQL 用专用连接持有 session advisory lock；
+  同一数据库拒绝第二个调度进程，锁丢失立即停止分配和发布授权。PostgreSQL 的锁生命周期见 [官方说明](https://www.postgresql.org/docs/current/explicit-locking.html#ADVISORY-LOCKS)。
+  该锁用于防止误启动，不提供自动主备切换；日志和产物目录仍由唯一控制端持有。
+- 手动 trigger/retry 请求携带客户端生成的 Idempotency-Key；以身份与 key 唯一约束保存请求摘要和结果 ID。
+  鉴权后先按原请求内容查询 key，再解析 HEAD/快照；已完成的同 key/内容返回原结果，不重新分配构建号。
+  不同内容复用 key 返回冲突；入队事务再次检查 key，应对并发重试。网络超时重试沿用原 key，新的用户操作使用新 key。
+  参数校验在入队前完成；结果、计数器与幂等记录在同一短事务提交，不在事务内执行 Git、shell 或商店请求。
+  Webhook 使用来源事件 ID 独立去重；Agent 回报用 attempt/lease_epoch/事件序号去重，三者不互相替代。
+- 数据库与文件系统不共享事务：产物/报告先写受限临时路径，校验后原子改名，再保存可见记录；未完成文件不可下载。
+  启动恢复核对未完成记录和无引用文件，后者延迟清理，不能把部分文件当作完整产物。审批、上传只引用已确认的产物 ID 与摘要；实时日志按已确认偏移读取，并以事件序号去重。
+
+### 执行状态与保护条件
+
+| 执行状态 | 进入条件与下一步 |
+|---|---|
+| skipped | build.when 不满足；无构建号、无节点，保留原因 |
+| queued | 初始执行等待合格节点；审批批准后的恢复还必须固定原节点 |
+| running | 事务领取并取得有效租约；只接受当前节点/attempt 的回报 |
+| waiting_approval | 进程退出、资源清理和产物/报告回传已确认；保留 build 互斥，不占执行槽 |
+| succeeded / failed | 普通执行、报告检查和可执行 post 已结束，系统清理记录已保存 |
+| cancelled | 排队取消，或正在执行的停止已确认，或挂起审批被取消/拒绝；拒绝记录 approval_rejected 原因 |
+| interrupted | 执行权失效且不能继续；不得自动迁移或重复 shell |
+
+cancel_requested 是操作意图，stop_unconfirmed 是停止保护；上传结果是独立记录，不用一个执行状态代替三者。
+终态不得被旧回报复活；interrupted 且停止未确认、或存在上传 unknown 的执行仍受互斥/保留保护。
+运行中取消由 Agent 停止进程并在有效租约内尝试 always；排队/挂起取消由控制端条件更新，不创建恢复租约执行 post。
+审批恢复再次检查原节点授权、工具、容量、工作区和产物摘要；领取时允许任务持有自己的 build 互斥，不绕过其他任务的互斥。
+重试须先解除停止保护；涉及发布还须解除应用 unknown 保护。人工确认仅记录既有事实，不会重新执行原任务。
+
 ## 配置文件
 
 ### 服务端配置 `~/.mybuilds/server.yml`（由 `mybuilds-server serve` 读取）
@@ -230,7 +272,7 @@ build_profiles:                         # 可复用构建方案，名称由管�
 # retention 属于 MVP；notifications 随后续通知功能接入
 retention:
   builds: 100                           # 每项目保留数量
-  days: 30                              # 保留天数；活动/待审批/未知上传结果受保护
+  days: 30                              # 保留天数；活动/待审批/停止未确认/未知上传结果受保护
 defaults:                                # 项目未指定时采用的全局默认通知
   notifications:
     enabled: true
@@ -360,9 +402,10 @@ builds:
 不增加步骤之间的 parallel、matrix、build 依赖、自动回滚或跨节点执行单条流水线。
 
 无 YAML 时，project init --framework flutter --platform android,ios 自动登记 android/ios 两个 build，绑定内置方案；
-单平台注册生成对应平台名称的一个 build。原生双平台同样选择两套模板；用户仍需准备各平台的实际工程与签名。
+单平台注册生成对应平台名称的一个 build；本地 init 的平台模板也始终生成 android/ios 命名 build，保证有无仓库 YAML 时名称一致。原生双平台同样选择两套模板；用户仍需准备各平台的实际工程与签名。
 这与将两端命令放在同一个 macOS build 中顺序执行不同：命名 build 可以独立分配到 Linux/macOS 节点。
 新增或修改回退定义使用 project set --settings；仓库定义则随 Git 提交修改。
+旧根级流水线仍名为 default；切换来源后名称不一致须显式修改选择、参数覆盖与自动触发列表，不自动映射 default/android/ios。
 
 trigger --build android、--build android,ios 或 --all 选择构建，--build 与 --all 互斥；
 只有一个定义时可省略选择，多个时必须明确选择。未知名称或重复选择报错，不自动猜测平台。
@@ -468,8 +511,9 @@ steps:
 
 步骤类型只做 4 种：`run` / `artifact` / `approval` / `upload`；checkout 是前置操作，最终通知属于统一收尾。
 服务端固定到触发时确定的 SHA，浅克隆无法取得该 SHA 时补充 fetch，不退回分支最新提交。
-本地 `run` 遇到 approval 时交互确认，无终端时拒绝执行该步骤；`--dry-run` 不运行命令、不发通知、不上传。
-内置原生 Android/iOS 与 Flutter 模板，生成上述四种步骤，用户可编辑 run 和 artifact。
+本地 `run` 遇到 approval 时交互确认，无终端时拒绝执行该步骤；生效的 upload 在预检查时拒绝，发布请使用 trigger。
+`--dry-run` 不运行命令、不发通知、不上传。
+内置原生 Android/iOS 与 Flutter 模板默认只生成 run/artifact，用户可编辑；approval/upload 在配置中显式添加，完整发布示例不等于模板默认启用发布。
 Google Play / App Store 的 upload 由 Go 封装第三方 fastlane；其他渠道或用户 Fastfile 使用 custom target，
 同样受租约、授权、取消、脱敏与发布意图记录约束。自定义构建可用仓库脚本或本地 YAML 模板。
 不加载动态 Go 插件、不建插件市场或另造 DSL，字段和结果契约见 BUILD_DISTRIBUTION。
@@ -641,7 +685,7 @@ build.timeout 是可选正数 duration；累计 Agent checkout、普通步骤和
 超时停止本次进程组，记录 timeout 原因及失败结果；不会自动取消批次内其他 build 或重发上传。
 
 post 复用现有 run/artifact 结构，仅支持 success、failure、always 三个有序列表和 timeout（整个收尾预算，默认 2m）。
-普通步骤和测试报告先确定结果，再运行对应 success/failure，最后运行 always；取消只运行 always，节点失联或执行权过期不在其他节点运行用户收尾脚本。
+普通步骤和测试报告先确定结果，再运行对应 success/failure，最后运行 always；运行中取消只运行 always；排队/审批挂起取消不启动用户 post，节点失联或执行权过期不在其他节点运行用户收尾脚本。
 每个收尾步骤受剩余预算限制；一项失败或超时仍尝试剩余可运行项，预算耗尽则记录未执行项。
 收尾失败使原成功结果变为失败，但不覆盖原失败/取消/上传 unknown 的证据，也不再次进入 failure 列表。
 系统进程回收与临时 keychain 清理独立执行，不允许用户 post 替代或跳过；post 不含 approval/upload。
@@ -696,9 +740,15 @@ reports:
 执行后即使测试命令失败也尝试收集报告，复用产物路径/符号链接/大小/摘要校验；不采集其他 build 或旧工作区文件。
 使用 Go encoding/xml 解析 JUnit testsuite/testsuites，限制输入大小与嵌套深度，不展开外部实体或联网。
 保存用例总数、失败/错误/跳过数、耗时与失败用例摘要，原 XML 作为产物下载；构建详情/JSON 展示摘要。
-失败或错误用例使 build 失败并阻止之后的发布步骤；每个 run 结束后校验已生成的报告，收尾阶段再完成最终收集，不能到上传后才发现测试失败。
-required 的缺失检查在普通执行结束或上传之前进行，不因前置准备步骤尚未生成报告而失败；required=false 的缺失不覆盖测试命令的非零退出。
+失败或错误用例使 build 失败并阻止之后的发布步骤；每个普通 run 结束后校验已生成的报告，普通执行结束完成最终收集，不能到上传后才发现测试失败。
+required 的缺失检查在普通执行结束或发布审批/上传之前进行，不因前置准备步骤尚未生成报告而失败；required=false 的缺失不覆盖测试命令的非零退出。
 同一路径报告重复解析按最终内容替换，不累加计数；required=true 无报告或非法 XML 报失败，required=false 仅允许无报告，有文件但非法仍报错。
+本地 run 启动前记录匹配报告的文件身份、修改时间与内容摘要，只接受本次新建或改写的文件；不能证明新鲜的旧报告不计入，通过 required 规则处理。
+不删除用户工作树中的旧文件；--step 同样检查报告/产物依赖，不能借旧文件绕过检查。远程使用全新执行工作区。
+发布审批/首次上传前封存当前报告与产物 ID/摘要，保存同一执行的通过结论；审批恢复核对封存证据及实际上传产物，变化或缺失即失败。
+MVP 含 upload 的流水线中，所有普通 run/artifact 必须位于 approval/upload 发布段之前，配置校验拒绝交错；不含 upload 的普通审批不受此顺序限制。
+多个 upload 只消费同一封存证据；重新构建或测试须另建执行，不能在批准后替换产物。
+post 只产生诊断日志/产物，不重写发布报告或审批证据；先确定普通执行和报告结果，再选择 post 列表，避免收尾测试在上传后改变放行条件。
 MVP 不新增 unstable 状态或测试平台，必要检查失败不能仅标警告后继续发布。
 
 项目管理设置增加 retention，与全局 server.retention 按字段继承，示例：
@@ -710,8 +760,11 @@ retention:
 ```
 
 builds/days 须为正整数；省略字段继承全局，null/未知字段拒绝，不允许仓库 YAML 改写管理策略。
-计数按项目所有命名 build 汇总；超出数量或天数的终态记录进入清理，但活动、待审批与上传 unknown 始终受保护。
+计数按项目所有命名 build 汇总；超出数量或天数的终态记录进入清理，但活动、待审批、停止未确认与上传 unknown 始终受保护。
 日志、产物、测试原始报告及 Agent 工作区沿用同一策略；保护判断与执行删除前均重新核对状态，下载中的文件不半途删除。
+中央删除使用持久化清理记录，先令产物不可再被新下载引用，等待已有下载结束再删除文件；计数器与必要操作审计不随历史文件清理重置。
+节点工作区删除通过独立的管理指令领取/确认，不复用已经过期的执行租约；指令绑定节点、删除 ID 与工作区 ID，不接受任意路径。
+删除前控制端复核保护状态，Agent 再确认无活动进程且路径在 data_dir 内；节点离线保留待清理记录，确认后才标完成，重复删除已不存在目录为成功。
 MVP 完成受限清理与失败记录，部署模板和容量打磨仍后置。
 
 ## 触发链路
@@ -832,6 +885,7 @@ GET    /api/builds/{id}                    # 单个构建详情 + 步骤状态
 GET    /api/builds/{id}/log?step=&follow=1 # 日志（follow 走 SSE tail）
 POST   /api/builds/{id}/cancel             # 保存取消意图，节点终止本次进程组并确认
 POST   /api/builds/{id}/retry              # 原 SHA / 配置 / 参数，新构建号，检查未知上传结果
+POST   /api/builds/{id}/stop-confirmation   # 原节点停止证据确认（admin），不解除上传 unknown
 POST   /api/builds/{id}/upload-resolution  # 确认未知上传结果并记录证据（admin）
 GET    /api/approvals                      # 待审批列表
 POST   /api/builds/{id}/approve            # 需要 approver/admin 角色
@@ -918,7 +972,7 @@ mybuilds-agent version
 
 | 命令 | 参数与默认值 | 用途 |
 |---|---|---|
-| `init` | `--framework`：native/flutter，默认 native；`--platform`：android/ios/android,ios，选择内置模板时必填 | 单平台生成单流水线；双平台生成一个含两个命名 build 的 mybuilds.yml，已有文件拒绝覆盖 |
+| `init` | 无选项生成最小 default shell 配置；`--platform`：android/ios/android,ios；指定平台时 `--framework` 默认 native，显式 framework 必须配 platform | 平台模板始终生成对应名称的 builds；双平台仍只有一个 mybuilds.yml，已有文件拒绝覆盖 |
 | 同上：用户模板 | `--template <本地文件>`，不能与 framework/platform 混用 | 校验并生成用户模板 |
 | `project init <name>` | `--repo`、`--nodes` 必填；`--group` 默认 default；provider/branches/default-node/build-number-start/settings/file/framework/platform 与服务端 project add 一致 | 注册远程项目、选择分组与命名 build；需要 admin；框架/平台绑定方案不要求仓库有 YAML |
 | `project set <name>` | `--settings <本地YAML>` 必填 | 更新显式设置块，可修改或增加回退 build；需要 admin |
@@ -929,11 +983,12 @@ mybuilds-agent version
 | `group rename <name>` | `--name <新名称>` 必填 | 修改普通组名；需要 admin |
 | `group rm <name>` | 组名必填 | 删除空组；需要 admin |
 | `run` | `--file` 默认 mybuilds.yml；`--build <名称列表>` / `--all` 互斥；`--param key=value` 可重复；`--step <name>` 可选；`--dry-run` 默认 false | 本地执行或脱敏预览，多 build 顺序执行；--step 仅允许选中一个 build，仍校验依赖 |
-| `trigger <project>` | `--branch` 默认 main；`--ref <sha>` 与 branch 显式传入互斥；`--build <名称列表>` / `--all` 互斥；`--param key=value` 可重复；`--version`、`--channel` 可选 | 固定一个 SHA，返回所选 build 的独立执行 ID；单 build 可省略选择；ref 须属于授权分支 |
+| `trigger <project>` | `--branch` 默认 main；`--ref <sha>` 可与 branch 同用，须可达于该授权分支；`--build <名称列表>` / `--all` 互斥；`--param key=value` 可重复；`--version`、`--channel` 可选 | 固定一个 SHA，返回所选 build 的独立执行 ID；单 build 可省略选择；ref 须属于授权分支 |
 | `build ls` | `--project`、`--group`、`--build-name`、`--batch`、`--status` 可选；`--limit` 默认 20；`--offset` 默认 0；`--json` | 按命名 build 或批次查询；项目与组同时传入时取交集 |
 | `build show <id>` | `--json` | 查看 build 名称、批次、节点、步骤、工具版本、产物与发布记录 |
 | `build cancel <id>` / `build retry <id>` | admin 权限 | 请求取消/用原 SHA、配置和参数生成新构建号 |
-| `build resolve-upload <id>` | `--step`、`--result sent/not-sent`、`--note` 均必填；admin 权限 | 依据远端证据确认未知上传；sent 确认远端已接收，不推断已上架 |
+| `build confirm-stopped <id>` | `--note` 必填；admin 权限 | 记录原节点已停机或构建进程已终止的证据，解除停止保护；不替代上传确认 |
+| `build resolve-upload <id>` | `--step`、`--result sent/not-sent`、`--note` 均必填；admin 权限 | sent 表示远端已接受；not-sent 需证明确实未被接受/无发布副作用，不推断已上架 |
 | `logs <build-id>` | `--step <name>` 可选；`-f/--follow` 默认 false | 历史日志或 SSE 跟随 |
 | `artifact ls <build-id>` | `--json` | 列出产物 ID、名称、大小与摘要 |
 | `artifact download <artifact-id>` | `--output <文件>` 必填，已存在拒绝覆盖 | 下载并校验 SHA-256 |
@@ -974,8 +1029,8 @@ mybuilds project move app-android --group default
 mybuilds group rm apps
 ```
 
-列表与详情命令支持 `--json`；`trigger --branch` 在触发时解析并固定最新 SHA，`retry` 始终重跑原提交。
-`doctor --server` 返回控制端检查结果，`doctor --node` 返回对应节点工具链状态，两者不返回密钥；`resolve-upload` 记录人工确认依据，远端已接收则不再上传，确认未发送才允许重试。
+列表与详情命令支持 `--json`；`trigger --branch` 未指定 ref 时解析并固定分支 HEAD；指定 ref 时固定该 SHA 并校验它属于所选授权分支，when 使用同一分支上下文；`retry` 始终重跑原提交。
+`doctor --server` 返回控制端检查结果，`doctor --node` 返回对应节点工具链状态，两者不返回密钥；`resolve-upload` 记录人工确认依据，远端已接收则不再上传，确认远端未接受且未产生发布副作用才允许重试。
 `build show` 展示执行节点、attempt / 租约状态、配置快照、工具版本、审批记录和上传结果；产物记录包含大小和 SHA-256，下载与收集校验路径边界及符号链接。
 
 `doctor` 不是锦上添花 —— iOS 签名失败是移动端 CI 的头号故障，一个能提前告诉你
@@ -1000,7 +1055,7 @@ mybuilds group rm apps
 - [ ] 参数/分支 when 与步骤 skipped、累计 build 超时、独立 post 预算和系统收尾、默认时间戳日志
 - [ ] 节点工作区 `<agent.data_dir>/builds/<project>/<number>/{src,logs,artifacts}`；本地结果写临时目录，日志按步骤分文件
 - [ ] ctx 取消、进程组 TERM/KILL 与回收；按平台隔离实现，避免影响远程客户端编译
-- [ ] 假项目验证成功、失败、取消均执行收尾，日志与 dry-run 脱敏
+- [ ] 本地预检查拒绝本次选中且 when 生效的 upload；模板默认只构建/收集产物；运行中成功、失败、取消验证收尾，日志与 dry-run 脱敏
 - [ ] Android 模板：Gradle 版本参数、keystore 注入、apk / aab / mapping 收集，复用依赖缓存
 - [ ] iOS 模板：archive/export、按当前 Xcode 支持值生成 ExportOptions、独立 DerivedData 和临时 keychain、ipa / dSYM 收集与清理
 - [ ] 基础 `doctor`：git 凭据、JDK / Android SDK、Xcode、签名证书及描述文件检查
@@ -1010,10 +1065,10 @@ mybuilds group rm apps
 
 ### P2 控制端 + 多节点调度
 
-- [ ] 加入 Viper、GORM 与双驱动；验证纯 Go SQLite 驱动兼容性，设置 WAL / 外键 / 锁等待
+- [ ] 加入 Viper、GORM 与双驱动；验证纯 Go SQLite 驱动兼容性，设置 WAL / 外键 / 锁等待；启动取得唯一控制端锁
 - [ ] 模型保存 build_name、batch_id、构建配置快照、参数、SHA、当前步骤、工具版本与产物；项目构建号事务分配
 - [ ] 项目组模型、default 初始化、客户端 project init 选组、组改名/空组删除与项目事务迁移；构建历史保留，列表按当前归属过滤
-- [ ] 项目命名 build 设置、--file 与 --settings 路径区分、批量固定 SHA/参数与权限校验、原子入队、批次关联查询
+- [ ] 项目命名 build 设置、--file 与 --settings 路径区分、branch/ref 可达校验、批量固定 SHA/参数与权限校验、请求幂等/原子入队、批次关联查询
 - [ ] build 级 when 在分配节点前判断，skipped 不占节点/构建号；记录条件事实、剩余预算和收尾进度，恢复不重置
 - [ ] 控制端具名构建方案、项目 auto/repo/profile 来源选择；仅缺文件回退，错误配置拒绝，执行快照与重试不受方案编辑影响
 - [ ] SQLite 与 PostgreSQL 跑相同的 CRUD / 事务 / 条件状态更新 / 唯一约束 / 分页用例
@@ -1022,20 +1077,20 @@ mybuilds group rm apps
 - [ ] `net/http` JSON API、鉴权、日志 SSE tail、受鉴权的产物下载与控制端/节点 doctor
 - [ ] 节点注册/独立 token/标签/容量/drain，Agent 跨主机 HTTPS 主动领取与续租
 - [ ] 原子节点分配、attempt/租约归属、过期回报拒绝、断网停止，无匹配节点时保持排队
-- [ ] 节点脱敏日志与校验产物回传；中央保存，不共享数据库或工作区
+- [ ] 节点脱敏日志与校验产物回传；临时文件校验/原子改名/可见记录与重启恢复，不共享数据库或工作区
 - [ ] `mybuilds-server serve` + 多个 `mybuilds-agent serve` + `trigger` + `build ls/show` + `logs -f` 闭环
 - [ ] 列表 / 详情支持 `--json`；记录排队、步骤耗时、峰值内存与磁盘占用
 
 ### P3 重启恢复与审批
 
-- [ ] approval 保存进度并释放全局槽；5s 扫描已批准任务重新入队，保持同项目同名 build 串行
+- [ ] approval 确认进程停止与资源清理、产物/报告封存后保存检查点并释放槽；已批准任务固定原节点，复核授权/容量/证据并保留自身 build 互斥
 - [ ] `approve` / `reject` API + CLI：角色、身份、时间、意见、重复决定与取消竞态检查
-- [ ] 启动时恢复排队与待审批任务；控制端恢复与节点核对；节点租约过期的普通执行任务标为 interrupted，不自动迁移重跑 shell
+- [ ] 启动时恢复排队与待审批任务并核对租约；过期记 interrupted，停止未确认则保留互斥/隔离原节点/禁止清理；停止证据与上传结果分别确认
 - [ ] 重试固定原 SHA / 配置 / 参数并分配新构建号，不受分支后续提交影响
 - [ ] 飞书使用 `oapi-sdk-go/v3`，先验证自定义机器人 Webhook 的消息、签名与错误处理；企微 / 钉钉 / generic 用 stdlib HTTP
 - [ ] 最终通知覆盖成功 / 失败 / 取消；审批挂起不执行终态通知或删除恢复所需文件
 - [ ] 项目直接配置 Webhook 与 defaults.notifications；按字段继承、列表替换、显式关闭；敏感值受限保存/脱敏、URL 校验、策略快照和失败不改投全局
-- [ ] 重启租约核对、节点断网、审批释放槽、原节点恢复、重复批准、工作区缺失、本地交互审批验证
+- [ ] 重启租约核对、停止未确认保护、审批释放槽、原节点恢复、重复批准、挂起取消/拒绝、工作区缺失、本地交互审批验证
 
 ### P4 自动触发：Webhook + 轮询
 
@@ -1049,15 +1104,15 @@ mybuilds group rm apps
 
 ### P5 商店分发（MVP）与后续产物运维
 
-- [ ] 发布前保存操作记录，核对应用、版本与唯一 AAB/IPA、摘要、节点/attempt/租约，管理员授权发布
+- [ ] 019 报告检查先完成再接入发布；核对应用唯一项目绑定、版本、AAB/IPA、封存产物/报告、节点/attempt/租约，事务取得应用锁并保存授权意图
 - [ ] Google Play 使用 fastlane supply，service account 认证，支持 internal 与显式 production
 - [ ] App Store 使用 fastlane deliver 与 API key，支持上传 IPA、显式提交审核及选择审核后自动发布；不把上传成功等同公开上架
 - [ ] custom 上传接用户命令/Fastfile，共用输入、结果文件、租约、取消、脱敏与未知结果确认
-- [ ] 上传结果未知时查询远端或由 admin 用 `resolve-upload` 确认并记录依据，阻止自动重发及未确认的发布重试
+- [ ] 授权后无可信回执默认 unknown 并保持应用锁；查询远端或由 admin 用 `resolve-upload` 确认依据，不自动重发，不能用停止确认代替
 - [ ] 配置快照与上传产物绑定，审批后发布原产物，不重新构建
-- [ ] retention 清理终态构建（保留 N 个 / N 天），保护待审批与未知结果任务
-- [ ] MVP 项目 retention 按字段继承全局，受保护/下载中的产物不误删，Agent 工作区与测试报告沿用同一策略
-- [ ] MVP JUnit 报告收集与 CLI/JSON 摘要、原始 XML 下载；失败测试阻止发布，缺失/非法/越界报告可诊断
+- [ ] retention 清理终态构建（保留 N 个 / N 天），保护活动、待审批、停止未确认与未知上传任务，保留项目计数器/必要审计
+- [ ] MVP 项目 retention 按字段继承全局；中央删除保护已有下载，Agent 独立管理指令校验工作区/进程并幂等确认，离线保留待清理
+- [ ] MVP JUnit 报告收集与 CLI/JSON 摘要、原始 XML 下载；本地旧报告不放行，发布前封存证据，post 不改证据，缺失/非法/越界报告可诊断
 - [ ] 两大商店真实上传与可查询回执，自定义命令结果校验，验证凭据错误、失败与回报丢失的 unknown 状态
 - [ ] 原型验证工具内置重试、非交互认证及版本兼容；Ruby/Bundler/fastlane 按节点锁定
 - [ ] fir.im / generic 内置分发不属于 MVP，后续有需求再接入
@@ -1103,13 +1158,13 @@ mybuilds logs "$build_exec_id" -f  # 看到流式日志
 mybuilds approvals                  # 卡在 approval 步骤
 mybuilds approve "$build_exec_id"
 mybuilds build show "$build_exec_id"  # 检查恢复后的状态
-# 构建失败 / 取消 → 收尾通知与 keychain 清理仍执行，进程无残留
+# 运行中构建失败 / 取消 → 有效执行权内运行 post、系统 keychain 清理，进程无残留；通知随 013 验证
 # 一个任务等审批 → 其他 build 仍可构建，同项目同名 build 保持串行
 # kill 控制端 → 重启 → 核对节点租约并恢复排队 / 待审批，不误判仍在续租的构建
-# 节点断网 / 崩溃 → 租约过期，本次进程停止；不把已开始构建自动迁移到另一节点
+# 节点断网 / 崩溃 → 租约过期，不迁移；无法确认停止则保留同名互斥、隔离原节点、禁止清理
 # 分支更新后 retry → 原 SHA / 配置 / 参数、新构建号；缺失工作区不能静默重跑
 # 模拟远端收到上传但本地未写成功 → 结果未知且不会自动重发
-# 数据保留清理 → 不删除待审批和未知结果任务
+# 数据保留清理 → 不删除待审批、停止未确认和未知上传任务；离线节点清理保持待确认
 # 独立 PostgreSQL 测试库运行同一套用例，不假设切配置会迁移 SQLite 数据
 ```
 
@@ -1122,10 +1177,13 @@ mybuilds build show "$build_exec_id"  # 检查恢复后的状态
 5. 飞书官方 SDK：真实 Webhook 发消息成功，错误凭据 / 签名能报告失败，日志不泄露密钥
 6. Android / iOS 取消与失败后无本次构建残留进程、临时 keychain；节点独立缓存且不共享构建工作区
 7. 两个真实节点执行不同项目，同项目同名 build 跨节点串行；iOS 不分配给 Linux，无合格节点明确排队
-8. 暂停原 Agent 后模拟过期回报，确认拒绝；审批后原节点离线不迁移，失联上传不自动重发
+8. 暂停原 Agent 后模拟过期回报，确认拒绝；审批后原节点离线不迁移，发布授权后失联不自动重发
 9. Flutter Android/iOS 真实构建，核对版本、flavor、签名与产物；自定义仓库脚本同路径执行
 10. Google Play internal 轨道可见真实 AAB；App Store Connect 可见真实 IPA，显式提交审核路径可验证
-11. custom 上传按结果文件确认；远端接收后失联时保持 unknown，不重发；上传/审核/公开状态分别记录
+11. custom 上传按结果文件确认；授权后无可信回执保持 unknown，不重发；上传/审核/公开状态分别记录
+12. 同一触发 key 网络重试只产生一批结果与构建号；不同内容复用 key 被拒；误启动第二控制端被拒
+13. 失联后同名 build 与原节点保持保护，停止确认和上传确认分别解除；审批挂起取消不启动用户脚本
+14. 旧本地 JUnit 文件不算本次通过；报告失败/缺失阻止审批与上传，审批后产物被改写不能发布
 
 ## 明确不做（一期）
 

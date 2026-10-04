@@ -33,14 +33,15 @@ mybuilds init --framework flutter --platform android,ios
 mybuilds init --template ./ci/mybuilds.template.yml
 ```
 
-项目维护四套模板和对应 doctor 检查。双平台选择组合现有两套模板，在一个 mybuilds.yml 中生成 android/ios 命名 build，不另建第五套执行器或模板。
-init 生成普通 mybuilds.yml，复用
-run、artifact、approval、upload 四种步骤，不添加 build/flutter 等新步骤类型。
+项目维护四套模板和对应 doctor 检查。单平台也生成对应 android/ios 命名 build，双平台组合现有两套模板，保持本地 init 与远程 project init 的名称一致。
+无参数 init 仅生成最小 default shell 配置；旧根级单流水线仍解析为 default，自定义模板保留原名称，不自动猜测映射。
+init 生成普通 mybuilds.yml，平台模板默认只用 run/artifact；发布需要显式添加 approval/upload，不添加 build/flutter 等新步骤类型。
 用户可编辑生成结果，增加仓库脚本、测试、flavor、签名配置与工具参数；已有文件仍拒绝覆盖。
 自定义模板仅加载明确指定的本地 YAML，严格校验字段；不下载或执行远端模板。
 内置模板增加需要的节点标签，Flutter iOS 同时要求 Flutter、Xcode 与签名能力。
 Flutter 模板声明 version、channel、flavor 字符串参数；flavor 默认空，非空时才向 Flutter 传 --flavor，具体 flavor 需由应用工程准备。
 本地 run 检查宿主工具，远程调度匹配节点，不在 Android 节点隐式执行 iOS 构建。
+本地只构建/收集产物/交互审批；生效的 upload 在运行任何命令前拒绝。实际发布经控制端与 Agent，包括同机部署；dry-run 可以预览发布配置。
 
 ## 可复用构建方案与无仓库配置的项目
 
@@ -128,13 +129,17 @@ MVP 不能只做 TestFlight 上传而将其称为 App Store 发布；TestFlight 
   Google 首次接入的前置上传要求见 supply 的 setup/quick start；doctor 将缺失前提明确报告。
   MVP 不自动注册账号、接受协议、生成商店截图、补全隐私声明或管理内购。
 - 构建号需与商店既有版本兼容；首次注册项目可设置起始构建号，校验冲突，不替换已存在版本。
+  已核验的 (store, app_identifier) 唯一绑定项目，防止不同项目独立计数；同项目各 build 共用上传锁，外部发布导致版本冲突时明确失败。
 - 上传只接受唯一已收集产物，核对 AAB/IPA、应用标识、版本和摘要，审批后不能重新构建替换。
-  发布意图在控制端持久化，绑定 node/build/attempt/lease、商店、应用与产物摘要。
+  发布意图在控制端持久化，绑定 node/build/attempt/lease、商店、应用、产物摘要及报告放行证据；授予执行权后才启动命令。
+  普通 run/artifact 必须先于 approval/upload 发布段，已配置 JUnit 必须在发布审批/上传前通过并封存，审批后改写或丢失证据不得发布；post 诊断不替代此前测试。
 - 发布结果分别记录 uploaded、processing、submitted、published、failed、unknown 与远端标识。
   节点进程退出 0 只证明相应动作完成，不能推断已经通过审核或公开上架。
   商店处理/审核状态在任务结束后通过显式查询更新，不长期占用构建槽等待审核。
   Apple 的提交、审核与发布状态依照 [官方状态说明](https://developer.apple.com/help/app-store-connect/reference/app-information/app-and-submission-statuses)。
-- 断网或取消时，已开始上传的结果可能未知。适配器先按应用/版本/构建号查询远端，再允许人工确认；
+- 控制端已授权执行但缺少可信终态回执时默认 unknown，包含节点启动前后失联；不能凭进程未报告启动认定未发送。
+  只有确证无发布副作用（未发出请求或远端明确拒绝）才记 failed 并解除应用锁；unknown 一直持锁，停止确认不能替代上传确认。
+  适配器先按应用/版本/构建号查询远端，再允许人工确认；
   本项目不得自动重跑整个发布命令。接入原型须核实 fastlane 的内部重试，限制不可确认的非幂等重发。
 
 ## 用户自定义与内置能力共用执行边界
@@ -151,8 +156,8 @@ run 支持 sh/bash、working_dir、步骤 env 与 timeout；params 由 --param k
 - 配置给出 argv 列表和工作目录，不把用户参数拼接进 shell；命令必须在可信仓库和授权节点执行。
 - 输入包含已校验的产物路径、摘要、应用/版本、发布参数与凭据引用；没有完整控制端环境或管理员 token。
 - 引擎负责租约、取消、脱敏、发布意图和结果记录；自定义命令输出一个结构化结果文件；限制路径、大小与字段，回传前脱敏。
-- 退出 0 且结果声明动作完成才确认成功；进程启动后失败或缺失有效回执则默认 unknown。
-  确认未发出外部请求才可记 failed；没有远端查询能力时由管理员确认，不自动重发。
+- 退出 0 且结果声明动作完成才确认成功；控制端授权后失败或缺失有效回执则默认 unknown。
+  确认无发布副作用（未发送或远端明确拒绝）才可记 failed；没有远端查询能力时由管理员确认，不自动重发。
 - 可选指定查询命令用于人工触发核对，沿用鉴权与输出校验；协议字段在发布 feature 的 contracts 中确定。
 
 约定所有发布动作放在 upload 中，run 用于构建与测试。
@@ -160,7 +165,7 @@ run 支持 sh/bash、working_dir、步骤 env 与 timeout；params 由 --param k
 
 ## MVP 交付路线与验收
 
-完成基础配置、引擎与产物 → 原生/Flutter 构建 → 控制端/多 Agent → 发布记录及原提交恢复 → 两大商店与 custom 上传。
+完成基础配置、引擎与产物 → 原生/Flutter 构建 → 控制端/多 Agent → 停止确认与原提交恢复 → JUnit 报告及发布检查 → 两大商店与 custom 上传。
 具体拆分见 [实施路线](SPECKIT_ROADMAP.md)；MVP 基础测试覆盖官方模板和自定义命令同一执行路径。
 when、参数约束、总超时、post、日志时间戳、变更路径筛选、Webhook/等待窗口、项目保留策略、JUnit 报告和发布审批均进入 MVP。
 飞书等机器人通知、轮询/cron、fir.im/generic 内置渠道与部署打磨继续后置；MVP 审批使用 CLI，不依赖通知模块。
