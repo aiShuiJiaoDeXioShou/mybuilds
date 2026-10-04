@@ -13,7 +13,7 @@ func newStatusCommand() *cobra.Command {
 		if err := remoteRequest(cmd, http.MethodGet, "/api/status", nil, &result, ""); err != nil {
 			return err
 		}
-		return remoteOutput(cmd, result, []string{"VERSION", "PROJECTS", "QUEUED", "SKIPPED", "RUNNING", "NODES"}, [][]string{{result.Version, strconv.FormatInt(result.Projects, 10), strconv.FormatInt(result.Queued, 10), strconv.FormatInt(result.Skipped, 10), strconv.FormatInt(result.Running, 10), strconv.FormatInt(result.Nodes, 10)}})
+		return remoteOutput(cmd, result, []string{"VERSION", "PROJECTS", "QUEUED", "SKIPPED", "RUNNING", "INTERRUPTED", "NODES", "HEALTHY_NODES"}, [][]string{{result.Version, strconv.FormatInt(result.Projects, 10), strconv.FormatInt(result.Queued, 10), strconv.FormatInt(result.Skipped, 10), strconv.FormatInt(result.Running, 10), strconv.FormatInt(result.Interrupted, 10), strconv.FormatInt(result.Nodes, 10), strconv.FormatInt(result.HealthyNodes, 10)}})
 	}}
 	cmd.Flags().Bool("json", false, "输出JSON")
 	return cmd

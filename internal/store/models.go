@@ -67,14 +67,20 @@ type PreparedBuild struct {
 	Steps                []StepProgress
 }
 type StepProgress struct {
-	Phase     string   `json:"phase"`
-	Index     int      `json:"index"`
-	Name      string   `json:"name"`
-	Kind      string   `json:"kind"`
-	Condition string   `json:"condition"`
-	Status    string   `json:"status"`
-	Reasons   []string `json:"reasons"`
-	ElapsedNS int64    `json:"elapsed_ns"`
+	Phase         string   `json:"phase"`
+	Index         int      `json:"index"`
+	Name          string   `json:"name"`
+	Kind          string   `json:"kind"`
+	Condition     string   `json:"condition"`
+	Status        string   `json:"status"`
+	Reasons       []string `json:"reasons"`
+	ElapsedNS     int64    `json:"elapsed_ns"`
+	Intent        bool     `json:"intent"`
+	Started       bool     `json:"started"`
+	StopConfirmed bool     `json:"stop_confirmed"`
+	CleanupFailed bool     `json:"cleanup_failed"`
+	Reason        string   `json:"reason,omitempty"`
+	ExitCode      int      `json:"exit_code"`
 }
 type BatchResult struct {
 	Replayed bool        `json:"-"`
@@ -87,30 +93,40 @@ type BuildFilter struct {
 	Page                                       Page
 }
 type BuildView struct {
-	ID                string         `json:"id"`
-	Project           string         `json:"project"`
-	Group             string         `json:"group"`
-	BatchID           string         `json:"batch_id"`
-	Name              string         `json:"build_name"`
-	Number            *int64         `json:"number"`
-	Status            string         `json:"status"`
-	Reason            string         `json:"reason,omitempty"`
-	SHA               string         `json:"sha"`
-	Branch            string         `json:"branch"`
-	Source            string         `json:"source"`
-	File              string         `json:"file"`
-	SourceDigest      string         `json:"source_digest"`
-	ParameterKeys     []string       `json:"parameter_keys"`
-	Condition         string         `json:"condition"`
-	Reasons           []string       `json:"reasons"`
-	InitialBudgetNS   *int64         `json:"initial_budget_ns"`
-	RemainingBudgetNS *int64         `json:"remaining_budget_ns"`
-	PostBudgetNS      int64          `json:"post_budget_ns"`
-	Steps             []StepProgress `json:"steps"`
-	Post              []StepProgress `json:"post"`
-	CreatedAt         time.Time      `json:"created_at"`
+	ID                    string         `json:"id"`
+	Project               string         `json:"project"`
+	Group                 string         `json:"group"`
+	BatchID               string         `json:"batch_id"`
+	Name                  string         `json:"build_name"`
+	Number                *int64         `json:"number"`
+	Status                string         `json:"status"`
+	Reason                string         `json:"reason,omitempty"`
+	SHA                   string         `json:"sha"`
+	Branch                string         `json:"branch"`
+	Source                string         `json:"source"`
+	File                  string         `json:"file"`
+	SourceDigest          string         `json:"source_digest"`
+	ParameterKeys         []string       `json:"parameter_keys"`
+	Condition             string         `json:"condition"`
+	Reasons               []string       `json:"reasons"`
+	InitialBudgetNS       *int64         `json:"initial_budget_ns"`
+	RemainingBudgetNS     *int64         `json:"remaining_budget_ns"`
+	PostBudgetNS          int64          `json:"post_budget_ns"`
+	Steps                 []StepProgress `json:"steps"`
+	Post                  []StepProgress `json:"post"`
+	NodeID                string         `json:"node_id,omitempty"`
+	NodeName              string         `json:"node_name,omitempty"`
+	SessionID             string         `json:"session_id,omitempty"`
+	AttemptID             string         `json:"attempt_id,omitempty"`
+	LeaseID               string         `json:"lease_id,omitempty"`
+	LeaseEpoch            int64          `json:"lease_epoch"`
+	CancelRequested       bool           `json:"cancel_requested"`
+	StopUnconfirmed       bool           `json:"stop_unconfirmed"`
+	RemainingPostBudgetNS int64          `json:"remaining_post_budget_ns"`
+	PostPhase             string         `json:"post_phase,omitempty"`
+	CreatedAt             time.Time      `json:"created_at"`
 }
-type QueueStatus struct{ Projects, Queued, Skipped int64 }
+type QueueStatus struct{ Projects, Queued, Skipped, Running, Interrupted, Nodes, HealthyNodes int64 }
 
 // 数据库记录私有，公开响应只编码上面的安全视图。
 type groupRecord struct {
@@ -171,30 +187,46 @@ type batchRecord struct {
 func (batchRecord) TableName() string { return "batches" }
 
 type buildRecord struct {
-	ID                                        string        `gorm:"primaryKey;size:36"`
-	BatchID                                   string        `gorm:"not null;size:36"`
-	Batch                                     batchRecord   `gorm:"foreignKey:BatchID;constraint:OnDelete:RESTRICT"`
-	ProjectID                                 string        `gorm:"not null;size:36;uniqueIndex:project_number"`
-	Project                                   projectRecord `gorm:"foreignKey:ProjectID;constraint:OnDelete:RESTRICT"`
-	Number                                    *int64        `gorm:"uniqueIndex:project_number"`
-	Position                                  int
-	Name, Status, Reason, SnapshotJSON        string
-	ParameterKeysJSON, Condition, ReasonsJSON string
-	InitialBudgetNS, RemainingBudgetNS        *int64
-	PostBudgetNS                              int64
-	CreatedAt                                 time.Time
+	ID                                                       string        `gorm:"primaryKey;size:36;index:build_status_created,priority:3"`
+	BatchID                                                  string        `gorm:"not null;size:36"`
+	Batch                                                    batchRecord   `gorm:"foreignKey:BatchID;constraint:OnDelete:RESTRICT"`
+	ProjectID                                                string        `gorm:"not null;size:36;uniqueIndex:project_number"`
+	Project                                                  projectRecord `gorm:"foreignKey:ProjectID;constraint:OnDelete:RESTRICT"`
+	Number                                                   *int64        `gorm:"uniqueIndex:project_number"`
+	Position                                                 int
+	Name                                                     string `gorm:"not null"`
+	Status                                                   string `gorm:"index:build_status_created,priority:1;index:build_node_status,priority:2;index:build_status_expiry,priority:1"`
+	Reason, SnapshotJSON                                     string
+	NodeID                                                   *string    `gorm:"index:build_node_status,priority:1;size:36"`
+	Node                                                     nodeRecord `gorm:"foreignKey:NodeID;constraint:OnDelete:RESTRICT"`
+	SessionID, AttemptID, LeaseID                            *string
+	LeaseEpoch                                               int64      `gorm:"not null;default:0;check:lease_epoch >= 0"`
+	LeaseExpiresAt                                           *time.Time `gorm:"index:build_status_expiry,priority:2"`
+	CancelRequested                                          bool       `gorm:"not null;default:false"`
+	StopUnconfirmed                                          bool       `gorm:"not null;default:false"`
+	RemainingPostBudgetNS                                    int64
+	PostPhase                                                string
+	LastEventSeq, LastLogSeq, LastLogOffset, LastArtifactSeq int64
+	ParameterKeysJSON, Condition, ReasonsJSON                string
+	InitialBudgetNS, RemainingBudgetNS                       *int64
+	PostBudgetNS                                             int64
+	CreatedAt                                                time.Time `gorm:"index:build_status_created,priority:2"`
 }
 
 func (buildRecord) TableName() string { return "builds" }
 
 type stepRecord struct {
-	ID                                         string      `gorm:"primaryKey;size:36"`
-	BuildID                                    string      `gorm:"not null;size:36;uniqueIndex:build_phase_index"`
-	Build                                      buildRecord `gorm:"foreignKey:BuildID;constraint:OnDelete:RESTRICT"`
-	Phase                                      string      `gorm:"not null;uniqueIndex:build_phase_index"`
-	Index                                      int         `gorm:"not null;uniqueIndex:build_phase_index"`
-	Name, Kind, Condition, Status, ReasonsJSON string
-	ElapsedNS                                  int64
+	ID                                            string      `gorm:"primaryKey;size:36"`
+	BuildID                                       string      `gorm:"not null;size:36;uniqueIndex:build_phase_index"`
+	Build                                         buildRecord `gorm:"foreignKey:BuildID;constraint:OnDelete:RESTRICT"`
+	Phase                                         string      `gorm:"not null;uniqueIndex:build_phase_index"`
+	Index                                         int         `gorm:"not null;uniqueIndex:build_phase_index"`
+	Name, Kind, Condition, Status, ReasonsJSON    string
+	ElapsedNS                                     int64
+	Intent, Started, StopConfirmed, CleanupFailed bool
+	Reason                                        string
+	ExitCode                                      int
+	ArtifactIDsJSON                               string
 }
 
 func (stepRecord) TableName() string { return "step_progress" }

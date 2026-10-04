@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"mybuilds/internal/config"
 	"mybuilds/internal/store"
@@ -36,7 +37,7 @@ func serverFixture(t *testing.T) (*Server, *store.Store, *httptest.Server) {
 	if err = st.Bootstrap(context.Background(), adminToken); err != nil {
 		t.Fatal(err)
 	}
-	s := New(st, config.ServerConfig{DataDir: dir, Concurrency: 3, Listen: "127.0.0.1:8787"})
+	s := New(st, config.ServerConfig{DataDir: dir, Concurrency: 3, HeartbeatInterval: 5 * time.Second, LeaseDuration: 30 * time.Second, Listen: "127.0.0.1:8787"})
 	h := httptest.NewServer(s.Handler())
 	t.Cleanup(h.Close)
 	return s, st, h

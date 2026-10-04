@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"mybuilds/internal/scm"
 	"mybuilds/internal/store"
@@ -35,6 +36,18 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code, message = 400, "invalid_pipeline", "流水线无效"
 	case errors.Is(err, errUnsupported):
 		status, code, message = 400, "unsupported_setting", "当前设置尚未支持"
+	case errors.Is(err, store.ErrNodeUnauthorized):
+		status, code, message = 401, "node_unauthorized", "节点身份无效"
+	case errors.Is(err, store.ErrSessionConflict), errors.Is(err, store.ErrSessionExpired), errors.Is(err, store.ErrLeaseInvalid), errors.Is(err, store.ErrLeaseExpired), errors.Is(err, store.ErrEventConflict), errors.Is(err, store.ErrSequenceInvalid), errors.Is(err, store.ErrStopUnconfirmed), errors.Is(err, store.ErrArtifactConflict), errors.Is(err, store.ErrLogConflict):
+		status, code, message = 409, "conflict", "请求与执行权或证据冲突"
+		for _, known := range []error{store.ErrSessionConflict, store.ErrSessionExpired, store.ErrLeaseInvalid, store.ErrLeaseExpired, store.ErrEventConflict, store.ErrSequenceInvalid, store.ErrStopUnconfirmed, store.ErrArtifactConflict, store.ErrLogConflict} {
+			if errors.Is(err, known) {
+				code = known.Error()
+				break
+			}
+		}
+	case errors.Is(err, store.ErrBudgetInvalid):
+		status, code, message = 400, "budget_invalid", "预算不合法"
 	case errors.Is(err, store.ErrUnauthorized):
 		status, code, message = 401, "unauthorized", "身份无效"
 	case errors.Is(err, store.ErrForbidden):
@@ -58,15 +71,18 @@ func writeError(w http.ResponseWriter, err error) {
 
 // 先遍历原始Token查重复与null，再按声明的精确JSON字段检查；Decoder不承担弱结构校验。
 func readJSON(r *http.Request, target any) error {
+	return readJSONLimit(r, target, 1<<20)
+}
+func readJSONLimit(r *http.Request, target any, limit int64) error {
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || media != "application/json" {
 		return store.ErrInvalid
 	}
-	data, err := io.ReadAll(io.LimitReader(r.Body, (1<<20)+1))
+	data, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	if err != nil {
 		return store.ErrInvalid
 	}
-	if len(data) > 1<<20 {
+	if int64(len(data)) > limit {
 		return errTooLarge
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -147,6 +163,21 @@ func jsonValue(dec *json.Decoder, depth int, nodes *int) (any, error) {
 func checkJSONFields(value any, typ reflect.Type) error {
 	for typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
+	}
+	if typ == reflect.TypeOf(time.Time{}) {
+		value, ok := value.(string)
+		if !ok {
+			return store.ErrInvalid
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, value)
+		if err != nil {
+			return store.ErrInvalid
+		}
+		_, offset := parsed.Zone()
+		if offset != 0 {
+			return store.ErrInvalid
+		}
+		return nil
 	}
 	switch typ.Kind() {
 	case reflect.Struct:

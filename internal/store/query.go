@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"gorm.io/gorm"
+	"slices"
 )
 
 func (s *Store) Status(ctx context.Context) (QueueStatus, error) {
@@ -20,6 +21,28 @@ func (s *Store) Status(ctx context.Context) (QueueStatus, error) {
 	}
 	if err := db.Model(&buildRecord{}).Where("status = ?", "skipped").Count(&result.Skipped).Error; err != nil {
 		return QueueStatus{}, safeError(err)
+	}
+	for _, pair := range []struct {
+		status string
+		dest   *int64
+	}{{"running", &result.Running}, {"interrupted", &result.Interrupted}} {
+		if err := db.Model(&buildRecord{}).Where("status = ?", pair.status).Count(pair.dest).Error; err != nil {
+			return QueueStatus{}, safeError(err)
+		}
+	}
+	var nodes []nodeRecord
+	if err := db.Where("state <> ?", "deleted").Find(&nodes).Error; err != nil {
+		return QueueStatus{}, safeError(err)
+	}
+	result.Nodes = int64(len(nodes))
+	for _, node := range nodes {
+		view, err := nodeView(db, node)
+		if err != nil {
+			return QueueStatus{}, safeError(err)
+		}
+		if view.State == "enabled" && view.Healthy && !view.Quarantined {
+			result.HealthyNodes++
+		}
 	}
 	return result, nil
 }
@@ -53,6 +76,25 @@ func buildView(db *gorm.DB, row buildRecord) (BuildView, error) {
 		return BuildView{}, err
 	}
 	result := BuildView{ID: row.ID, Project: project.Name, Group: project.Group.Name, BatchID: row.BatchID, Name: row.Name, Number: row.Number, Status: row.Status, Reason: row.Reason, SHA: batch.SHA, Branch: batch.Branch, Source: batch.Source, File: batch.File, SourceDigest: batch.SourceDigest, Condition: row.Condition, InitialBudgetNS: row.InitialBudgetNS, RemainingBudgetNS: row.RemainingBudgetNS, PostBudgetNS: row.PostBudgetNS, CreatedAt: row.CreatedAt.UTC(), Steps: []StepProgress{}, Post: []StepProgress{}}
+	result.NodeID = buildRef(row).NodeID
+	result.SessionID = buildRef(row).SessionID
+	result.AttemptID = buildRef(row).AttemptID
+	result.LeaseID = buildRef(row).LeaseID
+	result.LeaseEpoch = row.LeaseEpoch
+	result.CancelRequested = row.CancelRequested
+	result.StopUnconfirmed = row.StopUnconfirmed
+	result.RemainingPostBudgetNS = row.RemainingPostBudgetNS
+	result.PostPhase = row.PostPhase
+	if row.Status == "running" && row.CancelRequested {
+		result.Status = "cancel_requested"
+	}
+	if row.NodeID != nil {
+		var node nodeRecord
+		if err := db.First(&node, "id = ?", *row.NodeID).Error; err != nil {
+			return BuildView{}, err
+		}
+		result.NodeName = node.Name
+	}
 	if err := json.Unmarshal([]byte(row.ParameterKeysJSON), &result.ParameterKeys); err != nil {
 		return BuildView{}, errDatabase
 	}
@@ -67,7 +109,7 @@ func buildView(db *gorm.DB, row buildRecord) (BuildView, error) {
 		return BuildView{}, err
 	}
 	for _, step := range steps {
-		progress := StepProgress{Phase: step.Phase, Index: step.Index, Name: step.Name, Kind: step.Kind, Condition: step.Condition, Status: step.Status, ElapsedNS: step.ElapsedNS, Reasons: []string{}}
+		progress := StepProgress{Phase: step.Phase, Index: step.Index, Name: step.Name, Kind: step.Kind, Condition: step.Condition, Status: step.Status, ElapsedNS: step.ElapsedNS, Reasons: []string{}, Intent: step.Intent, Started: step.Started, StopConfirmed: step.StopConfirmed, CleanupFailed: step.CleanupFailed, Reason: step.Reason, ExitCode: step.ExitCode}
 		if err := json.Unmarshal([]byte(step.ReasonsJSON), &progress.Reasons); err != nil {
 			return BuildView{}, errDatabase
 		}
@@ -110,17 +152,22 @@ func (s *Store) ListBuilds(ctx context.Context, filter BuildFilter) ([]BuildView
 	if filter.BatchID != "" && !validID(filter.BatchID) {
 		return nil, ErrInvalid
 	}
-	if filter.Status != "" && filter.Status != "queued" && filter.Status != "skipped" {
+	if filter.Status != "" && !slices.Contains([]string{"queued", "skipped", "running", "cancel_requested", "succeeded", "failed", "cancelled", "interrupted"}, filter.Status) {
 		return nil, ErrInvalid
 	}
 	if err = s.CheckLock(ctx); err != nil {
 		return nil, err
 	}
 	db := s.db.WithContext(ctx).Model(&buildRecord{}).Select("builds.*").Joins("JOIN projects ON projects.id = builds.project_id").Joins("JOIN project_groups ON project_groups.id = projects.group_id")
-	for _, item := range []struct{ column, value string }{{"projects.name", filter.Project}, {"project_groups.name", filter.Group}, {"builds.name", filter.BuildName}, {"builds.batch_id", filter.BatchID}, {"builds.status", filter.Status}} {
+	for _, item := range []struct{ column, value string }{{"projects.name", filter.Project}, {"project_groups.name", filter.Group}, {"builds.name", filter.BuildName}, {"builds.batch_id", filter.BatchID}} {
 		if item.value != "" {
 			db = db.Where(item.column+" = ?", item.value)
 		}
+	}
+	if filter.Status == "cancel_requested" {
+		db = db.Where("builds.status = ? AND builds.cancel_requested = ?", "running", true)
+	} else if filter.Status != "" {
+		db = db.Where("builds.status = ?", filter.Status)
 	}
 	var rows []buildRecord
 	if err = db.Order("builds.created_at DESC, builds.id DESC").Limit(page.Limit).Offset(page.Offset).Find(&rows).Error; err != nil {

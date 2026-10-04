@@ -65,7 +65,7 @@ func TestBuildQueriesSafetyAndRestart(t *testing.T) {
 		if len(detail.ParameterKeys) != 1 || detail.ParameterKeys[0] != "version" {
 			t.Fatal("parameter keys lost")
 		}
-		for _, filter := range []BuildFilter{{Page: Page{Limit: 201}}, {Page: Page{Offset: -1}}, {Status: "succeeded"}} {
+		for _, filter := range []BuildFilter{{Page: Page{Limit: 201}}, {Page: Page{Offset: -1}}, {Status: "waiting_approval"}} {
 			if _, err = s.ListBuilds(testContext, filter); !errors.Is(err, ErrInvalid) {
 				t.Fatal("invalid filter")
 			}

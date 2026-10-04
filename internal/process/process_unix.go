@@ -77,6 +77,14 @@ func Run(ctx context.Context, command Command, stdout, stderr io.Writer) (result
 		return result
 	}
 	result.Started = true
+	progressFailed := false
+	if command.OnStart != nil {
+		progressFailed = command.OnStart(StartInfo{PID: cmd.Process.Pid, PGID: cmd.Process.Pid, At: time.Now().UTC()}) != nil
+		if progressFailed {
+			// 回执失败仍回收本组，并由下面唯一的 Wait 消费直接子进程。
+			cancel()
+		}
+	}
 	// 父进程不得保留写端，否则真实 EOF 永远无法出现。
 	stdoutWrite.Close()
 	stderrWrite.Close()
@@ -108,6 +116,8 @@ func Run(ctx context.Context, command Command, stdout, stderr io.Writer) (result
 	switch {
 	case ctx.Err() != nil:
 		result.Reason = contextReason(ctx)
+	case progressFailed:
+		result.Reason = "progress_error"
 	case logFailed.Load():
 		result.Reason = "log_error"
 	case waitError != nil:

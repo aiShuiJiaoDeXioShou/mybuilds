@@ -107,6 +107,7 @@ func TestGitRunnerActualDeadlineCancellationAndOutputLimit(t *testing.T) {
 	}
 	git, _ := exec.LookPath("git")
 	runner := gitRunner{path: git, dir: options.Repository, env: []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null"}, prefix: []string{"-c", "core.hooksPath=/dev/null"}}
+	runner.combinedLimit = true
 	_, _, err := runner.run(context.Background(), 4096, "for-each-ref", "--format="+strings.Repeat("x", 10000))
 	requireCode(t, err, "scm_output_limit")
 	if runner.cleanupFailed {
@@ -203,7 +204,20 @@ func TestReadPipelineActualSSHAuthentication(t *testing.T) {
 		t.Fatalf("真实显式SSH认证失败: %v", err)
 	}
 	requireClean(t, options.DataDir)
+	nodeDir := t.TempDir()
+	if err := os.Chmod(nodeDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	checkoutOptions := CheckoutOptions{DataDir: nodeDir, Repository: options.Repository, Branch: options.Branch, SHA: sha, SSHKey: filepath.Join(directory, "client"), KnownHosts: filepath.Join(directory, "known_hosts")}
+	checked, err := Checkout(context.Background(), checkoutOptions)
+	if err != nil || !checked.StopConfirmed || checked.Workspace == "" || fixtureGit(t, checked.Workspace, "rev-parse", "HEAD") != sha {
+		t.Fatalf("真实显式SSH检出失败: %v", err)
+	}
 	writeFixture(t, directory, "known_hosts", known("wrong"))
+	rejected, checkoutErr := Checkout(context.Background(), checkoutOptions)
+	if checkoutErr == nil || rejected.Workspace != "" || !rejected.StopConfirmed {
+		t.Fatal("检出接受错误hostkey", checkoutErr)
+	}
 	_, err = ReadPipeline(context.Background(), options)
 	if err == nil {
 		t.Fatal("错误known_hosts通过")
@@ -211,6 +225,11 @@ func TestReadPipelineActualSSHAuthentication(t *testing.T) {
 	requireClean(t, options.DataDir)
 	writeFixture(t, directory, "known_hosts", known("host"))
 	writeFixture(t, directory, "secrets.env", "GIT_SSH_KEY_FILE=wrong\nGIT_SSH_KNOWN_HOSTS_FILE=known_hosts\n")
+	checkoutOptions.SSHKey = filepath.Join(directory, "wrong")
+	rejected, checkoutErr = Checkout(context.Background(), checkoutOptions)
+	if checkoutErr == nil || rejected.Workspace != "" || !rejected.StopConfirmed {
+		t.Fatal("检出接受错误SSH key", checkoutErr)
+	}
 	_, err = ReadPipeline(context.Background(), options)
 	if err == nil {
 		t.Fatal("错误key通过")

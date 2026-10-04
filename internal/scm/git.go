@@ -155,45 +155,17 @@ func ReadPipeline(parent context.Context, options Options) (snapshot Snapshot, e
 			err = failure("cleanup_failed")
 		}
 	}()
-	for _, name := range []string{"empty", "home"} {
-		if os.Mkdir(filepath.Join(workspace, name), 0700) != nil {
-			return Snapshot{}, failure("cache_failed")
-		}
-	}
-	executable, e := exec.LookPath("git")
-	if e != nil {
-		return Snapshot{}, failure("git_unavailable")
-	}
-	runner.path, e = filepath.Abs(executable)
-	if e != nil {
-		return Snapshot{}, failure("git_unavailable")
-	}
-	env := process.HostEnvironment()
-	env["HOME"] = filepath.Join(workspace, "home")
-	env["LANG"] = "C"
-	env["LC_ALL"] = "C"
-	env["GIT_CONFIG_GLOBAL"] = "/dev/null"
-	env["GIT_CONFIG_SYSTEM"] = "/dev/null"
-	env["GIT_CONFIG_NOSYSTEM"] = "1"
-	env["GIT_TERMINAL_PROMPT"] = "0"
-	env["GIT_NO_REPLACE_OBJECTS"] = "1"
-	env["GIT_NO_LAZY_FETCH"] = "1"
+	var sshEnv map[string]string
 	if protocol == "ssh" {
-		sshEnv, e := sshEnvironment(workspace, options.SecretsFile)
+		sshEnv, e = sshEnvironment(workspace, options.SecretsFile)
 		if e != nil {
 			return Snapshot{}, e
 		}
-		for key, value := range sshEnv {
-			env[key] = value
-		}
 	}
-	for key, value := range env {
-		if strings.ContainsRune(value, 0) {
-			return Snapshot{}, failure("input_invalid")
-		}
-		runner.env = append(runner.env, key+"="+value)
+	runner, e = prepareGitRunner(workspace, protocol, sshEnv)
+	if e != nil {
+		return Snapshot{}, e
 	}
-	runner.prefix = []string{"--no-replace-objects", "--literal-pathspecs", "-c", "core.hooksPath=" + filepath.Join(workspace, "empty"), "-c", "credential.helper=", "-c", "core.askPass=/usr/bin/false", "-c", "protocol.allow=never", "-c", "protocol." + protocol + ".allow=always", "-c", "fetch.recurseSubmodules=false", "-c", "fetch.fsckObjects=true", "-c", "gc.auto=0", "-c", "http.sslVerify=true", "-c", "http.followRedirects=false"}
 	refName := "refs/heads/" + options.Branch
 	if _, _, e = runner.run(ctx, 32<<10, "check-ref-format", refName); e != nil {
 		return Snapshot{}, e
@@ -309,11 +281,15 @@ type gitRunner struct {
 	dir, path     string
 	env, prefix   []string
 	cleanupFailed bool
+	combinedLimit bool
 }
 
 func (runner *gitRunner) run(ctx context.Context, limit int, args ...string) ([]byte, int, error) {
 	stdout := &boundedBuffer{limit: limit}
 	stderr := &boundedBuffer{limit: 32 << 10}
+	if runner.combinedLimit {
+		stderr = stdout
+	}
 	result := process.Run(ctx, process.Command{Path: runner.path, Args: append(append([]string{}, runner.prefix...), args...), Dir: runner.dir, Env: runner.env}, stdout, stderr)
 	if result.CleanupFailed {
 		runner.cleanupFailed = true
@@ -348,4 +324,44 @@ func (buffer *boundedBuffer) Write(data []byte) (int, error) {
 		return n, failure("output_limit")
 	}
 	return n, nil
+}
+
+func prepareGitRunner(workspace, protocol string, sshEnv map[string]string) (gitRunner, error) {
+	runner := gitRunner{dir: workspace}
+	for _, name := range []string{"empty", "home"} {
+		if err := os.Mkdir(filepath.Join(workspace, name), 0700); err != nil {
+			return runner, failure("cache_failed")
+		}
+	}
+	var e error
+	executable, e := exec.LookPath("git")
+	if e != nil {
+		return gitRunner{}, failure("git_unavailable")
+	}
+	runner.path, e = filepath.Abs(executable)
+	if e != nil {
+		return gitRunner{}, failure("git_unavailable")
+	}
+	env := process.HostEnvironment()
+	env["HOME"] = filepath.Join(workspace, "home")
+	env["LANG"] = "C"
+	env["LC_ALL"] = "C"
+	env["GIT_CONFIG_GLOBAL"] = "/dev/null"
+	env["GIT_CONFIG_SYSTEM"] = "/dev/null"
+	env["GIT_CONFIG_NOSYSTEM"] = "1"
+	env["GIT_TERMINAL_PROMPT"] = "0"
+	env["GIT_NO_REPLACE_OBJECTS"] = "1"
+	env["GIT_NO_LAZY_FETCH"] = "1"
+	for key, value := range sshEnv {
+		env[key] = value
+	}
+	for key, value := range env {
+		if strings.ContainsRune(value, 0) {
+			return gitRunner{}, failure("input_invalid")
+		}
+		runner.env = append(runner.env, key+"="+value)
+	}
+	runner.prefix = []string{"--no-replace-objects", "--literal-pathspecs", "-c", "core.hooksPath=" + filepath.Join(workspace, "empty"), "-c", "credential.helper=", "-c", "core.askPass=/usr/bin/false", "-c", "protocol.allow=never", "-c", "protocol." + protocol + ".allow=always", "-c", "fetch.recurseSubmodules=false", "-c", "fetch.fsckObjects=true", "-c", "gc.auto=0", "-c", "http.sslVerify=true", "-c", "http.followRedirects=false"}
+
+	return runner, nil
 }

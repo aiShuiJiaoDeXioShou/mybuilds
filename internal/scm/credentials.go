@@ -46,11 +46,22 @@ func sshEnvironment(workspace, secretsFile string) (map[string]string, error) {
 	if len(values) != 2 {
 		return nil, failure("credentials_invalid")
 	}
-	copies := map[string]string{}
 	for key, value := range values {
 		if !filepath.IsAbs(value) {
-			value = filepath.Join(filepath.Dir(filename), value)
+			values[key] = filepath.Join(filepath.Dir(filename), value)
 		}
+	}
+	return sshPairEnvironment(workspace, values["GIT_SSH_KEY_FILE"], values["GIT_SSH_KNOWN_HOSTS_FILE"])
+}
+
+// 两个真实消费者只交明确SSH材料，不扫描或接收整个节点秘密文件。
+func sshPairEnvironment(workspace, keyFile, knownHosts string) (map[string]string, error) {
+	if !filepath.IsAbs(keyFile) || !filepath.IsAbs(knownHosts) || controls(keyFile) || controls(knownHosts) {
+		return nil, failure("credentials_invalid")
+	}
+	values := map[string]string{"GIT_SSH_KEY_FILE": keyFile, "GIT_SSH_KNOWN_HOSTS_FILE": knownHosts}
+	copies := map[string]string{}
+	for key, value := range values {
 		content, err := readPrivate(value, 1<<20)
 		if err != nil {
 			return nil, err

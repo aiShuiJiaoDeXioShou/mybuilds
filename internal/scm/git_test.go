@@ -213,6 +213,18 @@ func TestReadPipelineRejectParentSymlinkAndAmbientExecution(t *testing.T) {
 	if !strings.Contains(string(snapshot.Content), "MUST_NOT_EXECUTE") {
 		t.Fatal("原始blob被转换")
 	}
+	nodeDir := t.TempDir()
+	if err := os.Chmod(nodeDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	checkout, err := Checkout(context.Background(), CheckoutOptions{DataDir: nodeDir, Repository: options.Repository, Branch: options.Branch, SHA: snapshot.SHA})
+	if err != nil || !checkout.StopConfirmed {
+		t.Fatal("实际检出失败", err)
+	}
+	data, err := os.ReadFile(filepath.Join(checkout.Workspace, "mybuilds.yml"))
+	if err != nil || string(data) != string(snapshot.Content) {
+		t.Fatal("检出运行filter或改变blob", err)
+	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatal("执行了hook/filter/helper/template")
 	}

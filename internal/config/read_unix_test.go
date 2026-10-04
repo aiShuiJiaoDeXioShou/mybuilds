@@ -11,6 +11,9 @@ import (
 
 func TestManagementReadersRejectFIFO(t *testing.T) {
 	clearClientEnvironment(t)
+	clearAgentEnvironment(t)
+	t.Setenv("SSL_CERT_FILE", "")
+	t.Setenv("SSL_CERT_DIR", "")
 	clearServerEnvironment(t)
 	p := filepath.Join(t.TempDir(), "config.fifo")
 	if err := unix.Mkfifo(p, 0600); err != nil {
@@ -22,6 +25,12 @@ func TestManagementReadersRejectFIFO(t *testing.T) {
 	}
 	if _, err := LoadClient(ClientLoadOptions{Filename: p, Explicit: true}); err == nil {
 		t.Fatal("客户端FIFO被接受")
+	}
+	if _, err := LoadAgent(AgentLoadOptions{Filename: p, Explicit: true}); err == nil {
+		t.Fatal("Agent FIFO被接受")
+	}
+	if _, err := TLSRoots(p); err == nil {
+		t.Fatal("CA FIFO被接受")
 	}
 	if _, err := LoadProjectSettings(p); err == nil {
 		t.Fatal("settings FIFO被接受")

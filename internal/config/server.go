@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/spf13/viper"
@@ -21,11 +22,24 @@ type DatabaseConfig struct {
 	DSN    string `yaml:"dsn" mapstructure:"dsn" json:"-"`
 }
 type ServerConfig struct {
-	Listen      string         `yaml:"listen" mapstructure:"listen"`
-	DataDir     string         `yaml:"data_dir" mapstructure:"data_dir"`
-	SecretsFile string         `yaml:"secrets_file" mapstructure:"secrets_file" json:"-"`
-	Concurrency int            `yaml:"concurrency" mapstructure:"concurrency"`
-	Database    DatabaseConfig `yaml:"database" mapstructure:"database"`
+	Listen            string         `yaml:"listen" mapstructure:"listen"`
+	DataDir           string         `yaml:"data_dir" mapstructure:"data_dir"`
+	SecretsFile       string         `yaml:"secrets_file" mapstructure:"secrets_file" json:"-"`
+	Concurrency       int            `yaml:"concurrency" mapstructure:"concurrency"`
+	Database          DatabaseConfig `yaml:"database" mapstructure:"database"`
+	HeartbeatInterval time.Duration  `yaml:"heartbeat_interval" mapstructure:"heartbeat_interval"`
+	LeaseDuration     time.Duration  `yaml:"lease_duration" mapstructure:"lease_duration"`
+}
+
+// serverFile保留duration的严格YAML字符串类型，合并后再转换为time.Duration。
+type serverFile struct {
+	Listen            string         `yaml:"listen"`
+	DataDir           string         `yaml:"data_dir"`
+	SecretsFile       string         `yaml:"secrets_file"`
+	Concurrency       int            `yaml:"concurrency"`
+	Database          DatabaseConfig `yaml:"database"`
+	HeartbeatInterval string         `yaml:"heartbeat_interval"`
+	LeaseDuration     string         `yaml:"lease_duration"`
 }
 type ServerOverrides struct {
 	Listen, DataDir, SecretsFile, DatabaseDriver, DatabaseDSN *string
@@ -51,11 +65,13 @@ func LoadServer(options ServerLoadOptions) (ServerConfig, error) {
 	values.SetConfigType("yaml")
 	values.SetDefault("listen", "127.0.0.1:8787")
 	values.SetDefault("concurrency", 1)
+	values.SetDefault("heartbeat_interval", "5s")
+	values.SetDefault("lease_duration", "30s")
 	values.SetDefault("data_dir", "~/.mybuilds")
 	values.SetDefault("database.driver", "sqlite")
 	values.SetDefault("secrets_file", "~/.mybuilds/secrets.env")
 	if data != nil {
-		var fileConfig ServerConfig
+		var fileConfig serverFile
 		if err := decodeConfiguration(data, &fileConfig); err != nil {
 			return ServerConfig{}, err
 		}
@@ -92,6 +108,9 @@ func LoadServer(options ServerLoadOptions) (ServerConfig, error) {
 	var cfg ServerConfig
 	if err := values.UnmarshalExact(&cfg); err != nil {
 		return cfg, invalid("服务端配置", "无法解码")
+	}
+	if !validLeasePolicy(cfg.HeartbeatInterval, cfg.LeaseDuration) {
+		return ServerConfig{}, invalid("服务端策略", "心跳或租约不合法")
 	}
 	host, port, err := net.SplitHostPort(cfg.Listen)
 	if err != nil || !validConfigurationHost(host) {
@@ -162,7 +181,7 @@ func decodeConfiguration(data []byte, target any) error {
 	return nil
 }
 
-// readConfiguration为三个实际管理配置消费者提供有限普通文件读取。
+// readConfiguration为实际管理配置消费者提供有限普通文件读取。
 func readConfiguration(filename string) ([]byte, os.FileInfo, error) {
 	file, err := openConfiguration(filename)
 	if err != nil {

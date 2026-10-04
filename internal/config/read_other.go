@@ -24,3 +24,6 @@ func openConfiguration(filename string) (*os.File, error) {
 	}
 	return file, nil
 }
+
+// 非Unix客户端没有同类UID；Agent执行本身由平台入口拒绝。
+func configurationOwned(info os.FileInfo) bool { return info != nil }

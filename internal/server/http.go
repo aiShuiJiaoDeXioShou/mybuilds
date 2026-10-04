@@ -276,6 +276,15 @@ func batchView(batch store.BatchResult) BatchView {
 	return result
 }
 func (s *Server) buildRoutes(w http.ResponseWriter, r *http.Request, actor store.Actor) bool {
+	if s.artifactReadRoute(w, r, actor) {
+		return true
+	}
+	if s.stopRoute(w, r, actor) {
+		return true
+	}
+	if s.logRoute(w, r, actor) {
+		return true
+	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
 	if len(parts) == 4 && parts[0] == "api" && parts[1] == "projects" && parts[2] != "" && parts[3] == "builds" && r.Method == http.MethodPost {
 		if actor.Role != "admin" && actor.Role != "trigger" {

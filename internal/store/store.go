@@ -19,14 +19,15 @@ import (
 )
 
 type Store struct {
-	db, writer       *gorm.DB
-	conn             *sql.Conn
-	lockFile         *os.File
-	lockPath, dbPath string
-	lockInfo, dbInfo os.FileInfo
-	driver           string
-	mu               sync.Mutex
-	lost, closed     bool
+	db, writer        *gorm.DB
+	conn              *sql.Conn
+	lockFile          *os.File
+	lockPath, dbPath  string
+	lockInfo, dbInfo  os.FileInfo
+	driver            string
+	mu                sync.Mutex
+	lost, closed      bool
+	transactionExpiry *time.Time
 }
 
 func Open(ctx context.Context, opt Options) (*Store, error) {
@@ -173,6 +174,8 @@ func (s *Store) checkLock(ctx context.Context) error {
 func (s *Store) write(ctx context.Context, fn func(*gorm.DB) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.transactionExpiry = nil
+	defer func() { s.transactionExpiry = nil }()
 	if err := s.checkLock(ctx); err != nil {
 		return err
 	}
@@ -180,7 +183,14 @@ func (s *Store) write(ctx context.Context, fn func(*gorm.DB) error) error {
 		if err := fn(tx); err != nil {
 			return err
 		}
-		return s.checkLock(ctx)
+		if err := s.checkLock(ctx); err != nil {
+			return err
+		}
+		// 最后一次锁查询也可能耗尽原执行权；在COMMIT前再比较捕获值。
+		if s.transactionExpiry != nil && !time.Now().UTC().Before(*s.transactionExpiry) {
+			return ErrLeaseExpired
+		}
+		return nil
 	})
 	if err != nil && s.driver == "postgres" {
 		checkCtx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -199,7 +209,10 @@ func (s *Store) Migrate(ctx context.Context) error {
 		return err
 	}
 	db := s.writer.WithContext(ctx)
-	if err := db.AutoMigrate(&groupRecord{}, &projectRecord{}, &identityRecord{}, &metadataRecord{}, &auditRecord{}, &batchRecord{}, &buildRecord{}, &stepRecord{}, &requestRecord{}); err != nil {
+	if err := db.AutoMigrate(&groupRecord{}, &projectRecord{}, &identityRecord{}, &metadataRecord{}, &auditRecord{}, &batchRecord{}, &buildRecord{}, &stepRecord{}, &requestRecord{}, &nodeRecord{}, &nodeCredentialRecord{}, &nodeSessionRecord{}, &attemptRecord{}, &executionReceiptRecord{}, &stopConfirmationRecord{}, &logChunkRecord{}, &artifactRecord{}); err != nil {
+		return safeError(err)
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS build_active_name ON builds(project_id,name) WHERE status = 'running' OR stop_unconfirmed = true").Error; err != nil {
 		return safeError(err)
 	}
 	err := db.Transaction(func(tx *gorm.DB) error {

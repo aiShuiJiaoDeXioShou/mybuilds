@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -89,5 +90,25 @@ func TestClientReferenceIsNotRecursive(t *testing.T) {
 	cfg, err := LoadClient(ClientLoadOptions{Filename: writeManagementConfig(t, "token: '${CONFIG_CLIENT_SECRET}'\n"), Explicit: true})
 	if err != nil || cfg.RuntimeToken != literal {
 		t.Fatal("环境引用被递归解释", err)
+	}
+}
+
+func TestClientCAConfigurationPrecedence(t *testing.T) {
+	clearClientEnvironment(t)
+	t.Setenv("MYBUILDS_CA_FILE", "")
+	p := writeManagementConfig(t, "token: '"+strings.Repeat("SECRET", 8)+"'\nca_file: file-ca.pem\n")
+	os.Unsetenv("MYBUILDS_CA_FILE")
+	cfg, err := LoadClient(ClientLoadOptions{Filename: p, Explicit: true})
+	if err != nil || cfg.CAFile != filepath.Join(filepath.Dir(p), "file-ca.pem") {
+		t.Fatal("CA相对路径错误", err)
+	}
+	t.Setenv("MYBUILDS_CA_FILE", "env-ca.pem")
+	cli := "cli-ca.pem"
+	cfg, err = LoadClient(ClientLoadOptions{Filename: p, Explicit: true, CAFile: &cli})
+	if err != nil || cfg.CAFile != filepath.Join(filepath.Dir(p), cli) {
+		t.Fatal("CA覆盖错误", err)
+	}
+	if _, err := LoadClient(ClientLoadOptions{Filename: writeManagementConfig(t, "ca_file: 7\n"), Explicit: true}); err == nil {
+		t.Fatal("非字符串CA被接受")
 	}
 }

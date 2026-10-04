@@ -1,9 +1,11 @@
 package pipeline
 
 import (
+	"context"
 	"io"
 
 	"mybuilds/internal/process"
+	"mybuilds/internal/protocol"
 )
 
 // RunOptions 增加本地工作区与日志输出，选择与参数规则沿用预览。
@@ -11,6 +13,18 @@ type RunOptions struct {
 	PreviewOptions
 	Workspace string
 	Output    io.Writer
+	Remote    *RemoteOptions
+}
+
+// RemoteOptions只供Agent同一Run的实际持久化消费者，nil保持本地行为。
+type RemoteOptions struct {
+	AuthorityContext      context.Context
+	Facts, Secrets        map[string]string
+	ResultParent          string
+	RemainingBudgetNS     *int64
+	RemainingPostBudgetNS int64
+	Progress              func(context.Context, protocol.ExecutionProgress) error
+	Log                   func(context.Context, protocol.LogRecord) error
 }
 
 type RunResult struct {

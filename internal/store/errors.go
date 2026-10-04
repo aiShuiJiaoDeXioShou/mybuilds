@@ -8,14 +8,25 @@ import (
 )
 
 var (
-	ErrLocked       = errors.New("control_locked")
-	ErrLockLost     = errors.New("control_lock_lost")
-	ErrInvalid      = errors.New("invalid_request")
-	ErrNotFound     = errors.New("not_found")
-	ErrConflict     = errors.New("conflict")
-	ErrForbidden    = errors.New("forbidden")
-	ErrUnauthorized = errors.New("unauthorized")
-	errDatabase     = errors.New("database_error")
+	ErrLocked           = errors.New("control_locked")
+	ErrLockLost         = errors.New("control_lock_lost")
+	ErrInvalid          = errors.New("invalid_request")
+	ErrNotFound         = errors.New("not_found")
+	ErrConflict         = errors.New("conflict")
+	ErrForbidden        = errors.New("forbidden")
+	ErrUnauthorized     = errors.New("unauthorized")
+	errDatabase         = errors.New("database_error")
+	ErrNodeUnauthorized = errors.New("node_unauthorized")
+	ErrSessionConflict  = errors.New("session_conflict")
+	ErrSessionExpired   = errors.New("session_expired")
+	ErrLeaseInvalid     = errors.New("lease_invalid")
+	ErrLeaseExpired     = errors.New("lease_expired")
+	ErrEventConflict    = errors.New("event_conflict")
+	ErrSequenceInvalid  = errors.New("sequence_invalid")
+	ErrBudgetInvalid    = errors.New("budget_invalid")
+	ErrStopUnconfirmed  = errors.New("stop_unconfirmed")
+	ErrArtifactConflict = errors.New("artifact_conflict")
+	ErrLogConflict      = errors.New("log_conflict")
 )
 
 // 不保留原始驱动错误；SQLite RESTRICT 的扩展码不总被 GORM 翻译。
@@ -23,7 +34,7 @@ func safeError(err error) error {
 	if err == nil {
 		return nil
 	}
-	for _, known := range []error{ErrLocked, ErrLockLost, ErrInvalid, ErrNotFound, ErrConflict, ErrForbidden, ErrUnauthorized, errDatabase} {
+	for _, known := range []error{ErrLocked, ErrLockLost, ErrInvalid, ErrNotFound, ErrConflict, ErrForbidden, ErrUnauthorized, errDatabase, ErrNodeUnauthorized, ErrSessionConflict, ErrSessionExpired, ErrLeaseInvalid, ErrLeaseExpired, ErrEventConflict, ErrSequenceInvalid, ErrBudgetInvalid, ErrStopUnconfirmed, ErrArtifactConflict, ErrLogConflict} {
 		if errors.Is(err, known) {
 			return known
 		}

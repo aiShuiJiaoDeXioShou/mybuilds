@@ -1,4 +1,4 @@
-// Package server 提供鉴权控制面，只持久化队列，不执行流水线。
+// Package server 提供鉴权、调度与中央证据，不执行仓库脚本。
 package server
 
 import (
@@ -22,17 +22,34 @@ type Server struct {
 func New(st *store.Store, cfg config.ServerConfig) *Server { return &Server{store: st, config: cfg} }
 
 type StatusDTO struct {
-	Version     string `json:"version"`
-	Concurrency int    `json:"concurrency"`
-	Projects    int64  `json:"projects"`
-	Queued      int64  `json:"queued"`
-	Skipped     int64  `json:"skipped"`
-	Running     int64  `json:"running"`
-	Nodes       int64  `json:"nodes"`
+	Version      string `json:"version"`
+	Concurrency  int    `json:"concurrency"`
+	Projects     int64  `json:"projects"`
+	Queued       int64  `json:"queued"`
+	Skipped      int64  `json:"skipped"`
+	Running      int64  `json:"running"`
+	Nodes        int64  `json:"nodes"`
+	Interrupted  int64  `json:"interrupted"`
+	HealthyNodes int64  `json:"healthy_nodes"`
 }
 
 func (s *Server) Handler() http.Handler { return http.HandlerFunc(s.handle) }
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
+	limit := 30 * time.Second
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "agent" && parts[2] == "artifacts" && r.Method == http.MethodPut {
+		limit = 2 * time.Minute
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "artifacts" && r.Method == http.MethodGet {
+		limit = 10 * time.Minute
+	}
+	if len(parts) == 4 && parts[0] == "api" && parts[1] == "builds" && parts[3] == "log" && r.Method == http.MethodGet && r.URL.Query().Get("follow") == "1" {
+		limit = 15 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), limit)
+	defer cancel()
+	r = r.WithContext(ctx)
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -46,7 +63,17 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, store.ErrUnauthorized)
 		return
 	}
-	actor, err := s.store.Authenticate(r.Context(), strings.TrimPrefix(authorization[0], "Bearer "))
+	token := strings.TrimPrefix(authorization[0], "Bearer ")
+	if strings.HasPrefix(r.URL.Path, "/api/agent/") {
+		actor, err := s.store.AuthenticateNode(r.Context(), token)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		s.agentRoutes(w, r, actor)
+		return
+	}
+	actor, err := s.store.Authenticate(r.Context(), token)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -61,7 +88,14 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			writeError(w, err)
 			return
 		}
-		writeJSON(w, 200, StatusDTO{Version: version.Version, Concurrency: s.config.Concurrency, Projects: status.Projects, Queued: status.Queued, Skipped: status.Skipped})
+		writeJSON(w, 200, s.statusView(status))
+		return
+	}
+	if r.URL.Path == "/api/doctor" {
+		s.controlDoctor(w, r, actor)
+		return
+	}
+	if s.nodeRoutes(w, r, actor) {
 		return
 	}
 	if s.buildRoutes(w, r, actor) {
@@ -73,6 +107,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 // ListenAndServe 取消时关闭连接，失锁时停止接入；不恢复旧数据库 session。
 func (s *Server) ListenAndServe(ctx context.Context) error {
 	if err := s.store.CheckLock(ctx); err != nil {
+		return err
+	}
+	if err := s.store.ExpireLeases(ctx); err != nil {
 		return err
 	}
 	live, cancel := context.WithCancel(ctx)
@@ -94,7 +131,11 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 			result = nil
 		case <-ticker.C:
 			if err := s.store.CheckLock(live); err == nil {
-				continue
+				if err = s.store.ExpireLeases(live); err == nil {
+					continue
+				} else if live.Err() == nil || errors.Is(err, store.ErrLockLost) {
+					result = err
+				}
 			} else {
 				if live.Err() == nil || errors.Is(err, store.ErrLockLost) {
 					result = err
@@ -114,4 +155,8 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		<-done
 		return result
 	}
+}
+
+func (s *Server) statusView(status store.QueueStatus) StatusDTO {
+	return StatusDTO{Version: version.Version, Concurrency: s.config.Concurrency, Projects: status.Projects, Queued: status.Queued, Skipped: status.Skipped, Running: status.Running, Interrupted: status.Interrupted, Nodes: status.Nodes, HealthyNodes: status.HealthyNodes}
 }

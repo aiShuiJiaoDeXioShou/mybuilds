@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mybuilds/internal/protocol"
 	"os"
 	"path"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -28,6 +30,7 @@ type runLogger struct {
 	root    *os.Root
 	files   map[string]*os.File
 	closed  bool
+	remote  *remoteRun
 }
 
 type logStream struct {
@@ -36,6 +39,8 @@ type logStream struct {
 	mu                  sync.Mutex
 	pending, line       []byte
 	closed              bool
+	phase               string
+	index               int
 }
 
 func newRunLogger(output io.Writer, secrets []string) *runLogger {
@@ -56,6 +61,10 @@ func newRunLogger(output io.Writer, secrets []string) *runLogger {
 
 func (logger *runLogger) stream(build, step, stream string) io.WriteCloser {
 	return &logStream{logger: logger, build: build, step: step, source: stream}
+}
+
+func (logger *runLogger) stepStream(build string, step preparedStep, source string) io.WriteCloser {
+	return &logStream{logger: logger, build: build, step: step.step.Name, source: source, phase: step.phase, index: step.index}
 }
 
 func (logger *runLogger) failure() error {
@@ -187,13 +196,27 @@ func (stream *logStream) flush() error {
 	logger := stream.logger
 	logger.mu.Lock()
 	defer logger.mu.Unlock()
+	defer func() {
+		if logger.err != nil && logger.remote != nil {
+			logger.remote.fail("log_error")
+		}
+	}()
 	if logger.err != nil {
 		return logger.err
 	}
 	if logger.closed {
 		return errLogClosed
 	}
-	record := fmt.Sprintf("[%s] [build=%s] [step=%s] [stream=%s] %s\n", time.Now().UTC().Format(time.RFC3339Nano), stream.build, stream.step, stream.source, stream.line)
+	now := time.Now().UTC()
+	if logger.remote != nil {
+		p := protocol.LogRecord{UTC: now, Build: stream.build, Phase: stream.phase, Step: stream.step, Index: stream.index, Stream: stream.source, Text: strings.ToValidUTF8(string(stream.line), "�")}
+		if err := logger.remote.options.Log(logger.remote.authority, p); err != nil {
+			logger.remote.fail("log_error")
+			logger.err = errLogOutput
+			return logger.err
+		}
+	}
+	record := fmt.Sprintf("[%s] [build=%s] [step=%s] [stream=%s] %s\n", now.Format(time.RFC3339Nano), stream.build, stream.step, stream.source, stream.line)
 	written, err := io.WriteString(logger.output, record)
 	if err != nil || written != len(record) {
 		logger.err = errLogOutput

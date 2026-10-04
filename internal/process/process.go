@@ -7,10 +7,17 @@ import (
 
 // Command 只保存已准备的命令，不自行读取宿主环境或配置。
 type Command struct {
-	Path string
-	Args []string
-	Dir  string
-	Env  []string
+	Path    string
+	Args    []string
+	Dir     string
+	Env     []string
+	OnStart func(StartInfo) error
+}
+
+// StartInfo仅在真实Start成功后供节点持久化启动回执，不参与命令构造。
+type StartInfo struct {
+	PID, PGID int
+	At        time.Time
 }
 
 type Result struct {

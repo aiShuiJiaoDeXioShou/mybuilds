@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeManagementConfig(t *testing.T, body string) string {
@@ -101,6 +102,23 @@ func TestServerPostgresRequiresDSNAndListenHost(t *testing.T) {
 	for _, address := range []string{"localhost:8787", "build.example:8787", "[::1]:8787", ":8787"} {
 		if _, err := LoadServer(ServerLoadOptions{Filename: writeManagementConfig(t, "listen: '"+address+"'\n"), Explicit: true}); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+func TestServerLeasePolicy(t *testing.T) {
+	clearServerEnvironment(t)
+	cfg, err := LoadServer(ServerLoadOptions{Filename: writeManagementConfig(t, "heartbeat_interval: 1s\nlease_duration: 10s\n"), Explicit: true})
+	if err != nil || cfg.HeartbeatInterval != time.Second || cfg.LeaseDuration != 10*time.Second {
+		t.Fatal("策略加载失败", err)
+	}
+	cfg, err = LoadServer(ServerLoadOptions{Filename: filepath.Join(t.TempDir(), "missing")})
+	if err != nil || cfg.HeartbeatInterval != 5*time.Second || cfg.LeaseDuration != 30*time.Second {
+		t.Fatal("缺省策略失败", err)
+	}
+	for _, body := range []string{"heartbeat_interval: 5\n", "lease_duration: null\n", "heartbeat_interval: 31s\n", "lease_duration: 181s\n", "heartbeat_interval: 5s\nlease_duration: 21s\n"} {
+		if _, err := LoadServer(ServerLoadOptions{Filename: writeManagementConfig(t, body), Explicit: true}); err == nil {
+			t.Fatal("非法策略被接受")
 		}
 	}
 }

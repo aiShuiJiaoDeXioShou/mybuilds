@@ -14,6 +14,7 @@ import (
 
 	"mybuilds/internal/config"
 	"mybuilds/internal/process"
+	"mybuilds/internal/protocol"
 )
 
 var batchRunError = errors.New("本地流水线执行未成功")
@@ -24,6 +25,8 @@ type preparedStep struct {
 	command     shellCommand
 	relativeDir string
 	patterns    []string
+	phase       string
+	index       int
 }
 
 type preparedBuild struct {
@@ -40,6 +43,7 @@ type runPreparation struct {
 	facts   map[string]string
 	tried   map[string]bool
 	secrets []string
+	remote  *remoteRun
 }
 
 // Run 在整批预检查之后才启动流水线脚本，不修改配置或重置工作树。
@@ -47,8 +51,23 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		return nil, errors.New("本平台不支持本地执行")
 	}
-	if ctx.Err() != nil {
+	if ctx.Err() != nil && options.Remote == nil {
 		return nil, batchRunError
+	}
+	var remote *remoteRun
+	if options.Remote != nil {
+		if options.All || options.Step != "" {
+			return nil, errors.New("远程执行只允许单个完整构建")
+		}
+		var err error
+		remote, err = newRemote(options.Remote)
+		if err != nil {
+			return nil, err
+		}
+		defer remote.cancel()
+		if remote.blocked() != "" {
+			return nil, errors.New("远程运行权已失效")
+		}
 	}
 	document = validationCopy(document)
 	if err := config.Validate(document); err != nil {
@@ -57,6 +76,9 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 	names, err := document.Select(options.Names, options.All)
 	if err != nil {
 		return nil, err
+	}
+	if remote != nil && len(names) != 1 {
+		return nil, errors.New("远程执行只允许单个完整构建")
 	}
 	if options.Step != "" && len(names) != 1 {
 		return nil, errors.New("step: 只允许选择一个 build")
@@ -78,9 +100,20 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 	if _, err = runDirectory(root, "."); err != nil {
 		return nil, err
 	}
-	p := runPreparation{ctx: ctx, root: root, facts: map[string]string{}, tried: map[string]bool{}}
+	p := runPreparation{ctx: ctx, root: root, facts: map[string]string{}, tried: map[string]bool{}, remote: remote}
+	if remote != nil {
+		for _, key := range []string{"project", "build.id", "build.number", "node.name", "git.sha", "git.branch"} {
+			if value, ok := remote.options.Facts[key]; ok {
+				if strings.ContainsRune(value, 0) {
+					return nil, errors.New("远程事实格式错误")
+				}
+				p.facts[key] = value
+			}
+		}
+		p.facts["workspace"] = root
+	}
 	for _, key := range []string{"git.sha", "git.branch"} {
-		if value := options.Facts[key]; value != "" {
+		if value := options.Facts[key]; remote == nil && value != "" {
 			if strings.ContainsRune(value, 0) {
 				return nil, errors.New("本地事实格式错误")
 			}
@@ -125,8 +158,12 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 		}
 	}
 	logger := newRunLogger(options.Output, p.secrets)
+	logger.remote = remote
 	result := &RunResult{Builds: make([]BuildRun, 0, len(prepared))}
 	for _, build := range prepared {
+		if remote != nil {
+			break
+		}
 		for _, step := range build.steps {
 			if step.skipped {
 				continue
@@ -152,7 +189,7 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 			result.Builds = append(result.Builds, unstartedBuild(build, "skipped", "cleanup_error"))
 			continue
 		}
-		if ctx.Err() != nil {
+		if ctx.Err() != nil && remote == nil {
 			result.Builds = append(result.Builds, unstartedBuild(build, "cancelled", "cancelled"))
 			failed = true
 			continue
@@ -161,6 +198,9 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 		cleanupFailed = unsafe
 		failed = failed || b.Status == "failed" || b.Status == "cancelled"
 		result.Builds = append(result.Builds, b)
+	}
+	if remote != nil {
+		result.ResultDir = remote.resultDir
 	}
 	logError := logger.close()
 	if logger.root != nil {
@@ -175,6 +215,27 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 			}
 		}
 		failed = true
+	}
+	if remote != nil {
+		if remote.blocked() != "" {
+			failed = true
+			if len(result.Builds) > 0 && result.Builds[0].Status == "succeeded" {
+				result.Builds[0].Status, result.Builds[0].Reason = "failed", remote.blocked()
+			}
+		}
+		if remote.blocked() == "" && len(result.Builds) > 0 {
+			b := result.Builds[0]
+			p := protocol.ExecutionProgress{Kind: "build_finished", Status: b.Status, Reason: b.Reason, StopConfirmed: !cleanupFailed, CleanupFailed: cleanupFailed, ExitCode: 0}
+			for _, step := range append(append([]StepRun{}, b.Steps...), b.Post...) {
+				p.Started = p.Started || step.started
+			}
+			if remote.emit(p) != nil {
+				failed = true
+				if result.Builds[0].Status == "succeeded" {
+					result.Builds[0].Status, result.Builds[0].Reason = "failed", "persistence_error"
+				}
+			}
+		}
 	}
 	if failed {
 		return result, batchRunError
@@ -227,11 +288,12 @@ func (p *runPreparation) build(name string, build *config.Build, params map[stri
 		}
 	}
 	anyActive, found := false, selected == ""
-	for _, step := range build.Steps {
+	for index, step := range build.Steps {
 		prepared, err := p.step(name, step, build.Env, params, state)
 		if err != nil {
 			return b, err
 		}
+		prepared.phase, prepared.index = "ordinary", index+1
 		anyActive = anyActive || !prepared.skipped
 		if selected == "" || step.Name == selected {
 			b.steps = append(b.steps, prepared)
@@ -241,16 +303,22 @@ func (p *runPreparation) build(name string, build *config.Build, params map[stri
 	if !found {
 		return b, errors.New("step: 未找到指定步骤")
 	}
-	if build.Post != nil && anyActive {
+	if build.Post != nil && (anyActive || p.remote != nil) {
 		for _, phase := range []struct {
 			steps  []config.Step
 			output *[]preparedStep
-		}{{build.Post.Success, &b.success}, {build.Post.Failure, &b.failure}, {build.Post.Always, &b.always}} {
-			for _, step := range phase.steps {
-				prepared, err := p.step(name, step, build.Env, params, state)
+			name   string
+		}{{build.Post.Success, &b.success, "success"}, {build.Post.Failure, &b.failure, "failure"}, {build.Post.Always, &b.always, "always"}} {
+			for index, step := range phase.steps {
+				prepared := preparedStep{step: step, skipped: true}
+				var err error
+				if anyActive {
+					prepared, err = p.step(name, step, build.Env, params, state)
+				}
 				if err != nil {
 					return b, err
 				}
+				prepared.phase, prepared.index = phase.name, index+1
 				*phase.output = append(*phase.output, prepared)
 			}
 		}
@@ -271,7 +339,7 @@ func (p *runPreparation) condition(parent ConditionPreview, when *config.When, p
 }
 
 func (p *runPreparation) fact(key string) {
-	if _, ok := p.facts[key]; ok || p.tried[key] {
+	if _, ok := p.facts[key]; ok || p.tried[key] || p.remote != nil {
 		return
 	}
 	p.tried[key] = true
@@ -355,7 +423,13 @@ func (p *runPreparation) envValue(value string, params, local map[string]string)
 		if end < 0 || !referenceName.MatchString(rest[:end]) {
 			return "", errors.New("env: 环境引用格式错误")
 		}
-		secret, ok := os.LookupEnv(rest[:end])
+		var secret string
+		var ok bool
+		if p.remote != nil {
+			secret, ok = p.remote.options.Secrets[rest[:end]]
+		} else {
+			secret, ok = os.LookupEnv(rest[:end])
+		}
 		if !ok {
 			return "", errors.New("env: 声明的环境引用不可用")
 		}
@@ -496,6 +570,37 @@ func executeStep(ctx context.Context, root, build string, step preparedStep, lim
 		result.Status, result.Reason = "cancelled", "cancelled"
 		return result
 	}
+	if logger.remote != nil {
+		r := logger.remote
+		if reason := r.blocked(); reason != "" {
+			result.Status, result.Reason = "failed", reason
+			return result
+		}
+		actionStart := time.Now()
+		intent := stepProgress("intent", step)
+		if r.emit(intent) != nil {
+			result.Status, result.Reason = "failed", "persistence_error"
+			return result
+		}
+		defer func() { r.finishStep(step, result, actionStart) }()
+		if reason := r.blocked(); reason != "" {
+			result.Status, result.Reason = "failed", reason
+			return result
+		}
+		limit = r.limit(step)
+		if limit < 0 {
+			result.Status, result.Reason = "failed", "timeout"
+			return result
+		}
+		if err := r.ensureResult(root, logger); err != nil {
+			result.Status, result.Reason = "failed", "directory_error"
+			return result
+		}
+		merged, cancel := r.merge(ctx)
+		defer cancel()
+		ctx = merged
+	}
+
 	runContext := ctx
 	cancel := func() {}
 	if limit > 0 {
@@ -511,12 +616,24 @@ func executeStep(ctx context.Context, root, build string, step preparedStep, lim
 			err = logger.root.MkdirAll(filepath.Dir(prefix), 0700)
 			if err == nil {
 				result.started = true
+				calledAt := time.Now().UTC()
 				result.Artifacts, err = collectArtifacts(runContext, workspace, filepath.Join(logger.root.Name(), prefix), step.patterns)
+				if err == nil {
+					for i := range result.Artifacts {
+						result.Artifacts[i].SnapshotPath = filepath.ToSlash(filepath.Join(prefix, result.Artifacts[i].SnapshotPath))
+					}
+				}
+				if logger.remote != nil {
+					progress := stepProgress("started", step)
+					progress.Started = true
+					progress.At = calledAt
+					if logger.remote.emit(progress) != nil && err == nil {
+						err = errors.New("进度保存失败")
+						result.Reason = "progress_error"
+					}
+				}
 			}
 			if err == nil {
-				for i := range result.Artifacts {
-					result.Artifacts[i].SnapshotPath = filepath.ToSlash(filepath.Join(prefix, result.Artifacts[i].SnapshotPath))
-				}
 				result.Status, result.Reason, result.ExitCode = "succeeded", "", 0
 			}
 		}
@@ -525,13 +642,13 @@ func executeStep(ctx context.Context, root, build string, step preparedStep, lim
 				result.Status, result.Reason, result.ExitCode = "failed", "artifact_error", -1
 			}
 		}
-		if runContext.Err() != nil {
+		if runContext.Err() != nil && (logger.remote == nil || logger.remote.blocked() == "") {
 			result.Status, result.Reason, result.ExitCode = "failed", "timeout", -1
 			if ctx.Err() != nil {
 				result.Status, result.Reason = "cancelled", "cancelled"
 			}
 		}
-		stream := logger.stream(build, step.step.Name, "system")
+		stream := logger.stepStream(build, step, "system")
 		if result.Status == "succeeded" {
 			_, err = fmt.Fprintf(stream, "产物收集成功: %d 个文件\n", len(result.Artifacts))
 		} else {
@@ -551,7 +668,15 @@ func executeStep(ctx context.Context, root, build string, step preparedStep, lim
 	}
 	command := step.command
 	command.Dir = dir
-	stdout, stderr := logger.stream(build, step.step.Name, "stdout"), logger.stream(build, step.step.Name, "stderr")
+	if logger.remote != nil {
+		command.OnStart = func(info process.StartInfo) error {
+			p := stepProgress("started", step)
+			p.Started = true
+			p.PID, p.PGID, p.At = info.PID, info.PGID, info.At
+			return logger.remote.emit(p)
+		}
+	}
+	stdout, stderr := logger.stepStream(build, step, "stdout"), logger.stepStream(build, step, "stderr")
 	shell := process.Run(runContext, command, stdout, stderr)
 	closeOut, closeErr := stdout.Close(), stderr.Close()
 	if (closeOut != nil || closeErr != nil) && shell.Reason == "" && shell.ExitCode == 0 && !shell.CleanupFailed {
@@ -571,11 +696,11 @@ func executeStep(ctx context.Context, root, build string, step preparedStep, lim
 	if result.Reason == "" && shell.CleanupFailed {
 		result.Reason = "cleanup_error"
 	}
-	if ctx.Err() != nil || shell.Reason == "cancelled" {
+	if (ctx.Err() != nil || shell.Reason == "cancelled") && (logger.remote == nil || logger.remote.blocked() == "") {
 		result.Status, result.Reason = "cancelled", "cancelled"
 	}
 	if result.started {
-		stream := logger.stream(build, step.step.Name, "system")
+		stream := logger.stepStream(build, step, "system")
 		_, writeError := fmt.Fprintf(stream, "步骤执行结果: %s %s\n", result.Status, result.Reason)
 		closeError := stream.Close()
 		if (writeError != nil || closeError != nil) && result.Status == "succeeded" {
@@ -598,33 +723,66 @@ func durationLimit(step config.Step, remaining time.Duration, budget bool) time.
 
 func executeBuild(ctx context.Context, root string, build preparedBuild, logger *runLogger) (BuildRun, bool) {
 	if build.skipped {
-		return unstartedBuild(build, "skipped", "condition"), false
+		if logger.remote != nil {
+			for _, step := range build.steps {
+				logger.remote.skipped(step, "condition")
+			}
+		}
+		b := unstartedBuild(build, "skipped", "condition")
+		if logger.remote != nil {
+			logger.remote.inactivePost(build, &b, "not_selected")
+		}
+		return b, false
 	}
 	b := BuildRun{Name: build.name, Status: "succeeded", Steps: []StepRun{}}
 	start := time.Now()
 	elapsed := time.Duration(0)
 	started, unsafe := false, false
 	for _, step := range build.steps {
+		if logger.remote != nil && logger.remote.blocked() != "" {
+			reason := logger.remote.blocked()
+			b.Steps = append(b.Steps, skippedStep(step, reason))
+			if b.Status == "succeeded" {
+				b.Status, b.Reason = "failed", reason
+			}
+			continue
+		}
 		if step.skipped {
 			b.Steps = append(b.Steps, skippedStep(step, "condition"))
+			if logger.remote != nil {
+				logger.remote.skipped(step, "condition")
+			}
 			continue
 		}
 		if b.Status != "succeeded" {
 			b.Steps = append(b.Steps, skippedStep(step, "not_started"))
+			if logger.remote != nil {
+				logger.remote.skipped(step, "not_started")
+			}
 			continue
 		}
 		if ctx.Err() != nil {
 			b.Status, b.Reason = "cancelled", "cancelled"
 			b.Steps = append(b.Steps, skippedStep(step, "not_started"))
+			if logger.remote != nil {
+				logger.remote.skipped(step, "not_started")
+			}
 			continue
 		}
-		if build.timeout > 0 && elapsed >= build.timeout {
+		if (logger.remote == nil && build.timeout > 0 && elapsed >= build.timeout) || (logger.remote != nil && logger.remote.limit(step) < 0) {
 			b.Status, b.Reason = "failed", "timeout"
 			b.Steps = append(b.Steps, skippedStep(step, "budget_exhausted"))
+			if logger.remote != nil {
+				logger.remote.skipped(step, "budget_exhausted")
+			}
 			continue
 		}
 		stepStart := time.Now()
-		s := executeStep(ctx, root, build.name, step, durationLimit(step.step, build.timeout-elapsed, build.timeout > 0), logger)
+		limit := durationLimit(step.step, build.timeout-elapsed, build.timeout > 0)
+		if logger.remote != nil {
+			limit = logger.remote.limit(step)
+		}
+		s := executeStep(ctx, root, build.name, step, limit, logger)
 		elapsed += time.Since(stepStart)
 		b.Steps = append(b.Steps, s)
 		started = started || s.started
@@ -636,8 +794,26 @@ func executeBuild(ctx context.Context, root string, build preparedBuild, logger 
 	if !started && b.Status == "succeeded" {
 		b.Status, b.Reason = "skipped", "condition"
 	}
-	if started && !unsafe {
+	if logger.remote != nil && started && b.Status == "succeeded" {
+		remaining, _ := logger.remote.budgets()
+		if remaining != nil && *remaining == 0 {
+			b.Status, b.Reason = "failed", "timeout"
+		}
+	}
+	if logger.remote != nil && logger.remote.blocked() != "" && b.Status == "succeeded" {
+		b.Status, b.Reason = "failed", logger.remote.blocked()
+	}
+	if started && !unsafe && (logger.remote == nil || logger.remote.blocked() == "") {
 		unsafe = executePost(ctx, root, build, &b, logger)
+	} else if logger.remote != nil {
+		reason := "not_selected"
+		if unsafe {
+			reason = "cleanup_error"
+		}
+		if logger.remote.blocked() != "" {
+			reason = logger.remote.blocked()
+		}
+		logger.remote.inactivePost(build, &b, reason)
 	}
 	b.DurationMS = time.Since(start).Milliseconds()
 	return b, unsafe
@@ -655,6 +831,36 @@ func executePost(ctx context.Context, root string, build preparedBuild, b *Build
 	if b.Status == "cancelled" || ctx.Err() != nil {
 		phase = nil
 	}
+	if logger.remote != nil {
+		selected := "success"
+		if b.Status == "failed" {
+			selected = "failure"
+		}
+		if b.Status == "cancelled" || ctx.Err() != nil {
+			selected = "none"
+		}
+		reason := ""
+		if selected == "failure" && b.Reason == "timeout" {
+			ordinaryFailed := false
+			for _, step := range b.Steps {
+				ordinaryFailed = ordinaryFailed || step.Status == "failed" || step.Status == "cancelled"
+			}
+			if !ordinaryFailed {
+				reason = "timeout"
+			}
+		}
+		logger.remote.beginPost(selected, reason)
+		for _, group := range []struct {
+			name  string
+			steps []preparedStep
+		}{{"success", build.success}, {"failure", build.failure}} {
+			if group.name != selected {
+				for _, step := range group.steps {
+					logger.remote.skipped(step, "not_selected")
+				}
+			}
+		}
+	}
 	deadline := time.Now().Add(build.postTimeout)
 	unsafe := false
 	for _, group := range []struct {
@@ -663,9 +869,13 @@ func executePost(ctx context.Context, root string, build preparedBuild, b *Build
 	}{{phase, false}, {build.always, true}} {
 		for _, step := range group.steps {
 			reason := ""
-			if unsafe {
+			if logger.remote != nil && logger.remote.blocked() != "" {
+				reason = logger.remote.blocked()
+			} else if logger.remote != nil && logger.remote.limit(step) < 0 {
+				reason = "budget_exhausted"
+			} else if unsafe {
 				reason = "cleanup_error"
-			} else if time.Until(deadline) <= 0 {
+			} else if logger.remote == nil && time.Until(deadline) <= 0 {
 				reason = "budget_exhausted"
 			} else if !group.always && ctx.Err() != nil {
 				reason = "cancelled"
@@ -674,6 +884,9 @@ func executePost(ctx context.Context, root string, build preparedBuild, b *Build
 			}
 			if reason != "" {
 				b.Post = append(b.Post, skippedStep(step, reason))
+				if logger.remote != nil && logger.remote.blocked() == "" {
+					logger.remote.skipped(step, reason)
+				}
 				if reason == "budget_exhausted" && b.Status == "succeeded" {
 					b.Status, b.Reason = "failed", "post_error"
 				}
@@ -683,7 +896,11 @@ func executePost(ctx context.Context, root string, build preparedBuild, b *Build
 			if group.always && ctx.Err() != nil {
 				base = context.WithoutCancel(ctx)
 			}
-			s := executeStep(base, root, build.name, step, durationLimit(step.step, time.Until(deadline), true), logger)
+			limit := durationLimit(step.step, time.Until(deadline), true)
+			if logger.remote != nil {
+				limit = logger.remote.limit(step)
+			}
+			s := executeStep(base, root, build.name, step, limit, logger)
 			b.Post = append(b.Post, s)
 			unsafe = unsafe || s.CleanupFailed
 			if ctx.Err() != nil && originalSuccess {
@@ -692,6 +909,16 @@ func executePost(ctx context.Context, root string, build preparedBuild, b *Build
 			if s.Status != "succeeded" && b.Status == "succeeded" {
 				b.Status, b.Reason = "failed", "post_error"
 			}
+		}
+	}
+	if logger.remote != nil && b.Status == "succeeded" {
+		_, remaining := logger.remote.budgets()
+		started := false
+		for _, step := range b.Post {
+			started = started || step.started
+		}
+		if started && remaining == 0 {
+			b.Status, b.Reason = "failed", "post_error"
 		}
 	}
 	if ctx.Err() != nil && originalSuccess {

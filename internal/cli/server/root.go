@@ -14,6 +14,13 @@ func NewCommand() *cobra.Command {
 	}
 	cmd.SetFlagErrorFunc(func(_ *cobra.Command, _ error) error { return errors.New("命令选项不合法") })
 	cmd.PersistentFlags().String("config", "", "控制端配置文件")
-	cmd.AddCommand(version.NewCommand(), newMigrateCommand(), newGroupCommand(), newTokenCommand(), newProjectCommand(), newServeCommand())
+	cmd.Args = func(_ *cobra.Command, args []string) error {
+		if len(args) > 0 {
+			return errors.New("命令无效")
+		}
+		return nil
+	}
+	cmd.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
+	cmd.AddCommand(version.NewCommand(), newMigrateCommand(), newGroupCommand(), newTokenCommand(), newProjectCommand(), newServeCommand(), newNodeCommand())
 	return cmd
 }

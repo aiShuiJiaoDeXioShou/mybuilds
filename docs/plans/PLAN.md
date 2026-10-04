@@ -36,7 +36,7 @@
 控制端 `mybuilds-server` 可部署 Linux/macOS，Agent 在具备工具链的节点执行任务：
 macOS 节点支持 iOS/Android，Linux 节点支持 Android；客户端的远程命令保持跨平台。
 支持一个控制端加一个或多个 Agent，同机部署同样使用 Agent。节点协议、故障边界见 [多节点设计](MULTI_NODE.md)。
-当前仅完成双 CLI 初始化，多节点、构建模板和商店分发均尚未实现。
+当前000–004、006–007已验收，原生Android模板、控制端与独立多节点执行已交付；005真实Apple签名、Flutter及商店分发等后续功能仍待验收。实际状态见[实施历史](../IMPLEMENTATION_HISTORY.md)。
 MVP 构建、分发及扩展边界见 [BUILD_DISTRIBUTION.md](BUILD_DISTRIBUTION.md)。
 
 ## 需求与技术决策摘要

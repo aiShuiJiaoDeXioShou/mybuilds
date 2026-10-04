@@ -2,6 +2,8 @@ package client
 
 import (
 	"bytes"
+	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,26 +11,21 @@ import (
 	"io"
 	"mybuilds/internal/config"
 	"net/http"
+	"strings"
 	"text/tabwriter"
 	"time"
 )
 
 // remoteRequest仅做当前API传输，不自动重试或执行仓库内容。
 func remoteRequest(cmd *cobra.Command, method, path string, body, response any, key string) error {
-	filename, _ := cmd.Flags().GetString("config")
-	options := config.ClientLoadOptions{Filename: filename, Explicit: cmd.Flags().Changed("config")}
-	if cmd.Flags().Changed("server-url") {
-		server, _ := cmd.Flags().GetString("server-url")
-		options.ServerURL = &server
-	}
-	if cmd.Flags().Changed("timeout") {
-		timeout, _ := cmd.Flags().GetDuration("timeout")
-		options.Timeout = &timeout
-	}
-	cfg, err := config.LoadClient(options)
+	cfg, err := remoteSettings(cmd)
 	if err != nil {
 		return err
 	}
+	return requestJSON(cmd.Context(), cfg, method, path, body, response, key)
+}
+func requestJSON(ctx context.Context, cfg config.ClientConfig, method, path string, body, response any, key string) error {
+	var err error
 	var data []byte
 	if body != nil {
 		data, err = json.Marshal(body)
@@ -36,7 +33,7 @@ func remoteRequest(cmd *cobra.Command, method, path string, body, response any, 
 			return errors.New("请求内容不合法")
 		}
 	}
-	req, err := http.NewRequestWithContext(cmd.Context(), method, cfg.Server+path, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, method, cfg.Server+path, bytes.NewReader(data))
 	if err != nil {
 		return errors.New("无法建立API请求")
 	}
@@ -48,7 +45,10 @@ func remoteRequest(cmd *cobra.Command, method, path string, body, response any, 
 	if key != "" {
 		req.Header.Set("Idempotency-Key", key)
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport, err := remoteTransport(cfg)
+	if err != nil {
+		return err
+	}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: cfg.Timeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	result, err := client.Do(req)
@@ -118,6 +118,37 @@ func remotePage(cmd *cobra.Command) (int, int, error) {
 func remoteRootFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().String("config", "", "客户端连接配置")
 	cmd.PersistentFlags().String("server-url", "", "控制端URL")
+	cmd.PersistentFlags().String("ca-file", "", "HTTPS额外CA文件")
 	cmd.PersistentFlags().Duration("timeout", 30*time.Second, "远程API超时")
 	cmd.SetFlagErrorFunc(func(_ *cobra.Command, _ error) error { return errors.New("命令选项不合法") })
+}
+
+func remoteSettings(cmd *cobra.Command) (config.ClientConfig, error) {
+	filename, _ := cmd.Flags().GetString("config")
+	options := config.ClientLoadOptions{Filename: filename, Explicit: cmd.Flags().Changed("config")}
+	if cmd.Flags().Changed("server-url") {
+		server, _ := cmd.Flags().GetString("server-url")
+		options.ServerURL = &server
+	}
+	if cmd.Flags().Changed("timeout") {
+		timeout, _ := cmd.Flags().GetDuration("timeout")
+		options.Timeout = &timeout
+	}
+	if cmd.Flags().Changed("ca-file") {
+		ca, _ := cmd.Flags().GetString("ca-file")
+		options.CAFile = &ca
+	}
+	return config.LoadClient(options)
+
+}
+func remoteTransport(cfg config.ClientConfig) (*http.Transport, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if strings.HasPrefix(cfg.Server, "https://") {
+		roots, err := config.TLSRoots(cfg.CAFile)
+		if err != nil {
+			return nil, err
+		}
+		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+	}
+	return transport, nil
 }
