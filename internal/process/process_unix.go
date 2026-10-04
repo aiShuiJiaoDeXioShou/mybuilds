@@ -25,12 +25,17 @@ func Run(ctx context.Context, command Command, stdout, stderr io.Writer) (result
 		result.Reason = contextReason(ctx)
 		return result
 	}
+	scope, err := newProcessScope()
+	if err != nil {
+		result.Reason = "start_error"
+		return result
+	}
 	runContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	cmd := exec.CommandContext(runContext, command.Path, command.Args...)
 	cmd.Dir = command.Dir
 	// 非 nil 空切片阻止 os/exec 自动继承完整宿主环境。
-	cmd.Env = append([]string{}, command.Env...)
+	cmd.Env = scope.environment(command.Env)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// 自持两条管道，让 Wait 只等待真实子进程，不用 WaitDelay 截断慢日志。
 	stdoutRead, stdoutWrite, err := os.Pipe()
@@ -56,9 +61,12 @@ func Run(ctx context.Context, command Command, stdout, stderr io.Writer) (result
 	var logFailed, cleanupFailed atomic.Bool
 	var cleanupOnce sync.Once
 	cleaned := make(chan struct{})
+	scopeBound := make(chan struct{})
 	cleanup := func() {
 		cleanupOnce.Do(func() {
-			cleanupFailed.Store(!stopProcessGroup(cmd.Process.Pid))
+			// CommandContext可在Start返回前触发Cancel；先绑定真实PID/birth再清理。
+			<-scopeBound
+			cleanupFailed.Store(!scope.stop())
 			close(cleaned)
 		})
 	}
@@ -77,6 +85,8 @@ func Run(ctx context.Context, command Command, stdout, stderr io.Writer) (result
 		return result
 	}
 	result.Started = true
+	scope.bind(cmd.Process.Pid)
+	close(scopeBound)
 	progressFailed := false
 	if command.OnStart != nil {
 		progressFailed = command.OnStart(StartInfo{PID: cmd.Process.Pid, PGID: cmd.Process.Pid, At: time.Now().UTC()}) != nil
@@ -98,8 +108,13 @@ func Run(ctx context.Context, command Command, stdout, stderr io.Writer) (result
 		copies.Add(1)
 		go func(reader *os.File, writer io.Writer) {
 			defer copies.Done()
-			output := cancelOnWriteError{writer: writer, cancel: cancel, failed: &logFailed, mutex: &writeMutex}
-			if err := drainPipe(reader, output, cleaned); err != nil {
+			masked := &scopeOutput{writer: writer, token: []byte(scope.token)}
+			output := cancelOnWriteError{writer: masked, cancel: cancel, failed: &logFailed, mutex: &writeMutex}
+			copyErr := drainPipe(reader, output, cleaned)
+			writeMutex.Lock()
+			flushErr := masked.flush()
+			writeMutex.Unlock()
+			if copyErr != nil || flushErr != nil {
 				logFailed.Store(true)
 				cancel()
 			}
