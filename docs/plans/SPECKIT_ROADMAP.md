@@ -28,18 +28,18 @@ $speckit-constitution
 | 建议编号与目录后缀 | 阶段 / 依赖 | 实施顺序 | 功能完成的验收点 |
 |---|---|---|---|
 | 000-project-bootstrap | P0；无 | Go 单模块 → 双 CLI 与共享版本 → README / AI 阅读入口 → 本地提交 | 帮助与版本可运行；规范与文档指引齐全（已完成） |
-| 001-pipeline-preview | P0；000 | 复用双 CLI 入口与版本 → init → 配置结构和严格校验 → 按字段插值与脱敏 → dry-run | 可生成配置并预览；错误字段和缺失密钥报错；预览没有外部动作 |
-| 002-local-run | P1；001 | 顺序执行 run → 分步骤日志 → 失败收尾 → 取消与平台进程控制 | 假项目可运行；失败不继续；取消后无该次构建残留进程；当前工作树不被重置 |
+| 001-pipeline-preview | P0；000 | 复用双 CLI → init → 单流水线 default / 命名 builds 校验 → build 选择与 --param → 插值/脱敏 → dry-run | 单/多 build 可预览；混写和未知名称/参数拒绝；不执行外部动作 |
+| 002-local-run | P1；001 | 顺序执行 run → sh/bash、工作目录、env、timeout → 脚本参数 → 多 build 本地顺序执行 → 日志/收尾/进程取消 | 参数含空格仍完整；cd/export 不跨步；越界目录拒绝；超时/取消无残留；不重置当前工作树 |
 | 003-build-artifacts | P1；002 | glob 收集 → 路径与符号链接边界 → 产物清单、大小与摘要 | 产物可定位和校验；越界访问与不符合匹配要求的配置被拒绝 |
 | 004-android-build | P1；003 | 本机 Android doctor → 版本和签名环境 → Gradle 模板 → 缓存复用 | 真项目产出 apk / aab / mapping；版本正确；错误 JDK 或签名配置可诊断 |
 | 005-ios-build | P1；003 | 本机 iOS doctor → 临时 keychain 与 DerivedData → archive/export → 资源清理 | 真项目产出签名有效的 ipa / dSYM；失败与取消后临时签名资源清理 |
-| 006-control-plane | P2；004、005 | 双数据库与事务 → default 项目组 → 客户端注册选组 / 组管理 / 项目迁移 → token 管理 → SHA 固定与排队 → API 与远程 CLI | 未选组进入 default；组改名和项目迁移保留身份/历史；空组删除安全；鉴权与排队闭环 |
-| 007-node-agents | P2；006 | Agent 入口 → 节点注册与独立鉴权 → 平台/标签/容量 → 原子领取与租约 → 固定 SHA 执行 → 日志/产物回传与取消 | 至少两个节点可执行；iOS 不分配到 Linux；同项目串行；过期与越权回报拒绝；断网停止，不自动迁移 |
+| 006-control-plane | P2；004、005 | 双数据库 → 项目组/注册/迁移 → token → 只读固定 SHA 配置 → 命名 build 批量校验与原子入队 → API/远程 CLI | 默认组与迁移正确；多 build 同 SHA、不同构建号；校验失败不部分入队；路径与鉴权正确 |
+| 007-node-agents | P2；006 | Agent/鉴权 → 平台/标签/容量 → 项目+build 互斥 → 原子领取/租约 → 上下文注入 → 日志/产物/取消 | 两节点执行；iOS 不到 Linux；同名 build 串行、不同 build 可并行；失效回报拒绝；断网停止 |
 | 008-build-recovery | P3；007 | 控制端启动租约核对 → 恢复排队 → 节点中断标记 → 原提交重试 | 控制端重启不误判节点；过期执行不重跑；retry 用原 SHA / 配置 / 参数与新构建号 |
 | 009-flutter-builds | P1；004、005 | Flutter doctor → Android/iOS 模板 → 版本/flavor/签名 → SDK 标签与产物 | 真 Flutter 工程双平台可构建；用户可编辑命令；复用已有签名、取消、产物与节点协议 |
 | 010-google-play | MVP 发布；008、009 | fastlane 原型与锁版本 → 受控参数/身份 → 持久化发布意图 → AAB 上传及轨道 → 回执/查询/人工确认 | internal 可见真实 AAB；production 显式选择；错应用/凭据拒绝；失联 unknown 不重发 |
 | 011-app-store | MVP 发布；008、009 | fastlane deliver 与 API key 原型 → IPA 核对 → 上传/处理状态 → 显式提交审核 → 回执/人工确认 | App Store Connect 可见构建；提交审核与正式上架分开；缺失前提明确失败；原产物和未知结果保护 |
-| 012-custom-workflows | MVP 扩展；003、007、010、011 | 本地模板与仓库脚本 → 控制端可复用方案 → 项目 auto/repo/profile 来源与参数 → 配置快照 → custom 发布结果契约 | 无仓库配置可用绑定方案；错误配置不回退；强制来源与重试快照有效；未知上传不重发 |
+| 012-custom-workflows | MVP 扩展；003、007、010、011 | 复用脚本参数 → 单 build 可复用方案 → project init 框架/双平台绑定 → auto/repo/profile 与命名 build 参数 → 快照 → custom 发布 | 无 YAML 可绑定双平台；来源集合不合并；错误配置不回退；原快照重试；同应用发布互斥；unknown 不重发 |
 | 013-build-notifications | 后续 P3；008 | 项目直接配置 Webhook → 全局 defaults 与字段继承 → 显式关闭/列表替换 → URL 校验和受限凭据存储 → 飞书 SDK / 其他渠道 | 无需全局注册；未配置时继承；空列表或发送失败不改投默认；快照有效；URL/签名密钥不泄露 |
 | 014-release-approval | 后续 P3；008、013 | 产物回传确认 → 审批位置落库 → 释放节点/全局槽 → 角色鉴权 → 原节点以新租约恢复 | 原节点离线等待；缺失工作区失败；重复决定与取消不覆盖状态；MVP 发布授权继续有效 |
 | 015-webhook-trigger | 后续 P4；006、008 | provider 适配 → 校验、过滤 → 事件与任务事务入库 → 自动发布的项目授权策略 | 四类来源可触发；伪造/重复请求处理正确；相同 SHA 不同参数可构建；不能绕过发布授权 |
@@ -47,13 +47,17 @@ $speckit-constitution
 | 017-extra-distribution | 后续 P5；012、014 | 按需求增加 fir.im / generic 内置适配，复用现有发布记录与用户扩展契约 | 验收原产物上传、远端确认及未知结果；MVP 不依赖本功能 |
 | 018-service-operations | 后续 P5/P6；012 | retention → macOS/Linux 自启 → drain/停机 → doctor/日志打磨 → 测量后调整容量 | 独立部署；保护未知结果和待审批数据；MVP 基础错误处理和资源清理不能后置 |
 
-**MVP 范围为 001–012**：原生与 Flutter 双平台、控制端/多 Agent、项目组管理、日志/产物下载、两大商店与用户扩展。
+**MVP 范围为 001–012**：同仓库多命名 build、原生与 Flutter 双平台、控制端/多 Agent、项目组管理、shell 参数、日志/产物下载、两大商店与用户扩展。
 000 已完成；013–018 可后置。不能后置发布授权、租约、回报丢失后的 unknown、原产物绑定及显式确认。
 006 建立控制端业务与排队能力，007 闭合远程构建、节点 doctor、日志 SSE 与产物下载。
 009 复用 004/005 的平台能力；010/011 共用受控 fastlane 调用与发布记录，不把上传当成已公开上架。
 012 扩展现有执行路径，不加载动态插件；有独立前提的功能可按依赖提前推进。
 006 管理项目 pipeline 设置并默认要求仓库配置；012 增加控制端方案和缺失回退，之前选择尚未支持的来源应明确报错。
 006 的 project init 是客户端远程注册，支持 --group，缺省归入 default；001 的 init 仅生成本地流水线。
+001 先建立 default/builds 格式、--build/--all 与 --param 的预览规则，002 执行 shell 及本地多 build；平台模板随 004/005/009 接入。
+006 支持一个仓库选择多个 build，固定一个 SHA 并原子创建独立执行；007 将互斥细化为同项目同名 build，不同 build 可在容量允许时并行。
+012 接入无需 YAML 的 --framework/--platform 方案绑定，双平台组合已有模板，不新增执行器；此前相关选项明确报未支持。
+shell 的字符串 params、显式 env 映射、位置参数、受限上下文和 working_dir/timeout 在 PLAN 中统一定义，不另外设计 Jenkins 参数 DSL。
 项目组用于归属和查询，构建方案用于配置复用；改组不改变项目身份、构建号、节点授权、通知或运行中的配置快照。
 013 增加项目直接配置 Webhook 与全局默认值，不要求仓库配置存在；方案切换不能扩大项目节点或发布授权。
 新增 Flutter/主商店/用户扩展后，原 009–014 尚未实现的路线调整为 013–018；无需修改已有 spec 目录。
@@ -92,6 +96,8 @@ $speckit-specify
 实现 mybuilds 的“流水线初始化与预览”，依据 docs/plans/PLAN.md 的 P0。
 用户能运行 init 在当前目录生成最小 mybuilds.yml，已有文件时拒绝覆盖；
 用户能运行 run --dry-run 预览步骤顺序、名称和参数，不执行命令、checkout、上传、通知或创建构建工作区。
+支持原单流水线作为 default，以及一份文件内的命名 builds，拒绝混写；--build/--all 选择，多个定义不允许隐式全选。
+--param key=value 覆盖已声明的字符串参数，未知/重复键报错；只预览 run 的 shell/working_dir/env/timeout，不启动 shell 或探测目录。
 只接受规划中的四种步骤结构；runner 支持 platform: android|ios 与 labels 字符串列表；upload 按 google_play/app_store/custom 校验不同字段；严格拒绝未知字段、无效步骤及未知模板变量。
 env 和明确的凭据字段支持引用当前环境变量，缺失时报错；run 正文中的 shell 变量保持原样。
 运行时才能确定的已知变量在预览中标为待确定，不伪造实际构建号或状态。
@@ -110,6 +116,7 @@ notifications.webhooks 接受 type/url 列表，直接填写的 Webhook URL 同�
 | US3（P2）：定位错误与保护密钥 | 拼错字段、缺失引用或未知变量时返回非零退出码与字段位置；敏感值不出现在 stdout / stderr |
 
 明确边界：缺失配置、重复步骤名称、非法步骤结构、run 正文包含 `${LOCAL_VAR}`、
+单/多 build 格式混写、重复 build 键、未知名称、多 build 未选择、参数重复/未声明与正文中的引用保持原样、
 已知但尚未产生的运行时变量、输入里声明了未来阶段才会执行的 approval / upload。
 声明 approval / upload 可以预览，upload 凭据只保留引用，dry-run 不探测商店；非 dry-run 执行在后续功能完成前必须报未支持。
 
@@ -143,7 +150,7 @@ $speckit-tasks
 
 ```text
 - [ ] T001 复用 go.mod、Cobra 与双版本入口，按本功能引入并锁定 YAML
-- [ ] T002 定义 internal/config/pipeline.go 的四种步骤结构、runner 平台/标签、商店/custom 上传的字段规则
+- [ ] T002 定义 internal/config/pipeline.go 的 default/builds 格式与选择、--param、四种步骤及 runner/upload/run 执行字段；增加对应失败用例
 - [ ] T003 [US1] 在 internal/cli/client/root_test.go 写 init 生成与拒绝覆盖用例
 - [ ] T004 [US1] 在 internal/cli/client/root.go 实现 init，生成最小可预览配置
 - [ ] T005 [US2] 在 internal/config/pipeline_test.go 写合法配置、正文原样保留与运行时变量用例

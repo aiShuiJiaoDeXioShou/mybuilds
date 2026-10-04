@@ -29,20 +29,25 @@ mybuilds init --framework native --platform android
 mybuilds init --framework native --platform ios
 mybuilds init --framework flutter --platform android
 mybuilds init --framework flutter --platform ios
+mybuilds init --framework flutter --platform android,ios
 mybuilds init --template ./ci/mybuilds.template.yml
 ```
 
-项目维护四套模板和对应 doctor 检查。init 生成普通 mybuilds.yml，复用
+项目维护四套模板和对应 doctor 检查。双平台选择组合现有两套模板，在一个 mybuilds.yml 中生成 android/ios 命名 build，不另建第五套执行器或模板。
+init 生成普通 mybuilds.yml，复用
 run、artifact、approval、upload 四种步骤，不添加 build/flutter 等新步骤类型。
 用户可编辑生成结果，增加仓库脚本、测试、flavor、签名配置与工具参数；已有文件仍拒绝覆盖。
 自定义模板仅加载明确指定的本地 YAML，严格校验字段；不下载或执行远端模板。
 内置模板增加需要的节点标签，Flutter iOS 同时要求 Flutter、Xcode 与签名能力。
+Flutter 模板声明 version、channel、flavor 字符串参数；flavor 默认空，非空时才向 Flutter 传 --flavor，具体 flavor 需由应用工程准备。
 本地 run 检查宿主工具，远程调度匹配节点，不在 Android 节点隐式执行 iOS 构建。
 
 ## 可复用构建方案与无仓库配置的项目
 
-构建方案（build profile）是一份可复用的完整流水线，由管理员在控制端 build_profiles 中定义；
-可引用四种内置模板，也可引用控制端本地 YAML。项目在管理设置中绑定名称，多个项目可共用，运行时仍各自拥有构建号、工作区与授权。
+构建方案（build profile）是一份可复用的完整流水线，可使用内置方案或管理员在控制端 build_profiles 中定义的方案；
+可引用四种内置模板，也可引用控制端本地单 build YAML。项目的每个命名 build 绑定方案名称，多个 build 或项目可共用。
+内置方案可直接绑定，无需管理员注册同名方案；自定义名称由控制端 build_profiles 管理。方案不接受嵌套 builds。
+执行各自拥有工作区与授权，同一项目的所有 build 共用构建号计数器。
 它与 init 模板共用同一配置格式和引擎，不增加新的步骤种类，也不要求修改应用仓库。
 项目组（project group）管理项目归属；同一组内项目可以使用不同方案，项目改组不会改变已绑定方案或通知。
 
@@ -52,12 +57,17 @@ run、artifact、approval、upload 四种步骤，不添加 build/flutter 等新
 pipeline:
   source: auto
   file: mybuilds.yml
-  profile: flutter-android
-  params:
-    channel: 内测
+  builds:
+    android:
+      profile: flutter-android
+      params:
+        channel: 内测
+    ios:
+      profile: flutter-ios
 ```
 
 默认 auto 优先固定 SHA 上的仓库文件，仅在缺失时回退到绑定方案；配置语法错误或读取失败直接报错。
+仓库定义与绑定方案集合不合并；仓库使用 builds 时以该文件的定义集合为准。原单流水线格式视为 default。
 repo 模式要求仓库文件存在；profile 模式直接使用方案。项目不指定方案且仓库无配置时须明确报错，不能猜测或偷偷改用其他类型。
 repo 文件路径限制在仓库内；方案文件由管理员在控制端加载并校验，不接受仓库提供的控制端路径。
 不混合两份 steps；触发参数覆盖项目默认参数，项目默认参数覆盖所选流水线声明的默认参数，未知参数拒绝。
@@ -66,6 +76,28 @@ repo 文件路径限制在仓库内；方案文件由管理员在控制端加载
 执行前将展开后的完整流水线、参数、来源名称/路径及摘要保存为快照；重试不重新读取已变化的方案。
 项目节点限制和发布授权对两种来源都生效；不预建方案嵌套、多层 steps 合并或批量项目编排。
 具体服务端、项目设置结构见 [PLAN.md](PLAN.md)。
+
+## 一个仓库多个命名 build
+
+一个项目可定义 android、ios、android-demo 等 build，各自声明 runner、params、env、steps。
+有仓库配置时，一份 mybuilds.yml 的 builds 映射包含完整定义；没有 YAML 时，客户端初始化可以直接绑定方案：
+
+```bash
+mybuilds project init mobile-app \
+  --repo git@gitlab.example.com:team/app.git \
+  --nodes linux-android-01,mac-ios-01 \
+  --framework flutter --platform android,ios
+mybuilds trigger mobile-app --build android
+mybuilds trigger mobile-app --build android,ios
+mybuilds trigger mobile-app --all
+```
+
+以上均待实现。只存在一个 build 时可省略选择，多个时须显式选择；一个 build 仍固定一个节点、步骤顺序执行。
+批量触发固定同一个 SHA，全部参数与权限校验通过后原子入队，每个 build 分配不同的项目构建号和独立执行 ID。
+Android 可调度 Linux/macOS，iOS 调度 macOS；同项目同名 build 串行，不同 build 在容量允许时可并行。
+失败不取消其他 build，日志、产物、通知和发布记录独立，重试使用原名称/SHA/配置快照。
+同商店同应用发布仍需互斥与版本检查，不因不同 build 而绕过发布保护；不增加 build 间依赖或自动回滚。
+--file 保存仓库根目录相对路径，--settings 读取相对当前目录的本地管理设置文件；普通初始化不必额外准备设置 YAML。
 
 ## 两大商店进入 MVP
 
@@ -108,6 +140,9 @@ MVP 不能只做 TestFlight 上传而将其称为 App Store 发布；TestFlight 
 ## 用户自定义与内置能力共用执行边界
 
 构建扩展优先使用普通 run 步骤和仓库脚本，产物仍通过 artifact 明确声明。
+run 支持 sh/bash、working_dir、步骤 env 与 timeout；params 由 --param key=value 覆盖，经 env 显式映射给脚本，可作为位置参数传入。
+远程构建注入 MYBUILDS_PROJECT、MYBUILDS_BUILD_NAME、MYBUILDS_BUILD_ID、MYBUILDS_BUILD_NUMBER、Git/节点/工作区等上下文，
+不自动导出全部 params，也不继承控制端/Agent 完整环境。每步独立 shell，cd/export 不跨步保留；完整字段、变量表与脚本案例见 PLAN 的 shell 小节。
 用户已有 Fastfile/lane 可通过 upload 的 custom target 调用，其他渠道也使用同一入口。
 不预建插件市场、动态 Go 插件或通用适配器注册服务。
 
@@ -129,7 +164,7 @@ MVP 不能只做 TestFlight 上传而将其称为 App Store 发布；TestFlight 
 具体拆分见 [实施路线](SPECKIT_ROADMAP.md)；MVP 基础测试覆盖官方模板和自定义命令同一执行路径。
 飞书通知、项目发布审批流程、Webhook、cron、fir.im/generic 内置渠道与部署打磨继续后置；商店发布本身进入 MVP。
 
-必须验收：四套模板的真实产物与版本；仓库配置优先、仅缺失时方案回退、错误配置拒绝、强制来源与快照重试；自定义脚本构建；两节点调度；Google Play internal 实际可见版本；
+必须验收：四套模板的真实产物与版本、双平台组合与同仓库多 build；仓库配置优先、仅缺失时方案回退、错误配置拒绝、强制来源与快照重试；自定义脚本与参数构建；两节点独立调度；Google Play internal 实际可见版本；
 App Store Connect 可见构建与显式提交审核路径；custom 结果文件解析；错误凭据、产物不匹配、租约过期拒绝、
 上传成功但回报丢失保持 unknown，重复请求不执行第二次上传。
 正式审核和上架由商店决定，不以外部审核通过时间作为本项目测试通过条件。

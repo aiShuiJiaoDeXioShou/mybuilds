@@ -19,6 +19,7 @@
 | 技术选型 | 标准库覆盖的能力直接使用；CLI / ORM / Webhook / cron / 飞书等采用成熟第三方库 |
 | 配置 | 默认优先仓库内 `mybuilds.yml`，缺失时使用项目绑定的可复用构建方案 |
 | 项目组 | 客户端注册项目时选择归属组，未指定进入 default；支持组改名与项目迁移 |
+| 多 build | 一个项目绑定一个仓库，可定义多个命名 build；一次选择一个、多个或全部，分别调度和记录结果 |
 | 代码源 | GitLab / GitHub / Gitee / 任意自建 Git（通用 git 协议） |
 | 触发 | Webhook（含签名校验）+ 轮询，外加手动触发 |
 | 审批 | 支持发布审批（流水线中途挂起等人放行） |
@@ -74,7 +75,7 @@ cmd/mybuilds-server/  → mybuilds-server   服务端二进制
                  ├─ token create|ls|revoke
                  └─ node create|ls|drain|enable|disable|rm
 cmd/mybuilds/  → mybuilds          客户端二进制（连服务端）
-                 ├─ project init|ls|move / group create|ls|rename|rm
+                 ├─ project init|set|ls|move / group create|ls|rename|rm
                  ├─ trigger / build ls|show|cancel|retry|resolve-upload
                  ├─ logs / artifact ls|download
                  ├─ approvals / approve / reject
@@ -125,7 +126,7 @@ database:
 ### 4. 审批与执行进度持久化
 
 引擎到审批节点时保存 `waiting_approval` 并退出本次执行，释放节点与全局构建槽；调度器每 5s 查询数据库，
-已批准的任务重新入队，从审批后的步骤继续。同项目在审批期间仍保持串行，其他项目可以使用空出的槽。
+已批准的任务重新入队，从审批后的步骤继续。同项目同名 build 在审批期间仍保持串行，其他 build 可以使用空出的槽。
 挂起前节点清理临时签名资源，并确认日志和产物已回传控制端；保留工作区与节点归属。
 批准后从原节点以新租约恢复，节点离线时等待并提示；挂起不视为成功，不发送最终通知。
 审批仅允许 `approver/admin`，一期不做审批分组；记录 token 身份、时间、意见，重复或相互冲突的决定不得覆盖。
@@ -149,10 +150,10 @@ database:
 
 ### 6. 工作区、收尾与资源控制
 
-- Agent 先按控制端确定的 SHA 准备节点工作区，按项目策略选用该提交的 `mybuilds.yml` 或构建方案，
-  首次执行前由控制端确认完整配置快照；checkout 是前置操作。本地 `run` 使用当前工作树，不重置用户修改。
+- 控制端按固定 SHA 只读选择仓库定义或构建方案、校验并保存所选 build 快照后入队；
+  Agent 检出该 SHA 准备隔离工作区并执行快照，checkout 是前置操作。本地 `run` 使用当前工作树，不重置用户修改。
 - 常规步骤失败即停；成功、失败、取消均执行统一收尾：最终通知、临时 keychain 清理。通知由控制端发送，失败单独记录，不覆盖构建结果。
-- 默认每节点容量为 1、全局并发为 1，均可配置；同项目跨节点串行；记录排队时间、步骤耗时、峰值内存与工作区大小后再提高并发。
+- 默认每节点容量为 1、全局并发为 1，均可配置；同项目同名 build 跨节点串行，不同 build 可并行；记录实际资源使用后再提高并发。
 - 各节点工作区按构建隔离，复用工具自身的依赖下载缓存；iOS DerivedData 和临时 keychain 按构建隔离，不新增通用缓存系统。
 - 取消先向构建进程组发送 TERM，超时后 KILL 并回收子进程；不得杀同用户的全部 Java / Xcode 进程。Gradle 默认 `--no-daemon`，真实构建验证残留进程。
 
@@ -202,7 +203,7 @@ mybuilds run → 本机同一流水线引擎 → 临时目录
 
 完整约束见 [MULTI_NODE.md](MULTI_NODE.md)：节点注册、授权、能力匹配、并发、租约、
 失联、控制端重启、审批固定节点、日志与产物回传、签名资源和上传结果未知。
-一次流水线固定一个节点；增加节点提高不同项目的并发，不做跨节点分步执行或多控制端高可用。
+一次流水线固定一个节点；增加节点提高不同项目或同项目不同 build 的并发，不做跨节点分步执行或多控制端高可用。
 
 ## 配置文件
 
@@ -275,10 +276,16 @@ token 由数据库管理；首次启动可设置 `MYBUILDS_BOOTSTRAP_ADMIN_TOKEN
 pipeline:
   source: auto                           # auto / repo / profile
   file: mybuilds.yml                      # 仓库内相对路径
-  profile: flutter-android                # auto 回退方案，或 profile 模式指定方案
-  params:
-    version: "1.0.0"
-    channel: 内测
+  builds:                                # 无仓库配置时使用的命名 build 与方案
+    android:
+      profile: flutter-android
+      params:
+        version: "1.0.0"
+        channel: 内测
+    ios:
+      profile: flutter-ios
+      params:
+        version: "1.0.0"
 notifications:
   webhooks:
     - type: feishu
@@ -286,26 +293,87 @@ notifications:
   on: [failure]                          # 其余字段继承流水线/全局默认
 ```
 
-拟定入口为 `project add <name> --settings <本地YAML>` 和 `project set <name> --settings <本地YAML>`；
+拟定入口为 `project init/add <name> --settings <本地YAML>` 和 `project set <name> --settings <本地YAML>`；
+--settings 接受绝对路径或相对执行命令当前目录的路径，客户端读取内容后导入，不要求提交到仓库，也不每次构建重读。
+注册时 --file 则保存相对仓库根目录的流水线路径，由控制端读取固定 SHA 上的文件，两者不等价。
+--file 默认 mybuilds.yml；--framework 与 --platform 可直接绑定内置方案，无需额外项目设置文件。
+同一次命令使用 --settings 时，不得再传 --file/--framework/--platform，以免两处定义冲突。
 set 只更新文件中显式提供的顶层设置块，每个块整体替换，不改变正在执行的构建，也不把密钥明文写入数据库。
 
 ### 流水线来源与可复用构建方案
 
-仓库不再强制包含 mybuilds.yml。项目 pipeline 默认 source: auto、file: mybuilds.yml，profile 须显式选择：
+仓库不再强制包含 mybuilds.yml。项目 pipeline 默认 source: auto、file: mybuilds.yml，回退方案须显式绑定或在初始化时选择框架和平台：
 
 | source | 选用规则 |
 |---|---|
-| auto（默认） | 优先读取固定 SHA 的仓库配置；文件确实不存在时使用绑定 profile；两者都没有则报错 |
+| auto（默认） | 优先读取固定 SHA 的仓库配置；文件确实不存在时使用 pipeline.builds 绑定的方案集合；两者都没有则报错 |
 | repo | 只使用仓库配置，缺失即报错 |
-| profile | 只使用绑定方案，即使仓库里有 mybuilds.yml 也不读取 |
+| profile | 只使用绑定方案集合，即使仓库里有 mybuilds.yml 也不读取 |
 
-`build_profiles` 引用内置模板或管理员维护的完整 YAML，两种定义互斥；内置模板有 native-android、native-ios、flutter-android、flutter-ios。
+`build_profiles` 引用内置模板或管理员维护的单 build 完整 YAML，两种定义互斥；内置模板有 native-android、native-ios、flutter-android、flutter-ios，可直接绑定，无需手工注册同名方案。
 文件存在但解析错误、路径越界、权限/读取失败时不得回退；不靠文件名或仓库内容自动猜测框架、平台、签名或发布渠道。
-选用一份完整流水线，不把仓库与方案的 steps 拼接。只对声明的 params 覆盖，优先级为触发参数 > 项目 pipeline.params > 选定流水线默认参数。
+选用仓库定义或绑定方案集合，不合并两处的 build 列表，也不拼接 steps。只对声明的 params 覆盖，优先级为触发参数 > 项目 pipeline.builds.<名称>.params > 选定流水线默认参数。
+原单 build 管理写法 pipeline.profile / pipeline.params 作为 default 的简写保留，与 pipeline.builds 互斥。
 项目节点授权、发布权限和通知策略独立于来源，方案不能扩大权限。
 执行前持久化最终展开的流水线及 SHA、来源模式、文件路径或方案名称、内容摘要和参数；模板/方案后续编辑不影响已开始的构建或原提交 retry。
 本地 run 仍默认要求当前目录的 mybuilds.yml，显式 --file 缺失就报错，不连接控制端取得方案；init --template 可用于本地生成同一份方案。
 构建方案是复用配置，不引入多项目批量构建、方案嵌套继承或另一套执行器。详情见 BUILD_DISTRIBUTION。
+
+### 同仓库多个命名 build
+
+一个项目登记一个 Git 仓库，包含多个命名构建定义，例如 android、ios、android-demo；build 名称不是一次执行的 ID。
+项目组、仓库、允许节点和构建号计数器仍由项目管理；每个 build 独立声明 runner、params、env 和有序 steps。
+名称须为非空稳定标识，唯一且不包含路径分隔符；重命名定义不改写历史记录，旧任务和 retry 保留原名称与快照。
+
+仓库使用一份 mybuilds.yml，示例（待实现）：
+
+```yaml
+version: 1
+builds:
+  android:
+    runner:
+      platform: android
+      labels: [flutter, android-sdk]
+    steps:
+      - kind: run
+        name: build
+        run: bash ci/build-android.sh
+      - kind: artifact
+        paths: [build/app/outputs/bundle/release/*.aab]
+  ios:
+    runner:
+      platform: ios
+      labels: [flutter, xcode, ios-signing]
+    steps:
+      - kind: run
+        name: build
+        run: bash ci/build-ios.sh
+      - kind: artifact
+        paths: [build/ios/ipa/*.ipa]
+```
+
+原 version/runner/params/env/notifications/steps 单流水线格式视为 default，继续支持。
+多 build 格式的顶层只接受 version、builds 与公共 notifications；runner/params/env/steps 放在各 build 内，拒绝混写。
+通知沿用项目设置 > build.notifications > 文件公共 notifications > 全局 defaults；列表仍整体替换。
+不增加步骤之间的 parallel、matrix、build 依赖、自动回滚或跨节点执行单条流水线。
+
+无 YAML 时，project init --framework flutter --platform android,ios 自动登记 android/ios 两个 build，绑定内置方案；
+单平台注册生成对应平台名称的一个 build。原生双平台同样选择两套模板；用户仍需准备各平台的实际工程与签名。
+这与将两端命令放在同一个 macOS build 中顺序执行不同：命名 build 可以独立分配到 Linux/macOS 节点。
+新增或修改回退定义使用 project set --settings；仓库定义则随 Git 提交修改。
+
+trigger --build android、--build android,ios 或 --all 选择构建，--build 与 --all 互斥；
+只有一个定义时可省略选择，多个时必须明确选择。未知名称或重复选择报错，不自动猜测平台。
+本地 run 使用相同选择规则，多个 build 顺序执行，不启动本地并行调度。
+批量触发先固定一个 SHA、读取和校验完整所选定义、参数与权限，再事务分配独立构建号并创建全部执行记录；任一校验失败不部分入队。
+控制端仅通过只读 Git 操作读取该 SHA 的 YAML，不执行仓库 shell；凭据值仍在对应节点按步骤解析。
+每条记录保存 build_name、独立执行 ID、SHA、配置摘要/快照与参数；批次 ID 仅用于关联查询，不增加批次执行器。
+不同 build 的构建号不同，由项目共享计数器分配；build 名称不增加另一套计数器。
+每个执行分别拥有节点、租约、工作区、日志、产物、通知与发布记录，一个失败不取消其他；取消和 retry 均针对执行 ID。
+同项目同名 build 串行，不同 build 可在容量允许时并行；审批只保留当前 build 的互斥。
+共享同一商店应用的上传须按商店与应用身份互斥，并核对远端版本，避免不同 build 的并行发布冲突。
+上传结果为 unknown 时继续阻止该应用的新上传，先查询或人工确认；不能通过切换 build 名称绕过保护。
+后续 Webhook/轮询/cron 使用管理员显式设置的 build 名称列表；多 build 未设置自动触发范围时拒绝启用，不默认全部发布。
 
 ### Agent 配置 `~/.mybuilds/agent.yml`（待实现）
 
@@ -405,6 +473,98 @@ Google Play / App Store 的 upload 由 Go 封装第三方 fastlane；其他渠�
 
 v1 步骤**顺序执行**；多渠道先通过参数分别触发，`parallel:` 和矩阵构建等真实需求出现后再加。
 
+### shell 执行与脚本参数
+
+run 支持多行内联 shell，也支持调用仓库脚本；与 Jenkins 的 shell 使用方式类似，但不承诺 Jenkins 插件或 Groovy 语法兼容。
+参考 [Jenkins 环境变量与参数](https://www.jenkins.io/doc/book/pipeline/jenkinsfile/)、[sh 步骤](https://www.jenkins.io/doc/pipeline/steps/workflow-durable-task-step/)。
+以下补全待实现的执行约定，不代表当前 CLI 已能运行脚本。
+
+| run 步骤字段 | 默认与行为 |
+|---|---|
+| run | 必填非空脚本文本；支持 run: \| 或 bash ci/build.sh；正文不做模板替换 |
+| shell | sh（默认）或 bash；分别以 sh -e / bash -e -o pipefail 执行，不加载交互或登录配置；缺少所选 shell 报错 |
+| working_dir | 默认仓库根目录；相对路径始终以仓库根目录解析，必须存在且实际路径不能经符号链接越界 |
+| env | 步骤级环境变量，覆盖同 build 的 env；值支持声明参数的模板变量与节点凭据引用 |
+| timeout | 可选正数 duration，例如 30m；省略时不设步骤时间上限，取消与租约到期仍生效 |
+
+每个 run 启动独立 shell，前一步的 cd/export 不延续；文件在本次工作区保留。脚本位置参数由普通命令传入，值须引用，例如 bash ci/build.sh "$APP_VERSION" "$FLAVOR"。
+默认非零退出停止当前 build；超时和取消均终止本次进程组并执行收尾。引擎不默认启用 set -x，避免回显凭据。
+run 内未启动新的 bash 时使用 shell 字段对应的解释器；显式 bash ci/build.sh 会启动子 Bash，外层选项不会自动传入，脚本自行设置 set -euo pipefail。
+产物 paths 始终相对仓库根目录，与某一步 working_dir/cd 无关。
+
+params 定义允许用户传入的普通参数及默认值，MVP 采用字符串值，不预建复杂参数类型或表单。
+参数名称须符合 [A-Za-z_][A-Za-z0-9_]*，不得占用既有上下文模板变量名；params 不自动变成环境变量，由 env 显式映射，避免与工具和系统变量冲突。
+run/trigger 支持重复 --param key=value，按第一个等号分割；未知参数、重复键或空名称报错，空字符串值允许。
+--version 与 --channel 是相应 --param 的快捷形式，同次传入同名 --param 时拒绝，不按参数顺序决定优先级。
+批量选择时参数用于全部选中 build，所有 build 都必须声明该参数；参数不同则分别触发。
+本地覆盖优先于 YAML 默认值；远程覆盖优先于项目同名 build 参数，再优先于所选流水线默认值。
+参数通过环境变量传入，不把值直接拼进 run 正文；密钥不能作为 --param，须使用授权节点的凭据引用。
+
+远程构建自动提供以下上下文变量，使用 MYBUILDS_ 前缀，YAML env 不允许覆盖这些引擎变量：
+
+| 环境变量 | 内容 |
+|---|---|
+| MYBUILDS_PROJECT | 项目名 |
+| MYBUILDS_BUILD_NAME | 命名 build，例如 android |
+| MYBUILDS_BUILD_ID | 本次执行 ID，与命名 build 不同 |
+| MYBUILDS_BUILD_NUMBER | 项目统一分配的构建号 |
+| MYBUILDS_GIT_SHA | 固定的完整提交 SHA |
+| MYBUILDS_GIT_BRANCH | 授权来源分支 |
+| MYBUILDS_NODE_NAME | 执行节点名称 |
+| MYBUILDS_WORKSPACE | 本次仓库工作区的绝对路径 |
+| MYBUILDS_STEP_NAME | 当前 run 步骤名称 |
+
+以上远程上下文不在本地伪造；本地 run 只提供已知的 build 名称、工作区、步骤名与可检测的 Git 信息，配置模板引用远程专属变量应明确报错。
+run 正文不扫描或替换变量，缺失环境变量由 shell/脚本处理；可用 ${MYBUILDS_BUILD_NUMBER:?缺少远程构建号} 显式失败。
+本地版本调试可自行声明普通 build_number 参数并映射给脚本，不创建控制端构建号。
+既有 {{project}}、{{build.number}}、{{git.sha}}、{{git.branch}} 等字段模板保留，新增 {{build.name}}、{{build.id}}；run 正文仍由 shell 解析 $VAR。
+环境构成为允许的系统/工具变量 < build.env < step.env，加上不可覆盖的引擎上下文。
+基础白名单含 PATH、HOME、TMPDIR、LANG、LC_ALL，以及检测到的 JAVA_HOME、ANDROID_HOME、ANDROID_SDK_ROOT、DEVELOPER_DIR；
+密钥只注入声明引用它的步骤，控制端/Agent token、数据库配置、其他步骤密钥与通知 Webhook 不继承。
+普通参数和构建信息会保存为快照；凭据只保存引用，预览、错误与分段日志脱敏。
+
+参数与脚本示例（同样可放在 builds.android 内；本例使用原单 build 格式）：
+
+```yaml
+version: 1
+params:
+  version: "1.0.0"
+  channel: internal
+  flavor: production
+env:
+  APP_VERSION: "{{version}}"
+  BUILD_CHANNEL: "{{channel}}"
+  FLAVOR: "{{flavor}}"
+steps:
+  - kind: run
+    name: package
+    shell: bash
+    working_dir: .
+    timeout: 30m
+    env:
+      KEYSTORE_PASSWORD: "${ANDROID_KEYSTORE_PASSWORD}"
+    run: |
+      bash ci/build-android.sh "$APP_VERSION" "$FLAVOR"
+```
+
+ci/build-android.sh 可以读取位置参数或环境变量：
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+app_version="${1:?缺少版本参数}"
+flavor="${2:?缺少 flavor 参数}"
+flutter pub get
+flutter build appbundle --release \
+  --flavor "$flavor" \
+  --build-name "$app_version" \
+  --build-number "${MYBUILDS_BUILD_NUMBER:?需要远程构建号}"
+```
+
+调用示例：mybuilds trigger mobile-app --build android --param version=1.2.0 --param flavor=production。
+不同平台的 configuration、scheme、entrypoint、export_options 等也可声明为普通参数，再由 env 映射给脚本；不需要引擎为每个工具增加专属 flag。
+发布继续使用 upload 步骤；任意 shell 自行发布不具备系统的发布意图与未知结果核对保证。
+
 ## 触发链路
 
 | 来源 | 识别方式 | 校验 |
@@ -418,7 +578,7 @@ v1 步骤**顺序执行**；多渠道先通过参数分别触发，`parallel:` �
 先校验原始请求体和事件，再在事务中持久化事件与排队任务，成功后响应；限制请求体大小，token 不放 URL。
 
 事件去重使用 provider 的 delivery ID（例如 GitHub `X-GitHub-Delivery`）；没有事件 ID 的来源，
-按项目、分支、SHA、构建参数合并已有排队、运行中、待审批或成功的自动构建。
+按项目、build 名称、分支、SHA、构建参数合并已有排队、运行中、待审批或成功的自动构建。
 手动重跑及不同版本 / 渠道参数的构建允许同一 SHA，不能仅按 SHA 永久去重。
 参考 [GitHub Webhook 重投与 delivery ID](https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks)。
 v1 只处理 push 事件，tag/PR 事件忽略。分支用 `--branches` 的 glob 过滤。
@@ -461,7 +621,7 @@ internal/scm/hook.go            # webhooks/v6（GitHub/GitLab）+ Gitee/自建�
 
 internal/server/server.go       # 服务生命周期、组件组装与优雅关闭
 internal/server/http.go         # net/http 路由、鉴权、JSON API、日志 SSE 与产物下载
-internal/server/scheduler.go    # 定时/轮询 + 并发槽 + 同项目串行 + 审批扫描
+internal/server/scheduler.go    # 定时/轮询 + 并发槽 + 同项目同名 build 串行 + 审批扫描
 internal/server/recovery.go     # 持久化租约核对、启动恢复与中断状态处理
 internal/agent/agent.go         # 领取/续租、节点执行与断网停止
 internal/agent/report.go        # 脱敏日志、事件与产物回传
@@ -496,8 +656,8 @@ DELETE /api/groups/{id}                    # 删除空组，default 不可删（
 GET    /api/doctor                         # 控制端体检（admin）
 GET    /api/nodes                          # 节点健康、标签与容量（admin）
 GET    /api/nodes/{id}/doctor              # 节点工具链体检（admin）
-POST   /api/projects/{p}/builds            # 手动触发
-GET    /api/builds?project=&status=&limit= # 构建列表（分页）
+POST   /api/projects/{p}/builds            # 手动触发，build_names 或 all，固定一个 SHA，返回执行 ID 列表
+GET    /api/builds?project=&build_name=&status=&limit= # 构建列表（分页）
 GET    /api/builds/{id}                    # 单个构建详情 + 步骤状态
 GET    /api/builds/{id}/log?step=&follow=1 # 日志（follow 走 SSE tail）
 POST   /api/builds/{id}/cancel             # 保存取消意图，节点终止本次进程组并确认
@@ -510,6 +670,8 @@ GET    /api/artifacts/{id}/{file}          # 产物下载
 ```
 
 项目列表支持 group 查询参数，构建列表也支持按项目当前归属的 group 过滤；返回项目时包含组 ID 与名称。
+触发 API 中 build_names 与 all 互斥，多 build 不得隐式全部触发；批量校验、权限和入队为一个原子操作。
+响应包含 batch_id 与每个 build_name、执行 ID、构建号；查询可按 batch_id 过滤，执行详情和产物均标明 build 名称。
 客户端和控制端本机管理命令复用同一组管理逻辑与事务校验，不维护两套归属信息。
 
 ### Agent HTTP 接口（待 007 契约细化）
@@ -536,6 +698,8 @@ GET    /api/artifacts/{id}/{file}          # 产物下载
 | 同上：节点授权 | `--nodes` 必填，逗号分隔；`--default-node` 可选且须在允许集合内 | 限定项目可用节点；未声明 runner 时使用默认节点 |
 | 同上：版本 | `--build-number-start` 默认 1，正整数 | 设置首次分配的构建号，兼容商店既有版本 |
 | 同上：项目设置 | `--settings <本地YAML>` 可选 | 绑定 pipeline 来源/构建方案与默认参数；直接配置通知 Webhook 随通知功能接入 |
+| 同上：流水线路径 | `--file` 默认 mybuilds.yml | 保存仓库根目录相对路径，与 --settings 互斥 |
+| 同上：内置方案 | `--framework native/flutter` 与 `--platform android/ios/android,ios` 配套传入 | 登记对应命名 build 与回退方案；不生成仓库文件，与 --settings 互斥 |
 | 同上：自动触发（后续） | `--hook` 默认 false；`--poll` 如 60s；`--schedule` 为五段 cron 表达式 | 接入 Webhook、轮询、定时构建 |
 | `project set <name>` | `--settings <本地YAML>` 必填 | 更新显式提供的设置块；正在执行的构建使用原快照 |
 | `project ls` / `project rm <name>` | ls 支持 `--group` 与 `--json` | 列表/删除；有活动、待审批或未知发布结果时拒绝删除 |
@@ -584,19 +748,20 @@ mybuilds-agent version
 
 | 命令 | 参数与默认值 | 用途 |
 |---|---|---|
-| `init` | `--framework`：native/flutter，默认 native；`--platform`：android/ios，选择内置模板时必填 | 生成 mybuilds.yml，已有文件拒绝覆盖 |
+| `init` | `--framework`：native/flutter，默认 native；`--platform`：android/ios/android,ios，选择内置模板时必填 | 单平台生成单流水线；双平台生成一个含两个命名 build 的 mybuilds.yml，已有文件拒绝覆盖 |
 | 同上：用户模板 | `--template <本地文件>`，不能与 framework/platform 混用 | 校验并生成用户模板 |
-| `project init <name>` | `--repo`、`--nodes` 必填；`--group` 默认 default；provider/branches/default-node/build-number-start/settings 与服务端 project add 一致 | 通过 API 注册远程项目，选择归属组；需要 admin |
+| `project init <name>` | `--repo`、`--nodes` 必填；`--group` 默认 default；provider/branches/default-node/build-number-start/settings/file/framework/platform 与服务端 project add 一致 | 注册远程项目、选择分组与命名 build；需要 admin；框架/平台绑定方案不要求仓库有 YAML |
+| `project set <name>` | `--settings <本地YAML>` 必填 | 更新显式设置块，可修改或增加回退 build；需要 admin |
 | `project ls` | `--group <组名>` 可选；`--json` | 列出项目及当前归属；需要 admin |
 | `project move <name>` | `--group <组名>` 必填 | 修改项目归属；需要 admin |
 | `group create <name>` | 组名必填 | 创建项目组；需要 admin |
 | `group ls` | `--json` | 列出项目组；需要 admin |
 | `group rename <name>` | `--name <新名称>` 必填 | 修改普通组名；需要 admin |
 | `group rm <name>` | 组名必填 | 删除空组；需要 admin |
-| `run` | `--file` 默认 mybuilds.yml；`--step <name>` 可选；`--dry-run` 默认 false | 本地执行或脱敏预览；指定步骤仍须校验输入与产物依赖 |
-| `trigger <project>` | `--branch` 默认 main；`--ref <sha>` 与 branch 显式传入互斥；`--version`、`--channel` 可选 | 远程触发，参数未覆盖时取流水线值；ref 必须属于授权分支 |
-| `build ls` | `--project`、`--group`、`--status` 可选；`--limit` 默认 20；`--offset` 默认 0；`--json` | 过滤与分页；项目与组同时传入时取交集 |
-| `build show <id>` | `--json` | 查看节点、步骤、工具版本、产物与发布记录 |
+| `run` | `--file` 默认 mybuilds.yml；`--build <名称列表>` / `--all` 互斥；`--param key=value` 可重复；`--step <name>` 可选；`--dry-run` 默认 false | 本地执行或脱敏预览，多 build 顺序执行；--step 仅允许选中一个 build，仍校验依赖 |
+| `trigger <project>` | `--branch` 默认 main；`--ref <sha>` 与 branch 显式传入互斥；`--build <名称列表>` / `--all` 互斥；`--param key=value` 可重复；`--version`、`--channel` 可选 | 固定一个 SHA，返回所选 build 的独立执行 ID；单 build 可省略选择；ref 须属于授权分支 |
+| `build ls` | `--project`、`--group`、`--build-name`、`--batch`、`--status` 可选；`--limit` 默认 20；`--offset` 默认 0；`--json` | 按命名 build 或批次查询；项目与组同时传入时取交集 |
+| `build show <id>` | `--json` | 查看 build 名称、批次、节点、步骤、工具版本、产物与发布记录 |
 | `build cancel <id>` / `build retry <id>` | admin 权限 | 请求取消/用原 SHA、配置和参数生成新构建号 |
 | `build resolve-upload <id>` | `--step`、`--result sent/not-sent`、`--note` 均必填；admin 权限 | 依据远端证据确认未知上传；sent 确认远端已接收，不推断已上架 |
 | `logs <build-id>` | `--step <name>` 可选；`-f/--follow` 默认 false | 历史日志或 SSE 跟随 |
@@ -618,6 +783,12 @@ mybuilds build ls --project app-android --limit 20 --json
 mybuilds logs 123 --follow
 mybuilds artifact ls 123
 mybuilds doctor --node linux-android-01
+mybuilds project init mobile-app \
+  --repo git@gitlab.example.com:team/app.git \
+  --nodes linux-android-01,mac-ios-01 \
+  --framework flutter --platform android,ios
+mybuilds trigger mobile-app --build android --param version=1.2.0 --param flavor=production
+mybuilds trigger mobile-app --all
 ```
 
 项目组示例（待实现）：
@@ -646,7 +817,7 @@ mybuilds group rm apps
 
 - [x] `000-project-bootstrap`：Go 单模块、Cobra、双 CLI 帮助与共享 version；README 与 AI 阅读入口
 - [ ] `001-pipeline-preview`：复用已有入口，引入 YAML，增加 `init` 和 `run --dry-run`；其他依赖随对应阶段加入并锁定版本
-- [ ] `internal/config/pipeline.go`：严格字段与步骤校验、参数默认值、按字段插值；保留 run 正文中的 shell 变量
+- [ ] `internal/config/pipeline.go`：单流水线 default 与多 build 格式、选择规则、参数默认值/覆盖与按字段插值；保留 run 正文中的 shell 变量
 - [ ] `internal/pipeline/mask.go` + 单测
 - [ ] `mybuilds run --dry-run` 打印脱敏计划，不触发命令或外部动作
 
@@ -654,6 +825,7 @@ mybuilds group rm apps
 
 - [ ] `internal/scm/git.go`：按 SHA 准备节点工作区；本地 run 使用当前工作树，不改写用户仓库
 - [ ] `run` / `artifact`：顺序执行、失败即停、统一收尾，产物大小与 SHA-256 记录
+- [ ] run 的 sh/bash、working_dir、step.env、timeout 与脚本参数；独立 shell、不继承 cd/export、受限环境与上下文变量
 - [ ] 节点工作区 `<agent.data_dir>/builds/<project>/<number>/{src,logs,artifacts}`；本地结果写临时目录，日志按步骤分文件
 - [ ] ctx 取消、进程组 TERM/KILL 与回收；按平台隔离实现，避免影响远程客户端编译
 - [ ] 假项目验证成功、失败、取消均执行收尾，日志与 dry-run 脱敏
@@ -667,12 +839,13 @@ mybuilds group rm apps
 ### P2 控制端 + 多节点调度
 
 - [ ] 加入 Viper、GORM 与双驱动；验证纯 Go SQLite 驱动兼容性，设置 WAL / 外键 / 锁等待
-- [ ] 模型保存构建配置快照、参数、SHA、当前步骤、工具版本与产物；项目构建号事务分配
+- [ ] 模型保存 build_name、batch_id、构建配置快照、参数、SHA、当前步骤、工具版本与产物；项目构建号事务分配
 - [ ] 项目组模型、default 初始化、客户端 project init 选组、组改名/空组删除与项目事务迁移；构建历史保留，列表按当前归属过滤
+- [ ] 项目命名 build 设置、--file 与 --settings 路径区分、批量固定 SHA/参数与权限校验、原子入队、批次关联查询
 - [ ] 控制端具名构建方案、项目 auto/repo/profile 来源选择；仅缺文件回退，错误配置拒绝，执行快照与重试不受方案编辑影响
 - [ ] SQLite 与 PostgreSQL 跑相同的 CRUD / 事务 / 条件状态更新 / 唯一约束 / 分页用例
 - [ ] token 摘要存储、一次性管理员初始化、创建 / 撤销 / 身份审计，统一读写权限检查
-- [ ] 数据库持久化队列、默认并发 1、同项目串行，状态变更使用条件更新；单控制端分配给多个 Agent 执行
+- [ ] 数据库持久化队列、默认并发 1、同项目同名 build 串行，状态变更使用条件更新；单控制端分配给多个 Agent 执行
 - [ ] `net/http` JSON API、鉴权、日志 SSE tail、受鉴权的产物下载与控制端/节点 doctor
 - [ ] 节点注册/独立 token/标签/容量/drain，Agent 跨主机 HTTPS 主动领取与续租
 - [ ] 原子节点分配、attempt/租约归属、过期回报拒绝、断网停止，无匹配节点时保持排队
@@ -682,7 +855,7 @@ mybuilds group rm apps
 
 ### P3 重启恢复与审批
 
-- [ ] approval 保存进度并释放全局槽；5s 扫描已批准任务重新入队，保持同项目串行
+- [ ] approval 保存进度并释放全局槽；5s 扫描已批准任务重新入队，保持同项目同名 build 串行
 - [ ] `approve` / `reject` API + CLI：角色、身份、时间、意见、重复决定与取消竞态检查
 - [ ] 启动时恢复排队与待审批任务；控制端恢复与节点核对；节点租约过期的普通执行任务标为 interrupted，不自动迁移重跑 shell
 - [ ] 重试固定原 SHA / 配置 / 参数并分配新构建号，不受分支后续提交影响
@@ -720,7 +893,7 @@ mybuilds group rm apps
 - [ ] `build ls` 过滤与分页、日志流重连、doctor 输出打磨
 - [ ] 基于真实构建数据调整并发；按实际瓶颈优化依赖缓存，不新增通用缓存系统
 
-MVP 包含手动触发、原生与 Flutter 双平台、多节点执行、日志/产物下载及两大商店分发与 custom 扩展。
+MVP 包含手动触发、同仓库多命名 build、原生与 Flutter 双平台、多节点执行、日志/产物下载及两大商店分发与 custom 扩展。
 Webhook、cron、机器人通知、项目发布审批流程和部署打磨可以后置；发布授权、租约与上传结果未知处理不能后置。
 Google Play/App Store 接入不自写完整市场协议；具体认证、默认发布模式、前置条件及验收见 BUILD_DISTRIBUTION。
 
@@ -728,11 +901,11 @@ Google Play/App Store 接入不自写完整市场协议；具体认证、默认�
 
 **单元测试（只测值得测的）**
 
-- `internal/config`：未知字段 / 模板变量报错、env 字段插值、run 正文保留 `${VAR}`、引用的密钥缺失时报错、dry-run 无副作用
+- `internal/config`：单/多 build 混写拒绝、名称选择与参数校验、未知字段 / 模板变量报错、env 字段插值、run 正文保留 `${VAR}`、引用的密钥缺失时报错、dry-run 无副作用
 - `internal/store`：**双驱动**跑同一套事务 / 构建号分配 / 去重 / 条件更新 / 分页用例；token 撤销后不得再次初始化
-- `internal/pipeline`：成功 / 失败 / 取消均收尾，分段日志中的密钥被脱敏，产物路径及符号链接不能越界
+- `internal/pipeline`：脚本参数与环境隔离、sh/bash、超时、工作目录越界拒绝、独立 shell；成功 / 失败 / 取消均收尾，分段日志中的密钥被脱敏，产物路径及符号链接不能越界
 - `internal/scm/hook.go`：**四种来源的签名校验**，含 GitHub HMAC 篡改 body 必须拒绝、错误 token 必须拒绝
-- `internal/server`：同项目串行、审批释放全局槽、重复事件只入队一次、同 SHA 不同参数可触发、轮询游标与入队同时提交
+- `internal/server`：批量同 SHA/原子入队、统一计数不重复、同项目同名 build 串行及不同 build 并行、审批释放全局槽、重复事件只入队一次、同 SHA 不同参数可触发、轮询游标与入队同时提交
 - `internal/agent` / 节点协议：独立身份、双节点竞争、错误平台、租约过期、断网取消、幂等回报、日志与产物回传
 - 审批与发布：重复批准 / 取消不能覆盖终态；重启后原节点正确继续；未知上传结果不能自动重发
 
@@ -745,11 +918,13 @@ mybuilds-server serve --config ~/.mybuilds/server.yml &   # 起控制端
 # 按节点配置，另行启动至少两个 mybuilds-agent serve 进程
 mybuilds trigger demo --branch main --version 1.0.0 --channel 内测
 # 四类 Webhook 使用对应 testdata 与请求头签名 / token 发送，不能用 URL token 代替 GitHub HMAC
-mybuilds logs <id> -f               # 看到流式日志
+build_exec_id=123                   # 替换为 trigger 返回的执行 ID
+mybuilds logs "$build_exec_id" -f  # 看到流式日志
 mybuilds approvals                  # 卡在 approval 步骤
-mybuilds approve <id> && mybuilds build show <id>   # 继续并成功
+mybuilds approve "$build_exec_id"
+mybuilds build show "$build_exec_id"  # 检查恢复后的状态
 # 构建失败 / 取消 → 收尾通知与 keychain 清理仍执行，进程无残留
-# 一个任务等审批 → 其他项目仍可构建，同项目保持串行
+# 一个任务等审批 → 其他 build 仍可构建，同项目同名 build 保持串行
 # kill 控制端 → 重启 → 核对节点租约并恢复排队 / 待审批，不误判仍在续租的构建
 # 节点断网 / 崩溃 → 租约过期，本次进程停止；不把已开始构建自动迁移到另一节点
 # 分支更新后 retry → 原 SHA / 配置 / 参数、新构建号；缺失工作区不能静默重跑
@@ -766,7 +941,7 @@ mybuilds approve <id> && mybuilds build show <id>   # 继续并成功
 4. 轮询模式：手动在仓库推一次 commit，确认在间隔内被探测并触发
 5. 飞书官方 SDK：真实 Webhook 发消息成功，错误凭据 / 签名能报告失败，日志不泄露密钥
 6. Android / iOS 取消与失败后无本次构建残留进程、临时 keychain；节点独立缓存且不共享构建工作区
-7. 两个真实节点执行不同项目，同项目跨节点串行；iOS 不分配给 Linux，无合格节点明确排队
+7. 两个真实节点执行不同项目，同项目同名 build 跨节点串行；iOS 不分配给 Linux，无合格节点明确排队
 8. 暂停原 Agent 后模拟过期回报，确认拒绝；审批后原节点离线不迁移，失联上传不自动重发
 9. Flutter Android/iOS 真实构建，核对版本、flavor、签名与产物；自定义仓库脚本同路径执行
 10. Google Play internal 轨道可见真实 AAB；App Store Connect 可见真实 IPA，显式提交审核路径可验证
