@@ -20,6 +20,7 @@
 | 配置 | 默认优先仓库内 `mybuilds.yml`，缺失时使用项目绑定的可复用构建方案 |
 | 项目组 | 客户端注册项目时选择归属组，未指定进入 default；支持组改名与项目迁移 |
 | 多 build | 一个项目绑定一个仓库，可定义多个命名 build；一次选择一个、多个或全部，分别调度和记录结果 |
+| MVP 执行控制 | build/步骤 when、参数约束、build 总超时、post 收尾、日志时间戳、变更筛选、触发等待窗口、项目保留策略和测试报告 |
 | 代码源 | GitLab / GitHub / Gitee / 任意自建 Git（通用 git 协议） |
 | 触发 | Webhook（含签名校验）+ 轮询，外加手动触发 |
 | 审批 | 支持发布审批（流水线中途挂起等人放行） |
@@ -226,7 +227,7 @@ build_profiles:                         # 可复用构建方案，名称由管�
   company-android:
     file: ~/.mybuilds/profiles/company-android.yml  # 用户维护的完整流水线
 
-# 以下为后续运维/通知功能，MVP 可省略
+# retention 属于 MVP；notifications 随后续通知功能接入
 retention:
   builds: 100                           # 每项目保留数量
   days: 30                              # 保留天数；活动/待审批/未知上传结果受保护
@@ -259,7 +260,7 @@ token 由数据库管理；首次启动可设置 `MYBUILDS_BOOTSTRAP_ADMIN_TOKEN
   基线默认 enabled: true、on: [success, failure, cancelled]、webhooks: []，直接填地址即可使用。
   enabled: false 明确关闭通知；webhooks: [] 明确不发送。所有通知层都未配置时不发送。
   null、未知 type、无效 URL 或缺失环境引用均明确报错；发送失败不改投全局 Webhook。
-- approval.notify 使用布尔值，默认 true，沿用最终 webhooks 并遵守 enabled；不再选择机器人名称。
+- approval.notify 使用布尔值，默认 false；通知模块完成后可显式开启，沿用最终 webhooks 并遵守 enabled，不再选择机器人名称；MVP CLI 审批不依赖通知。
 - 通知仍由控制端发送；URL 与可选签名密钥属于敏感值，日志、dry-run、错误和详情输出均脱敏。
   直接填写的敏感值在导入或读取时自动保存至控制端受限凭据文件（0600），数据库/执行快照仅存内部引用，
   不要求用户预注册；环境引用从控制端受限环境解析，不把通知凭据注入构建进程。
@@ -353,6 +354,7 @@ builds:
 ```
 
 原 version/runner/params/env/notifications/steps 单流水线格式视为 default，继续支持。
+单流水线与每个命名 build 均可声明 when、timeout、post、reports；不增加新的普通步骤类型。
 多 build 格式的顶层只接受 version、builds 与公共 notifications；runner/params/env/steps 放在各 build 内，拒绝混写。
 通知沿用项目设置 > build.notifications > 文件公共 notifications > 全局 defaults；列表仍整体替换。
 不增加步骤之间的 parallel、matrix、build 依赖、自动回滚或跨节点执行单条流水线。
@@ -365,7 +367,8 @@ builds:
 trigger --build android、--build android,ios 或 --all 选择构建，--build 与 --all 互斥；
 只有一个定义时可省略选择，多个时必须明确选择。未知名称或重复选择报错，不自动猜测平台。
 本地 run 使用相同选择规则，多个 build 顺序执行，不启动本地并行调度。
-批量触发先固定一个 SHA、读取和校验完整所选定义、参数与权限，再事务分配独立构建号并创建全部执行记录；任一校验失败不部分入队。
+批量触发先固定一个 SHA、读取和校验完整所选定义、参数与权限，再判断 build 级 when；任一校验失败不部分入队。
+事务创建全部选择结果，满足条件的任务分配构建号并入队，不满足的记录 skipped、原因与空构建号，不分配节点。
 控制端仅通过只读 Git 操作读取该 SHA 的 YAML，不执行仓库 shell；凭据值仍在对应节点按步骤解析。
 每条记录保存 build_name、独立执行 ID、SHA、配置摘要/快照与参数；批次 ID 仅用于关联查询，不增加批次执行器。
 不同 build 的构建号不同，由项目共享计数器分配；build 名称不增加另一套计数器。
@@ -453,7 +456,7 @@ steps:
 
   - kind: approval                      # 挂起等人放行
     name: 发布到内测渠道
-    notify: true                        # 使用项目最终通知配置
+    notify: false                       # MVP 通过 CLI 审批；通知模块完成后可开启
 
   - kind: upload                        # 内置分发，非 shell 拼 curl
     target: google_play                 # google_play | app_store | custom（MVP）
@@ -492,7 +495,7 @@ run 支持多行内联 shell，也支持调用仓库脚本；与 Jenkins 的 she
 run 内未启动新的 bash 时使用 shell 字段对应的解释器；显式 bash ci/build.sh 会启动子 Bash，外层选项不会自动传入，脚本自行设置 set -euo pipefail。
 产物 paths 始终相对仓库根目录，与某一步 working_dir/cd 无关。
 
-params 定义允许用户传入的普通参数及默认值，MVP 采用字符串值，不预建复杂参数类型或表单。
+params 定义允许用户传入的普通参数及默认值，MVP 采用字符串值，支持默认值简写及 description/required/choices 约束，不预建复杂类型或表单。
 参数名称须符合 [A-Za-z_][A-Za-z0-9_]*，不得占用既有上下文模板变量名；params 不自动变成环境变量，由 env 显式映射，避免与工具和系统变量冲突。
 run/trigger 支持重复 --param key=value，按第一个等号分割；未知参数、重复键或空名称报错，空字符串值允许。
 --version 与 --channel 是相应 --param 的快捷形式，同次传入同名 --param 时拒绝，不按参数顺序决定优先级。
@@ -565,6 +568,152 @@ flutter build appbundle --release \
 不同平台的 configuration、scheme、entrypoint、export_options 等也可声明为普通参数，再由 env 映射给脚本；不需要引擎为每个工具增加专属 flag。
 发布继续使用 upload 步骤；任意 shell 自行发布不具备系统的发布意图与未知结果核对保证。
 
+### MVP 条件执行 when
+
+when 可写在整个 build 或 run/artifact/approval/upload 步骤上，省略时正常执行。
+只接受 branches（分支 glob 列表）、params（已声明参数与目标字符串的映射）、changes（仓库相对路径 glob 列表）。
+不同字段 AND，列表内 OR，多个 params 条件 AND；比较使用冻结的最终参数，区分大小写，不解析 shell、Groovy 或任意表达式。
+空 when、空匹配列表、未知字段/参数或非法模式报错，不能当成条件不满足；即使 build 会跳过，也先校验配置与权限。
+条件配置与输入事实、判定结果和原因持久化，审批恢复和 retry 沿用快照，不重读最新分支或参数。
+
+build 级条件在节点分配前判断，未满足时记录 skipped，不占节点或消耗移动端构建号，不发送成功通知。
+步骤级条件在正常顺序到达该步时判断，不满足记录 skipped 后继续；失败即停仍生效，不能用 when 执行失败后的普通步骤。
+全部选择均跳过时批次显示 skipped；单个 build 的全部普通步骤跳过也显示 skipped，未启动执行的 build 不运行 post。
+when 不授予权限；所选配置含 upload 仍要求发布权限，不能靠未满足的条件绕过鉴权。
+如果发布前的 approval 被跳过，后续 upload 不能视为已批准：应同时跳过发布，否则因缺少批准而阻止。
+上传的应用、版本、唯一产物、摘要、租约与 unknown 状态保护继续生效，所需 artifact 被跳过不会让发布使用旧产物。
+
+changes 使用区分大小写的仓库根目录相对路径，复用 doublestar glob；新增/修改/删除均匹配，重命名检查新旧路径。
+自动触发对比同项目、同 build、同分支上次成功构建 SHA 与本次 SHA，冻结基线与完整改动列表。
+首次构建或比较基线缺失/不可取得时按完整构建处理，记录原因；仓库本身读取或配置校验失败仍报错，不假装有变更。
+公共代码、依赖清单、ci 和 mybuilds.yml 应加入 changes，避免仅匹配平台目录造成漏构建。
+手动触发和本地 run 默认不做 changes 路径过滤，分支和参数条件仍生效；原提交 retry 使用原条件事实。
+本地执行分支条件时需能可靠确定当前 Git 分支，否则明确报错；dry-run 缺少运行事实时显示待确定，不执行 Git 网络请求或命令。
+
+条件发布示例（待实现）：
+
+```yaml
+version: 1
+builds:
+  android:
+    when:
+      changes: [android/**, lib/**, pubspec.*, ci/**, mybuilds.yml]
+    runner:
+      platform: android
+      labels: [flutter, android-sdk]
+    params:
+      channel:
+        default: internal
+        description: 发布渠道
+        choices: [internal, production]
+    steps:
+      - kind: run
+        name: package
+        run: bash ci/build-android.sh
+      - kind: artifact
+        name: collect
+        paths: [build/app/outputs/bundle/release/*.aab]
+      - kind: approval
+        name: approve-production
+        notify: false
+        when:
+          branches: [main]
+          params: {channel: production}
+      - kind: upload
+        name: publish-production
+        when:
+          branches: [main]
+          params: {channel: production}
+        target: google_play
+        file: "*.aab"
+        track: production
+        credentials: "${GOOGLE_PLAY_CREDENTIALS_FILE}"
+```
+
+### MVP 参数约束、超时与收尾
+
+params 的字符串简写等价于 default；对象形式只接受 default（字符串）、description（字符串）、required（布尔，默认 false）、choices（非空且不重复的字符串列表）。
+最终参数优先级不变，先合并再校验：required 为 true 时必须有非空值，choices 要求值属于列表，默认值也必须有效。
+可选参数无默认值时取空字符串；不能通过跳过 when 绕过参数错误。参数仍经 env 映射，密钥不进入普通参数或 CLI。
+
+build.timeout 是可选正数 duration；累计 Agent checkout、普通步骤和产物处理的实际执行时间，排队、等待审批不计入，post 使用独立预算。
+步骤 timeout 与剩余 build 预算取较小值；批准后延续剩余预算，控制端/Agent 重启不重置，retry 作为新执行获得原配置预算。
+超时停止本次进程组，记录 timeout 原因及失败结果；不会自动取消批次内其他 build 或重发上传。
+
+post 复用现有 run/artifact 结构，仅支持 success、failure、always 三个有序列表和 timeout（整个收尾预算，默认 2m）。
+普通步骤和测试报告先确定结果，再运行对应 success/failure，最后运行 always；取消只运行 always，节点失联或执行权过期不在其他节点运行用户收尾脚本。
+每个收尾步骤受剩余预算限制；一项失败或超时仍尝试剩余可运行项，预算耗尽则记录未执行项。
+收尾失败使原成功结果变为失败，但不覆盖原失败/取消/上传 unknown 的证据，也不再次进入 failure 列表。
+系统进程回收与临时 keychain 清理独立执行，不允许用户 post 替代或跳过；post 不含 approval/upload。
+远程记录收尾进度与结果，已开始但结果未知的收尾不会因重启而自动重跑；任意用户 shell 的外部副作用仍不可自动识别。
+
+```yaml
+version: 1
+timeout: 1h
+params:
+  configuration:
+    default: Release
+    description: 编译配置
+    required: true
+    choices: [Debug, Release]
+env:
+  CONFIGURATION: "{{configuration}}"
+steps:
+  - kind: run
+    name: test
+    run: bash ci/test.sh
+post:
+  timeout: 2m
+  failure:
+    - kind: run
+      name: diagnostics
+      run: bash ci/diagnostics.sh
+  always:
+    - kind: run
+      name: cleanup
+      run: bash ci/cleanup.sh
+```
+
+### MVP 日志、测试报告与保留策略
+
+日志默认附带 UTC 时间戳、执行 ID、build 名称、步骤名称和输出流；同时保留 Agent 事件序号及服务端接收时间，跨节点时钟误差不改变事件顺序。
+历史输出、SSE 与 --json 使用同一元数据，先按分段流脱敏再落盘/传输；无需每个项目开关 timestamps。
+
+每个 build 可声明 reports.junit.paths（仓库相对 glob 列表）与 required（默认 true），例如下面的单 build 配置：
+
+```yaml
+version: 1
+steps:
+  - kind: run
+    name: test
+    run: bash ci/test.sh
+reports:
+  junit:
+    paths: [build/test-results/**/*.xml]
+    required: true
+```
+
+执行后即使测试命令失败也尝试收集报告，复用产物路径/符号链接/大小/摘要校验；不采集其他 build 或旧工作区文件。
+使用 Go encoding/xml 解析 JUnit testsuite/testsuites，限制输入大小与嵌套深度，不展开外部实体或联网。
+保存用例总数、失败/错误/跳过数、耗时与失败用例摘要，原 XML 作为产物下载；构建详情/JSON 展示摘要。
+失败或错误用例使 build 失败并阻止之后的发布步骤；每个 run 结束后校验已生成的报告，收尾阶段再完成最终收集，不能到上传后才发现测试失败。
+required 的缺失检查在普通执行结束或上传之前进行，不因前置准备步骤尚未生成报告而失败；required=false 的缺失不覆盖测试命令的非零退出。
+同一路径报告重复解析按最终内容替换，不累加计数；required=true 无报告或非法 XML 报失败，required=false 仅允许无报告，有文件但非法仍报错。
+MVP 不新增 unstable 状态或测试平台，必要检查失败不能仅标警告后继续发布。
+
+项目管理设置增加 retention，与全局 server.retention 按字段继承，示例：
+
+```yaml
+retention:
+  builds: 200
+  days: 60
+```
+
+builds/days 须为正整数；省略字段继承全局，null/未知字段拒绝，不允许仓库 YAML 改写管理策略。
+计数按项目所有命名 build 汇总；超出数量或天数的终态记录进入清理，但活动、待审批与上传 unknown 始终受保护。
+日志、产物、测试原始报告及 Agent 工作区沿用同一策略；保护判断与执行删除前均重新核对状态，下载中的文件不半途删除。
+MVP 完成受限清理与失败记录，部署模板和容量打磨仍后置。
+
 ## 触发链路
 
 | 来源 | 识别方式 | 校验 |
@@ -575,7 +724,7 @@ flutter build appbundle --release \
 | 自建 Git | 项目注册时指定 provider | 请求头 token 或 HMAC；payload 用**可配置 JSON pointer** 取 ref/after |
 
 统一入口 `POST /hook/{project}`，按项目注册的 provider 校验，不凭请求头切换解析器。
-先校验原始请求体和事件，再在事务中持久化事件与排队任务，成功后响应；限制请求体大小，token 不放 URL。
+先校验原始请求体和事件，再在事务中持久化事件与待触发请求，成功后响应；窗口关闭后校验并创建执行任务，限制请求体大小，token 不放 URL。
 
 事件去重使用 provider 的 delivery ID（例如 GitHub `X-GitHub-Delivery`）；没有事件 ID 的来源，
 按项目、build 名称、分支、SHA、构建参数合并已有排队、运行中、待审批或成功的自动构建。
@@ -584,7 +733,28 @@ flutter build appbundle --release \
 v1 只处理 push 事件，tag/PR 事件忽略。分支用 `--branches` 的 glob 过滤。
 
 轮询用 `git ls-remote <url> <branch>` 拿 SHA 和上次比对 —— 不需要本地克隆就能探测变更，
-轮询游标与任务入队在同一事务提交，避免游标已推进但构建未创建。
+轮询游标与待触发请求在同一事务提交，避免游标已推进但触发丢失；窗口关闭后原子入队。
+
+### MVP 触发等待窗口 quiet_period
+
+项目管理设置支持 triggers.builds（自动触发的命名 build 列表）、quiet_period（非负 duration，默认 0s）、allow_upload（布尔，默认 false）：
+
+```yaml
+triggers:
+  builds: [android, ios]
+  quiet_period: 30s
+  allow_upload: false
+```
+
+多 build 启用 Webhook 时必须显式选择 triggers.builds；单 build 可推导唯一名称，自动发布仍须管理员显式允许。
+triggers 与 retention 一样由管理员导入，不由仓库自行开启；allow_upload 不替代节点、商店或 approval 的授权校验。
+窗口按项目、来源类型、分支、所选 build 集合与触发请求参数分组；第一条事件建立持久化截止时间，窗口内更新候选提交，不无限延长窗口。
+关闭时核对授权分支 HEAD 并固定 SHA，不能因事件乱序选回旧提交；最终参数按该 SHA 的流水线解析后校验。
+原始事件全部保留去重信息，被合并事件标明关系；窗口关闭后只读解析最终 SHA 的配置、计算 changes/when，再原子生成所选执行结果。
+不覆盖已经入队或运行的任务，也不取消已有上传；手动 trigger/retry 不等待窗口，不改变现有固定 SHA 的任务。
+控制端重启恢复窗口与截止时间，关闭与入队使用条件更新防止重复创建；窗口内配置/权限在真正入队时重新校验。
+MVP 用 Webhook 验证连续 push 合并、分支/参数隔离、固定截止时间、重启恢复、路径筛选与发布授权。
+轮询与 cron 在 016 接入时复用同一入口及等待规则，不是本次新增 MVP 的前提。
 
 ## 文件清单
 
@@ -697,15 +867,15 @@ GET    /api/artifacts/{id}/{file}          # 产物下载
 | 同上：分组 | `--group` 默认 default | 指定现有项目组 |
 | 同上：节点授权 | `--nodes` 必填，逗号分隔；`--default-node` 可选且须在允许集合内 | 限定项目可用节点；未声明 runner 时使用默认节点 |
 | 同上：版本 | `--build-number-start` 默认 1，正整数 | 设置首次分配的构建号，兼容商店既有版本 |
-| 同上：项目设置 | `--settings <本地YAML>` 可选 | 绑定 pipeline 来源/构建方案与默认参数；直接配置通知 Webhook 随通知功能接入 |
+| 同上：项目设置 | `--settings <本地YAML>` 可选 | 导入 pipeline、triggers、retention；直接配置通知 Webhook 随通知功能接入 |
 | 同上：流水线路径 | `--file` 默认 mybuilds.yml | 保存仓库根目录相对路径，与 --settings 互斥 |
 | 同上：内置方案 | `--framework native/flutter` 与 `--platform android/ios/android,ios` 配套传入 | 登记对应命名 build 与回退方案；不生成仓库文件，与 --settings 互斥 |
-| 同上：自动触发（后续） | `--hook` 默认 false；`--poll` 如 60s；`--schedule` 为五段 cron 表达式 | 接入 Webhook、轮询、定时构建 |
+| 同上：自动触发 | `--hook` 默认 false，MVP 接入；`--poll` 如 60s 与五段 cron `--schedule` 随 016 接入 | Webhook 使用 triggers 中的 build 范围与等待窗口；轮询/cron 后置 |
 | `project set <name>` | `--settings <本地YAML>` 必填 | 更新显式提供的设置块；正在执行的构建使用原快照 |
 | `project ls` / `project rm <name>` | ls 支持 `--group` 与 `--json` | 列表/删除；有活动、待审批或未知发布结果时拒绝删除 |
 | `project move <name>` | `--group <组名>` 必填 | 将项目迁移至目标组，保留历史与配置 |
 | `group create/ls/rename/rm` | 参数与客户端 group 命令一致 | 本机管理项目组 |
-| `token create` | `--role` 必填：admin/trigger；approver 随后续审批接入 | 创建用户 token，仅显示一次明文 |
+| `token create` | `--role` 必填：admin/trigger/approver，随对应功能接入 | MVP 包含审批身份；创建时仅显示一次明文 |
 | `token ls` / `token revoke <id>` | ls 支持 `--json` | 查看身份/角色/撤销状态；不显示明文 |
 | `node create <name>` | `--labels` 逗号分隔；`--capacity` 默认 1 | 注册节点并仅显示一次独立 Agent token |
 | `node ls` | `--json` | 查看平台、能力、标签、容量和心跳 |
@@ -769,8 +939,8 @@ mybuilds-agent version
 | `artifact download <artifact-id>` | `--output <文件>` 必填，已存在拒绝覆盖 | 下载并校验 SHA-256 |
 | `status` | `--json` | 查询连通性、版本和全局容量 |
 | `doctor` | 无参数检查本机；`--server` / `--node <name>` 互斥；`--json` | 控制端/节点检查需要 admin，不返回密钥 |
-| `approvals`（后续） | `--json` | 列出待审批任务 |
-| `approve/reject <build-id>`（后续） | `--note` 可选；approver/admin 权限 | 批准或拒绝并记录身份、时间和意见 |
+| `approvals`（MVP） | `--json` | 列出待审批任务 |
+| `approve/reject <build-id>`（MVP） | `--note` 可选；approver/admin 权限 | 批准或拒绝并记录身份、时间和意见 |
 | `version` | 无参数 | 输出客户端版本 |
 
 使用示例（待实现）：
@@ -818,6 +988,7 @@ mybuilds group rm apps
 - [x] `000-project-bootstrap`：Go 单模块、Cobra、双 CLI 帮助与共享 version；README 与 AI 阅读入口
 - [ ] `001-pipeline-preview`：复用已有入口，引入 YAML，增加 `init` 和 `run --dry-run`；其他依赖随对应阶段加入并锁定版本
 - [ ] `internal/config/pipeline.go`：单流水线 default 与多 build 格式、选择规则、参数默认值/覆盖与按字段插值；保留 run 正文中的 shell 变量
+- [ ] when 三类条件、字符串/对象参数约束、build timeout、post 与 reports 的严格结构校验；预览条件、跳过原因或待确定状态
 - [ ] `internal/pipeline/mask.go` + 单测
 - [ ] `mybuilds run --dry-run` 打印脱敏计划，不触发命令或外部动作
 
@@ -826,6 +997,7 @@ mybuilds group rm apps
 - [ ] `internal/scm/git.go`：按 SHA 准备节点工作区；本地 run 使用当前工作树，不改写用户仓库
 - [ ] `run` / `artifact`：顺序执行、失败即停、统一收尾，产物大小与 SHA-256 记录
 - [ ] run 的 sh/bash、working_dir、step.env、timeout 与脚本参数；独立 shell、不继承 cd/export、受限环境与上下文变量
+- [ ] 参数/分支 when 与步骤 skipped、累计 build 超时、独立 post 预算和系统收尾、默认时间戳日志
 - [ ] 节点工作区 `<agent.data_dir>/builds/<project>/<number>/{src,logs,artifacts}`；本地结果写临时目录，日志按步骤分文件
 - [ ] ctx 取消、进程组 TERM/KILL 与回收；按平台隔离实现，避免影响远程客户端编译
 - [ ] 假项目验证成功、失败、取消均执行收尾，日志与 dry-run 脱敏
@@ -842,6 +1014,7 @@ mybuilds group rm apps
 - [ ] 模型保存 build_name、batch_id、构建配置快照、参数、SHA、当前步骤、工具版本与产物；项目构建号事务分配
 - [ ] 项目组模型、default 初始化、客户端 project init 选组、组改名/空组删除与项目事务迁移；构建历史保留，列表按当前归属过滤
 - [ ] 项目命名 build 设置、--file 与 --settings 路径区分、批量固定 SHA/参数与权限校验、原子入队、批次关联查询
+- [ ] build 级 when 在分配节点前判断，skipped 不占节点/构建号；记录条件事实、剩余预算和收尾进度，恢复不重置
 - [ ] 控制端具名构建方案、项目 auto/repo/profile 来源选择；仅缺文件回退，错误配置拒绝，执行快照与重试不受方案编辑影响
 - [ ] SQLite 与 PostgreSQL 跑相同的 CRUD / 事务 / 条件状态更新 / 唯一约束 / 分页用例
 - [ ] token 摘要存储、一次性管理员初始化、创建 / 撤销 / 身份审计，统一读写权限检查
@@ -869,9 +1042,10 @@ mybuilds group rm apps
 - [ ] 加入 webhooks/v6，接 GitHub / GitLab；Gitee 与自建 Git 用轻量解析器
 - [ ] 按已注册 provider 校验原始 body、签名 / token、事件与分支，限制请求大小
 - [ ] 安全用例：HMAC 篡改 body、错误 token、provider 伪装均拒绝
-- [ ] delivery ID 去重，事件与任务事务入库后响应；不同渠道与手动重试允许同 SHA
-- [ ] 每项目 ticker + `git ls-remote`，游标与任务入队事务提交；cron 实现定时构建
+- [ ] delivery ID 去重，事件与待触发请求事务入库后响应；窗口关闭与任务创建原子提交，不同渠道与手动重试允许同 SHA
+- [ ] 后续 016 的每项目 ticker + `git ls-remote`、游标与触发请求事务提交；cron 复用入口
 - [ ] 分支 glob 过滤，忽略 tag / PR / 分支删除事件
+- [ ] MVP Webhook 的 changes 路径筛选与 quiet_period，固定窗口、不同参数/分支隔离、持久化恢复与重复关闭拒绝
 
 ### P5 商店分发（MVP）与后续产物运维
 
@@ -882,6 +1056,8 @@ mybuilds group rm apps
 - [ ] 上传结果未知时查询远端或由 admin 用 `resolve-upload` 确认并记录依据，阻止自动重发及未确认的发布重试
 - [ ] 配置快照与上传产物绑定，审批后发布原产物，不重新构建
 - [ ] retention 清理终态构建（保留 N 个 / N 天），保护待审批与未知结果任务
+- [ ] MVP 项目 retention 按字段继承全局，受保护/下载中的产物不误删，Agent 工作区与测试报告沿用同一策略
+- [ ] MVP JUnit 报告收集与 CLI/JSON 摘要、原始 XML 下载；失败测试阻止发布，缺失/非法/越界报告可诊断
 - [ ] 两大商店真实上传与可查询回执，自定义命令结果校验，验证凭据错误、失败与回报丢失的 unknown 状态
 - [ ] 原型验证工具内置重试、非交互认证及版本兼容；Ruby/Bundler/fastlane 按节点锁定
 - [ ] fir.im / generic 内置分发不属于 MVP，后续有需求再接入
@@ -893,8 +1069,9 @@ mybuilds group rm apps
 - [ ] `build ls` 过滤与分页、日志流重连、doctor 输出打磨
 - [ ] 基于真实构建数据调整并发；按实际瓶颈优化依赖缓存，不新增通用缓存系统
 
-MVP 包含手动触发、同仓库多命名 build、原生与 Flutter 双平台、多节点执行、日志/产物下载及两大商店分发与 custom 扩展。
-Webhook、cron、机器人通知、项目发布审批流程和部署打磨可以后置；发布授权、租约与上传结果未知处理不能后置。
+MVP 包含手动/Webhook 触发、同仓库多命名 build、原生与 Flutter 双平台、多节点执行、日志/产物下载及两大商店分发与 custom 扩展。
+新增 when、参数约束、build 总超时、post、日志时间戳、changes 筛选、quiet_period、项目 retention 与 JUnit 报告，发布审批同步进入 MVP。
+机器人通知、轮询/cron、其他内置渠道和部署打磨可后置；发布授权、租约、测试失败阻止发布与上传 unknown 处理不能后置。
 Google Play/App Store 接入不自写完整市场协议；具体认证、默认发布模式、前置条件及验收见 BUILD_DISTRIBUTION。
 
 ## Verification
@@ -908,6 +1085,9 @@ Google Play/App Store 接入不自写完整市场协议；具体认证、默认�
 - `internal/server`：批量同 SHA/原子入队、统一计数不重复、同项目同名 build 串行及不同 build 并行、审批释放全局槽、重复事件只入队一次、同 SHA 不同参数可触发、轮询游标与入队同时提交
 - `internal/agent` / 节点协议：独立身份、双节点竞争、错误平台、租约过期、断网取消、幂等回报、日志与产物回传
 - 审批与发布：重复批准 / 取消不能覆盖终态；重启后原节点正确继续；未知上传结果不能自动重发
+- MVP 执行控制：when AND/OR、手动路径豁免、删除/重命名/公共目录、首构建与缺失基线、冻结事实重试；审批跳过不放行上传
+- MVP 超时/收尾/日志：累计预算与重启恢复、独立 post 预算、失败不覆盖原证据、节点失联不迁移收尾、时间戳与流式脱敏
+- MVP 触发/保留/报告：窗口持久化与原子关闭、项目继承与保护竞态、JUnit 汇总不重复、非法 XML/越界/缺失拒绝、测试失败不上传
 
 **端到端（本地，无需真机）**
 
