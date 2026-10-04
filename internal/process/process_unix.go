@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
 	"sync"
 	"sync/atomic"
@@ -31,16 +32,39 @@ func Run(ctx context.Context, command Command, stdout, stderr io.Writer) (result
 	// 非 nil 空切片阻止 os/exec 自动继承完整宿主环境。
 	cmd.Env = append([]string{}, command.Env...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	// 管道由后台进程持有时有限结束复制；整个进程组仍由 cleanup 负责。
-	cmd.WaitDelay = processTermGrace
-	var logFailed atomic.Bool
-	cmd.Stdout = cancelOnWriteError{writer: stdout, cancel: cancel, failed: &logFailed}
-	cmd.Stderr = cancelOnWriteError{writer: stderr, cancel: cancel, failed: &logFailed}
+	// 自持两条管道，让 Wait 只等待真实子进程，不用 WaitDelay 截断慢日志。
+	stdoutRead, stdoutWrite, err := os.Pipe()
+	if err != nil {
+		result.Reason = "start_error"
+		return result
+	}
+	defer stdoutRead.Close()
+	defer stdoutWrite.Close()
+	stderrRead, stderrWrite, err := os.Pipe()
+	if err != nil {
+		result.Reason = "start_error"
+		return result
+	}
+	defer stderrRead.Close()
+	defer stderrWrite.Close()
+	// OS 管道必须支持读取期限；不支持时不启动任何用户动作。
+	if stdoutRead.SetReadDeadline(time.Time{}) != nil || stderrRead.SetReadDeadline(time.Time{}) != nil {
+		result.Reason = "start_error"
+		return result
+	}
+	cmd.Stdout, cmd.Stderr = stdoutWrite, stderrWrite
+	var logFailed, cleanupFailed atomic.Bool
 	var cleanupOnce sync.Once
-	cleanup := func() { cleanupOnce.Do(func() { result.CleanupFailed = !stopProcessGroup(cmd.Process.Pid) }) }
+	cleaned := make(chan struct{})
+	cleanup := func() {
+		cleanupOnce.Do(func() {
+			cleanupFailed.Store(!stopProcessGroup(cmd.Process.Pid))
+			close(cleaned)
+		})
+	}
 	cmd.Cancel = func() error {
 		cleanup()
-		if result.CleanupFailed {
+		if cleanupFailed.Load() {
 			return errors.New("本次进程组停止未确认")
 		}
 		return nil
@@ -53,9 +77,31 @@ func Run(ctx context.Context, command Command, stdout, stderr io.Writer) (result
 		return result
 	}
 	result.Started = true
-	// Start 成功后仅调用一次 Wait，确保直接子进程及复制 goroutine 被回收。
+	// 父进程不得保留写端，否则真实 EOF 永远无法出现。
+	stdoutWrite.Close()
+	stderrWrite.Close()
+	var copies sync.WaitGroup
+	// 两条流可共用同一 writer；只串行实际 Write，不锁读取或清理。
+	var writeMutex sync.Mutex
+	for _, pipe := range []struct {
+		reader *os.File
+		writer io.Writer
+	}{{stdoutRead, stdout}, {stderrRead, stderr}} {
+		copies.Add(1)
+		go func(reader *os.File, writer io.Writer) {
+			defer copies.Done()
+			output := cancelOnWriteError{writer: writer, cancel: cancel, failed: &logFailed, mutex: &writeMutex}
+			if err := drainPipe(reader, output, cleaned); err != nil {
+				logFailed.Store(true)
+				cancel()
+			}
+		}(pipe.reader, pipe.writer)
+	}
+	// 仅一次 Wait。leader 退出后先回收本组，再等日志完整 EOF。
 	waitError := cmd.Wait()
 	cleanup()
+	copies.Wait()
+	result.CleanupFailed = cleanupFailed.Load()
 	if cmd.ProcessState != nil {
 		result.ExitCode = cmd.ProcessState.ExitCode()
 	}
@@ -71,6 +117,37 @@ func Run(ctx context.Context, command Command, stdout, stderr io.Writer) (result
 		result.Reason = "cleanup_error"
 	}
 	return result
+}
+
+// drainPipe 的期限只限制无数据读取；同步 writer 的耗时不算读取 idle。
+func drainPipe(reader *os.File, writer io.Writer, cleaned <-chan struct{}) error {
+	buffer := make([]byte, 32*1024)
+	for {
+		if err := reader.SetReadDeadline(time.Now().Add(processTermGrace)); err != nil {
+			return err
+		}
+		n, err := reader.Read(buffer)
+		if n > 0 {
+			if _, writeErr := writer.Write(buffer[:n]); writeErr != nil {
+				return writeErr
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			select {
+			case <-cleaned:
+				// 已回收本组仍无 EOF，不把未完成输出报告为成功。
+				return err
+			default:
+				continue
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
 }
 
 func contextReason(ctx context.Context) string {
@@ -114,12 +191,15 @@ func waitProcessGroupGone(pgid int, budget time.Duration) bool {
 }
 
 type cancelOnWriteError struct {
+	mutex  *sync.Mutex
 	writer io.Writer
 	cancel context.CancelFunc
 	failed *atomic.Bool
 }
 
 func (output cancelOnWriteError) Write(data []byte) (int, error) {
+	output.mutex.Lock()
+	defer output.mutex.Unlock()
 	if output.writer == nil {
 		return len(data), nil
 	}

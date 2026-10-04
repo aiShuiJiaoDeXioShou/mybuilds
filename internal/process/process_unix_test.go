@@ -170,7 +170,7 @@ func TestRunShellCancelGroupAndKeepUnrelated(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = unrelated.Process.Kill(); _ = unrelated.Wait() }()
-	for _, tc := range []struct{ name, script string }{{"foreground", processHelper}, {"background", processHelper + " & wait"}, {"leader-exits", processHelper + " & exit 0"}} {
+	for _, tc := range []struct{ name, script string }{{"foreground", processHelper}, {"background", processHelper + " & wait"}, {"leader-exits", processHelper + " >helper-ready & while [ ! -s helper-ready ]; do sleep 0.01; done; cat helper-ready; exit 0"}} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -178,9 +178,12 @@ func TestRunShellCancelGroupAndKeepUnrelated(t *testing.T) {
 			done := make(chan Result, 1)
 			go func() { done <- Run(ctx, shellTestCommand(t, tc.script), output, io.Discard) }()
 			pid := awaitReady(t, output)
+			// leader 已退出时，本组可能在取消前已真正回收；仍运行的组必须取消。
+			alreadyStopped := errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
 			cancel()
 			result := awaitShellResult(t, done)
-			if result.Reason != "cancelled" || result.CleanupFailed {
+			completedBeforeCancel := tc.name == "leader-exits" && alreadyStopped && result.Reason == "" && result.ExitCode == 0
+			if (result.Reason != "cancelled" && !completedBeforeCancel) || !result.Started || result.CleanupFailed {
 				t.Fatal("取消结果错误", result)
 			}
 			assertProcessStopped(t, pid)
@@ -194,7 +197,7 @@ func TestRunShellCancelGroupAndKeepUnrelated(t *testing.T) {
 func TestRunShellNormalExitCleansBackground(t *testing.T) {
 	for _, redirect := range []bool{false, true} {
 		t.Run(fmt.Sprint(redirect), func(t *testing.T) {
-			script := processHelper + " & exit 0"
+			script := processHelper + " >helper-ready & while [ ! -s helper-ready ]; do sleep 0.01; done; cat helper-ready; exit 0"
 			if redirect {
 				script = processHelper + " >/dev/null 2>&1 & echo READY $!; exit 0"
 			}
