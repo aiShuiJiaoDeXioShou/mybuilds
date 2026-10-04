@@ -1,0 +1,38 @@
+# 默认 app/release，工程须显式消费版本和签名 env，见 examples/android。
+# mapping 要求 release 启用 R8；未混淆工程请删除该产物模式或拆分条件步骤。
+version: 1
+builds:
+  android:
+    runner:
+      platform: android
+      labels: [android-sdk]
+    params:
+      version: "1.0.0"
+      build_number: "1"
+    env:
+      APP_VERSION: "{{version}}"
+      BUILD_NUMBER: "{{build_number}}"
+      ANDROID_KEYSTORE: "${ANDROID_KEYSTORE}"
+      ANDROID_KEY_ALIAS: "${ANDROID_KEY_ALIAS}"
+      ANDROID_KEYSTORE_PASSWORD: "${ANDROID_KEYSTORE_PASSWORD}"
+      ANDROID_KEY_PASSWORD: "${ANDROID_KEY_PASSWORD}"
+    timeout: 30m
+    steps:
+      - kind: run
+        name: android-release
+        run: |
+          set -eu
+          test -n "$APP_VERSION" || { echo "版本不能为空" >&2; exit 2; }
+          case "$BUILD_NUMBER" in
+            ''|*[!0-9]*) echo "构建号必须为正整数" >&2; exit 2 ;;
+          esac
+          test "${#BUILD_NUMBER}" -le 10 && test "$BUILD_NUMBER" -ge 1 && test "$BUILD_NUMBER" -le 2100000000 || {
+            echo "构建号超出 Android 范围" >&2; exit 2;
+          }
+          ./gradlew :app:assembleRelease :app:bundleRelease --no-daemon -Pandroid.builder.sdkDownload=false
+      - kind: artifact
+        name: android-artifacts
+        paths:
+          - app/build/outputs/apk/release/*.apk
+          - app/build/outputs/bundle/release/*.aab
+          - app/build/outputs/mapping/release/mapping.txt

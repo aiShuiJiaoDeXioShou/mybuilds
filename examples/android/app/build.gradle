@@ -1,0 +1,41 @@
+plugins { id 'com.android.application' }
+
+// 版本与签名必须由工程显式读取；任意 -P 参数不会自动改变应用配置。
+def appVersion = providers.environmentVariable('APP_VERSION').getOrElse('1.0.0')
+def buildNumber = providers.environmentVariable('BUILD_NUMBER').getOrElse('1')
+if (!buildNumber.matches('[0-9]+') || buildNumber.length() > 10 || buildNumber.toLong() < 1L || buildNumber.toLong() > 2100000000L) {
+    throw new GradleException('构建号必须是 Android 范围内的正整数')
+}
+def signingEnv = ['ANDROID_KEYSTORE', 'ANDROID_KEY_ALIAS', 'ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEY_PASSWORD']
+def signingValues = signingEnv.collectEntries { [(it): providers.environmentVariable(it).orNull] }
+if (signingValues.values().any { !it }) {
+    throw new GradleException('release 签名环境未完整声明')
+}
+
+android {
+    namespace 'com.example.mybuilds'
+    compileSdk 35
+    buildToolsVersion '35.0.0'
+    defaultConfig {
+        applicationId 'com.example.mybuilds'
+        minSdk 23
+        targetSdk 35
+        versionCode buildNumber.toInteger()
+        versionName appVersion
+    }
+    signingConfigs {
+        release {
+            storeFile file(signingValues['ANDROID_KEYSTORE'])
+            storePassword signingValues['ANDROID_KEYSTORE_PASSWORD']
+            keyAlias signingValues['ANDROID_KEY_ALIAS']
+            keyPassword signingValues['ANDROID_KEY_PASSWORD']
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+        }
+    }
+}

@@ -1,6 +1,6 @@
 //go:build darwin || linux
 
-package pipeline
+package process
 
 import (
 	"bytes"
@@ -35,7 +35,7 @@ func TestShellProcessHelper(t *testing.T) {
 	}
 }
 
-func shellTestCommand(t *testing.T, script string) shellCommand {
+func shellTestCommand(t *testing.T, script string) Command {
 	t.Helper()
 	shell, err := exec.LookPath("sh")
 	if err != nil {
@@ -45,7 +45,7 @@ func shellTestCommand(t *testing.T, script string) shellCommand {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return shellCommand{Path: shell, Args: []string{"-e", "-c", script}, Dir: t.TempDir(), Env: []string{"PATH=" + os.Getenv("PATH"), "HELPER=" + executable}}
+	return Command{Path: shell, Args: []string{"-e", "-c", script}, Dir: t.TempDir(), Env: []string{"PATH=" + os.Getenv("PATH"), "HELPER=" + executable}}
 }
 
 const processHelper = `MYBUILDS_PROCESS_HELPER=ignore "$HELPER" -test.run='^TestShellProcessHelper$'`
@@ -98,14 +98,14 @@ func assertProcessStopped(t *testing.T, pid int) {
 	}
 	t.Fatalf("本次进程仍存在，PID=%d", pid)
 }
-func awaitShellResult(t *testing.T, result <-chan shellResult) shellResult {
+func awaitShellResult(t *testing.T, result <-chan Result) Result {
 	t.Helper()
 	select {
 	case value := <-result:
 		return value
 	case <-time.After(5 * time.Second):
 		t.Fatal("进程结束无限等待")
-		return shellResult{}
+		return Result{}
 	}
 }
 
@@ -116,7 +116,7 @@ func TestRunShellExitAndEnvironment(t *testing.T) {
 		reason string
 	}{{"printf out; printf err >&2", 0, ""}, {"exit 7", 7, "exit"}} {
 		var stdout, stderr bytes.Buffer
-		result := runShell(context.Background(), shellTestCommand(t, tc.script), &stdout, &stderr)
+		result := Run(context.Background(), shellTestCommand(t, tc.script), &stdout, &stderr)
 		if !result.Started || result.ExitCode != tc.code || result.Reason != tc.reason || result.CleanupFailed || result.Duration <= 0 {
 			t.Fatalf("退出结果错误: %+v", result)
 		}
@@ -128,7 +128,7 @@ func TestRunShellExitAndEnvironment(t *testing.T) {
 	cmd := shellTestCommand(t, `printf '%s' "${HOST_SECRET-unset}"`)
 	cmd.Env = nil
 	var output bytes.Buffer
-	result := runShell(context.Background(), cmd, &output, io.Discard)
+	result := Run(context.Background(), cmd, &output, io.Discard)
 	if result.Reason != "" || output.String() != "unset" {
 		t.Fatal("nil Env 继承了宿主环境", result, output.String())
 	}
@@ -148,7 +148,7 @@ func TestRunShellBeforeStartCancelledAndSafeFailure(t *testing.T) {
 		}
 		defer cancel()
 		cmd := shellTestCommand(t, "touch marker")
-		result := runShell(ctx, cmd, io.Discard, io.Discard)
+		result := Run(ctx, cmd, io.Discard, io.Discard)
 		if result.Started || result.Reason != want || result.ExitCode != -1 || result.CleanupFailed {
 			t.Fatal(result)
 		}
@@ -158,7 +158,7 @@ func TestRunShellBeforeStartCancelledAndSafeFailure(t *testing.T) {
 	}
 	cmd := shellTestCommand(t, "echo SECRET_SCRIPT")
 	cmd.Dir = filepath.Join(cmd.Dir, "SECRET_PATH")
-	result := runShell(context.Background(), cmd, io.Discard, io.Discard)
+	result := Run(context.Background(), cmd, io.Discard, io.Discard)
 	if result.Started || result.Reason != "start_error" || strings.Contains(fmt.Sprint(result), "SECRET") {
 		t.Fatal("启动错误泄露或误分类", result)
 	}
@@ -175,8 +175,8 @@ func TestRunShellCancelGroupAndKeepUnrelated(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			output := newReadyOutput()
-			done := make(chan shellResult, 1)
-			go func() { done <- runShell(ctx, shellTestCommand(t, tc.script), output, io.Discard) }()
+			done := make(chan Result, 1)
+			go func() { done <- Run(ctx, shellTestCommand(t, tc.script), output, io.Discard) }()
 			pid := awaitReady(t, output)
 			cancel()
 			result := awaitShellResult(t, done)
@@ -200,8 +200,8 @@ func TestRunShellNormalExitCleansBackground(t *testing.T) {
 			}
 			cmd := shellTestCommand(t, script)
 			output := newReadyOutput()
-			done := make(chan shellResult, 1)
-			go func() { done <- runShell(context.Background(), cmd, output, io.Discard) }()
+			done := make(chan Result, 1)
+			go func() { done <- Run(context.Background(), cmd, output, io.Discard) }()
 			pid := awaitReady(t, output)
 			result := awaitShellResult(t, done)
 			if result.CleanupFailed {
@@ -219,10 +219,10 @@ func TestRunShellTimeoutKillsIgnoringTerm(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	output := newReadyOutput()
-	done := make(chan shellResult, 1)
+	done := make(chan Result, 1)
 	cmd := shellTestCommand(t, processHelper+" & wait")
 	started := time.Now()
-	go func() { done <- runShell(ctx, cmd, output, io.Discard) }()
+	go func() { done <- Run(ctx, cmd, output, io.Discard) }()
 	pid := awaitReady(t, output)
 	result := awaitShellResult(t, done)
 	if result.Reason != "timeout" || result.CleanupFailed {
@@ -250,8 +250,8 @@ func TestRunShellLogFailureCancels(t *testing.T) {
 				cmd.Args[2] = "printf log >&2; sleep 30"
 				stdout, errorOutput = io.Discard, writer
 			}
-			done := make(chan shellResult, 1)
-			go func() { done <- runShell(context.Background(), cmd, stdout, errorOutput) }()
+			done := make(chan Result, 1)
+			go func() { done <- Run(context.Background(), cmd, stdout, errorOutput) }()
 			result := awaitShellResult(t, done)
 			if result.Reason != "log_error" || result.CleanupFailed || strings.Contains(fmt.Sprint(result), "DO_NOT_LEAK") {
 				t.Fatal("日志错误未安全停止", result)
@@ -265,7 +265,7 @@ func TestRunShellShortTimeoutConfirmsCleanup(t *testing.T) {
 	// 重复真实退出/回收边界，捕获 Darwin 偶发的瞬时 EPERM；预算保持原报告的30ms。
 	for i := 0; i < 100; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-		result := runShell(ctx, command, io.Discard, io.Discard)
+		result := Run(ctx, command, io.Discard, io.Discard)
 		cancel()
 		if !result.Started || result.Reason != "timeout" || result.CleanupFailed {
 			t.Fatalf("第%d轮短超时未确认清理: %+v", i, result)
@@ -290,5 +290,18 @@ func TestWaitProcessGroupGoneRequiresDisappearance(t *testing.T) {
 		if stopProcessGroup(pgid) {
 			t.Fatal("无效或全局进程组不应确认成功", pgid)
 		}
+	}
+}
+
+func TestHostEnvironmentOnlyAllowedAndIndependent(t *testing.T) {
+	t.Setenv("PROCESS_UNKNOWN_SECRET", "private")
+	t.Setenv("ANDROID_HOME", "sdk")
+	first, second := HostEnvironment(), HostEnvironment()
+	if first["ANDROID_HOME"] != "sdk" || first["PROCESS_UNKNOWN_SECRET"] != "" {
+		t.Fatal("基础环境白名单错误")
+	}
+	first["ANDROID_HOME"] = "changed"
+	if second["ANDROID_HOME"] != "sdk" {
+		t.Fatal("基础环境映射跨调用共享")
 	}
 }

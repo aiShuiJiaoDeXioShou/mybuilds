@@ -1,0 +1,7 @@
+# 构建、缓存和本机签名不进入示例源码。
+.gradle/
+**/build/
+local.properties
+mybuilds.yml
+*.jks
+*.keystore

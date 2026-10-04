@@ -2,7 +2,8 @@ package pipeline
 
 import (
 	"io"
-	"time"
+
+	"mybuilds/internal/process"
 )
 
 // RunOptions 增加本地工作区与日志输出，选择与参数规则沿用预览。
@@ -47,18 +48,4 @@ type ArtifactRecord struct {
 	SHA256       string `json:"sha256"`
 }
 
-// shellCommand 只保存已准备的命令，不自行读取宿主环境或配置。
-type shellCommand struct {
-	Path string
-	Args []string
-	Dir  string
-	Env  []string
-}
-
-type shellResult struct {
-	Started       bool
-	ExitCode      int
-	Reason        string
-	Duration      time.Duration
-	CleanupFailed bool
-}
+type shellCommand = process.Command

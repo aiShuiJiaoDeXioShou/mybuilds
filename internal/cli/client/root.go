@@ -11,6 +11,6 @@ func NewCommand() *cobra.Command {
 		Short:        "移动端构建发布客户端",
 		SilenceUsage: true,
 	}
-	cmd.AddCommand(version.NewCommand(), newInitCommand(), newRunCommand())
+	cmd.AddCommand(version.NewCommand(), newInitCommand(), newRunCommand(), newDoctorCommand())
 	return cmd
 }

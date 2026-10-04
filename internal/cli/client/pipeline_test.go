@@ -118,7 +118,7 @@ func TestInitErrorsDoNotCreateFile(t *testing.T) {
 		{"init", "--template", ""},
 		{"init", "--framework", "flutter"},
 		{"init", "--framework", ""},
-		{"init", "--platform", "android"},
+		{"init", "--platform", "unknown"},
 		{"init", "--template", "valid.yml", "--framework", "flutter"},
 		{"init", "--template", "valid.yml", "--platform", "android"},
 	} {

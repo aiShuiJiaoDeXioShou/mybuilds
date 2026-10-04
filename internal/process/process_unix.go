@@ -1,6 +1,6 @@
 //go:build darwin || linux
 
-package pipeline
+package process
 
 import (
 	"context"
@@ -15,8 +15,8 @@ import (
 
 const processTermGrace = 500 * time.Millisecond
 
-// runShell 只执行已准备的命令；等待、清理及诊断均不包含原始配置。
-func runShell(ctx context.Context, command shellCommand, stdout, stderr io.Writer) (result shellResult) {
+// Run 只执行已准备的命令；等待、清理及诊断均不包含原始配置。
+func Run(ctx context.Context, command Command, stdout, stderr io.Writer) (result Result) {
 	started := time.Now()
 	result.ExitCode = -1
 	defer func() { result.Duration = time.Since(started) }()

@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"mybuilds/internal/config"
+	"mybuilds/internal/mobile"
 )
 
 const defaultPipeline = `version: 1
@@ -29,10 +30,19 @@ func newInitCommand() *cobra.Command {
 			if hasTemplate && hasPlatform {
 				return errors.New("本地模板不能与 framework/platform 同时使用")
 			}
-			if hasPlatform {
-				return errors.New("framework/platform 模板尚未实现")
-			}
 			data := []byte(defaultPipeline)
+			if hasPlatform {
+				if cmd.Flags().Changed("framework") && framework == "" {
+					return errors.New("framework 不能为空")
+				}
+				if framework == "" {
+					framework = "native"
+				}
+				if framework != "native" || platform != "android" {
+					return errors.New("指定的框架或平台模板尚未支持")
+				}
+				data = mobile.AndroidTemplate()
+			}
 			if hasTemplate {
 				file, err := os.Open(template)
 				if err != nil {
@@ -55,8 +65,8 @@ func newInitCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&template, "template", "", "使用经校验的本地 YAML 模板")
-	cmd.Flags().StringVar(&framework, "framework", "", "构建框架（尚未实现）")
-	cmd.Flags().StringVar(&platform, "platform", "", "目标平台（尚未实现）")
+	cmd.Flags().StringVar(&framework, "framework", "", "构建框架（指定平台时默认 native）")
+	cmd.Flags().StringVar(&platform, "platform", "", "目标平台")
 	return cmd
 }
 

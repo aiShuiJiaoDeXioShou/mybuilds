@@ -13,11 +13,10 @@ import (
 	"time"
 
 	"mybuilds/internal/config"
+	"mybuilds/internal/process"
 )
 
 var batchRunError = errors.New("本地流水线执行未成功")
-
-var inheritedEnvironment = []string{"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "JAVA_HOME", "ANDROID_HOME", "ANDROID_SDK_ROOT", "DEVELOPER_DIR"}
 
 type preparedStep struct {
 	step        config.Step
@@ -287,7 +286,7 @@ func (p *runPreparation) fact(key string) {
 		args = []string{"-C", p.root, "symbolic-ref", "--quiet", "--short", "HEAD"}
 	}
 	command := exec.CommandContext(ctx, executable, args...)
-	env := hostEnvironment()
+	env := process.HostEnvironment()
 	env["GIT_CONFIG_NOSYSTEM"] = "1"
 	env["GIT_CONFIG_GLOBAL"] = os.DevNull
 	env["GIT_OPTIONAL_LOCKS"] = "0"
@@ -428,7 +427,7 @@ func (p *runPreparation) step(buildName string, step config.Step, buildEnv map[s
 		declared = map[string]string{}
 	}
 	maps.Copy(declared, step.Env)
-	env := hostEnvironment()
+	env := process.HostEnvironment()
 	for _, key := range sortedKeys(declared) {
 		value, err := p.envValue(declared[key], params, local)
 		if err != nil {
@@ -444,16 +443,6 @@ func (p *runPreparation) step(buildName string, step config.Step, buildEnv map[s
 	prepared.command = shellCommand{Path: executable, Args: args, Dir: dir, Env: environmentList(env)}
 	prepared.relativeDir = relative
 	return prepared, nil
-}
-
-func hostEnvironment() map[string]string {
-	env := map[string]string{}
-	for _, key := range inheritedEnvironment {
-		if value, ok := os.LookupEnv(key); ok {
-			env[key] = value
-		}
-	}
-	return env
 }
 
 func environmentList(env map[string]string) []string {
@@ -563,7 +552,7 @@ func executeStep(ctx context.Context, root, build string, step preparedStep, lim
 	command := step.command
 	command.Dir = dir
 	stdout, stderr := logger.stream(build, step.step.Name, "stdout"), logger.stream(build, step.step.Name, "stderr")
-	shell := runShell(runContext, command, stdout, stderr)
+	shell := process.Run(runContext, command, stdout, stderr)
 	closeOut, closeErr := stdout.Close(), stderr.Close()
 	if (closeOut != nil || closeErr != nil) && shell.Reason == "" && shell.ExitCode == 0 && !shell.CleanupFailed {
 		shell.Reason = "log_error"
