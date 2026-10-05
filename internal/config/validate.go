@@ -62,6 +62,9 @@ func validateBuild(b *Build, field string) error {
 		return err
 	}
 	if b.Runner != nil {
+		if b.Runner.Framework != "" && b.Runner.Framework != "native" && b.Runner.Framework != "flutter" {
+			return invalid(field+".runner.framework", "仅支持 native/flutter")
+		}
 		if b.Runner.Platform != "android" && b.Runner.Platform != "ios" {
 			return invalid(field+".runner.platform", "仅支持 android/ios")
 		}

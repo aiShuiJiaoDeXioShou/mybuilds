@@ -224,6 +224,9 @@ func executeTask(parent context.Context, client *agentHTTP, lock *dataLock, cfg 
 		}
 		return journal.remove()
 	}
+	if errors.Is(runErr, pipeline.ErrFlutterCleanup) {
+		return execution.unconfirmedFlutterPrecheck()
+	}
 	if errors.Is(runErr, mobile.ErrIOSCleanup) {
 		journal.mu.Lock()
 		journal.state.CleanupFailed = true
@@ -248,4 +251,17 @@ func (execution *taskExecution) zeroAction(reason string, remaining *int64, post
 		return err
 	}
 	return execution.journal.remove()
+}
+
+// 真实工具预检清理不确定时保留私有证据，不能沿零用户动作分支确认整个构建停止。
+func (execution *taskExecution) unconfirmedFlutterPrecheck() error {
+	execution.lease.cancel()
+	execution.journal.mu.Lock()
+	defer execution.journal.mu.Unlock()
+	execution.journal.state.StopConfirmed = false
+	execution.journal.state.CleanupFailed = true
+	if err := execution.journal.saveLocked(); err != nil {
+		return err
+	}
+	return failure("execution_unconfirmed")
 }

@@ -116,6 +116,34 @@ func Doctor(parent context.Context, dataDir string) (protocol.NodeReport, error)
 	if runtime.GOOS != "darwin" {
 		report.Tools = append(report.Tools, protocol.ToolCheck{Name: "xcode", Status: "skipped", Reason: "unsupported"})
 	}
+	// 可选框架工具缺失不改变已经取得的原生能力；清理不确定仍闭锁。
+	if unsafe != "cleanup_error" && ctx.Err() == nil {
+		platforms := []string{}
+		if runtime.GOOS == "darwin" {
+			platforms = []string{"ios"}
+		}
+		checks := mobile.FlutterDoctor(ctx, mobile.FlutterDoctorOptions{Workspace: os.TempDir(), Platforms: platforms})
+		for _, check := range checks {
+			name := ""
+			switch check.Name {
+			case "flutter.sdk":
+				name = "flutter"
+			case "flutter.dart":
+				name = "dart"
+			case "flutter.cocoapods":
+				name = "cocoapods"
+			}
+			if name != "" {
+				report.Tools = append(report.Tools, protocol.ToolCheck{Name: name, Status: check.Status, Version: check.Version, Reason: check.Reason})
+			}
+			if check.Reason == "cleanup_error" {
+				unsafe = "cleanup_error"
+			}
+		}
+		if runtime.GOOS != "darwin" {
+			report.Tools = append(report.Tools, protocol.ToolCheck{Name: "cocoapods", Status: "skipped", Reason: "unsupported"})
+		}
+	}
 	signing := protocol.ToolCheck{Name: "ios_signing", Status: "skipped", Reason: "unsupported"}
 	xcodePassed := false
 	for _, tool := range report.Tools {

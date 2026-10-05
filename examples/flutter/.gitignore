@@ -1,0 +1,10 @@
+# 只提交工程与锁定依赖；工具生成文件和用户材料保持本地。
+.dart_tool/
+.packages
+.pub/
+.pub-cache/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.mybuilds-flutter-verify.*/

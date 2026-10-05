@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"mybuilds/internal/config"
@@ -38,13 +39,24 @@ func newInitCommand() *cobra.Command {
 				if framework == "" {
 					framework = "native"
 				}
-				if framework != "native" || (platform != "android" && platform != "ios") {
-					return errors.New("指定的框架或平台模板尚未支持")
-				}
-				if platform == "ios" {
-					data = mobile.IOSTemplate()
-				} else {
-					data = mobile.AndroidTemplate()
+				switch framework {
+				case "native":
+					if platform != "android" && platform != "ios" {
+						return errors.New("指定的平台模板尚未支持")
+					}
+					if platform == "ios" {
+						data = mobile.IOSTemplate()
+					} else {
+						data = mobile.AndroidTemplate()
+					}
+				case "flutter":
+					var err error
+					data, err = mobile.FlutterTemplate(strings.Split(platform, ","))
+					if err != nil {
+						return err
+					}
+				default:
+					return errors.New("指定的框架模板尚未支持")
 				}
 			}
 			if hasTemplate {

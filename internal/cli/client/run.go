@@ -39,22 +39,15 @@ func newRunCommand() *cobra.Command {
 					names = append(names, name)
 				}
 			}
-			overrides := make(map[string]string, len(params))
-			for _, param := range params {
-				key, value, ok := strings.Cut(param, "=")
-				if !ok || key == "" {
-					return errors.New("--param 必须为非空参数名=value")
-				}
-				if _, exists := overrides[key]; exists {
-					return errors.New("--param 不能重复声明参数")
-				}
-				overrides[key] = value
+			overrides, scoped, err := triggerParameters(params, "", "")
+			if err != nil {
+				return err
 			}
 			document, err := config.Load(filename)
 			if err != nil {
 				return err
 			}
-			options := pipeline.PreviewOptions{Names: names, All: all, Params: overrides, Step: step}
+			options := pipeline.PreviewOptions{Names: names, All: all, Params: overrides, BuildParams: scoped, Step: step}
 			output := json.NewEncoder(cmd.OutOrStdout())
 			output.SetIndent("", "  ")
 			if dryRun {
@@ -88,7 +81,7 @@ func newRunCommand() *cobra.Command {
 	cmd.Flags().StringVar(&filename, "file", "mybuilds.yml", "流水线配置文件")
 	cmd.Flags().StringArrayVar(&builds, "build", nil, "构建名称，多个名称用逗号分隔")
 	cmd.Flags().BoolVar(&all, "all", false, "按名称排序选择全部构建")
-	cmd.Flags().StringArrayVar(&params, "param", nil, "覆盖参数 key=value，可重复使用")
+	cmd.Flags().StringArrayVar(&params, "param", nil, "覆盖参数 key=value 或 build:key=value，可重复使用")
 	cmd.Flags().StringVar(&step, "step", "", "选择单个构建中的指定步骤")
 	return cmd
 }

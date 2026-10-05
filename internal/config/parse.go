@@ -267,7 +267,7 @@ func checkType(n *yaml.Node, t reflect.Type, field string) error {
 // 检查显式空字段，避免解码后的零值把空值与未填写混淆。
 func checkPresent(n *yaml.Node, key, field string) error {
 	switch key {
-	case "name", "shell", "working_dir", "timeout", "platform", "target", "file", "credentials", "url", "result_file", "app_identifier", "channel", "track", "release_status":
+	case "name", "shell", "working_dir", "timeout", "framework", "platform", "target", "file", "credentials", "url", "result_file", "app_identifier", "channel", "track", "release_status":
 		if n.Kind == yaml.ScalarNode && strings.TrimSpace(n.Value) == "" {
 			return nodeError(n, field, "不能为空")
 		}

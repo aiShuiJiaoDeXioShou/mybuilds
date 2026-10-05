@@ -26,6 +26,8 @@ type toolCommand struct {
 	Workspace, Executable string
 	Args, ExtraEnvNames   []string
 	Stdin                 []byte
+	// Env 非nil时只使用显式环境，工具定位也只读取它的PATH。
+	Env map[string]string
 }
 
 var toolEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -58,9 +60,53 @@ func toolOutput(ctx context.Context, command toolCommand) (string, error) {
 	if err != nil || !info.IsDir() {
 		return "", errors.New("tool_directory_error")
 	}
+	env := process.HostEnvironment()
+	if command.Env != nil {
+		env = make(map[string]string, len(command.Env))
+		for name, value := range command.Env {
+			if !toolEnvName.MatchString(name) || strings.ContainsRune(value, 0) {
+				return "", errors.New("tool_environment_error")
+			}
+			env[name] = value
+		}
+	}
+	for _, name := range command.ExtraEnvNames {
+		if !toolEnvName.MatchString(name) {
+			return "", errors.New("tool_environment_error")
+		}
+		var value string
+		var ok bool
+		if command.Env == nil {
+			value, ok = os.LookupEnv(name)
+		} else {
+			value, ok = env[name]
+		}
+		if !ok {
+			return "", errors.New("tool_environment_error")
+		}
+		env[name] = value
+	}
 	executable := command.Executable
 	if !filepath.IsAbs(executable) && strings.ContainsAny(executable, `/\`) {
 		executable = filepath.Join(workspace, executable)
+	}
+	if command.Env != nil && !filepath.IsAbs(executable) {
+		// 拒绝空/相对PATH项，避免意外使用当前目录或宿主搜索路径。
+		found := ""
+		for _, directory := range filepath.SplitList(env["PATH"]) {
+			if !filepath.IsAbs(directory) {
+				continue
+			}
+			candidate := filepath.Join(directory, executable)
+			if _, e := exec.LookPath(candidate); e == nil {
+				found = candidate
+				break
+			}
+		}
+		if found == "" {
+			return "", errors.New("tool_executable_error")
+		}
+		executable = found
 	}
 	executable, err = exec.LookPath(executable)
 	if err != nil {
@@ -69,17 +115,6 @@ func toolOutput(ctx context.Context, command toolCommand) (string, error) {
 	executable, err = filepath.Abs(executable)
 	if err != nil {
 		return "", errors.New("tool_executable_error")
-	}
-	env := process.HostEnvironment()
-	for _, name := range command.ExtraEnvNames {
-		if !toolEnvName.MatchString(name) {
-			return "", errors.New("tool_environment_error")
-		}
-		value, ok := os.LookupEnv(name)
-		if !ok {
-			return "", errors.New("tool_environment_error")
-		}
-		env[name] = value
 	}
 	values := make([]string, 0, len(env))
 	for name, value := range env {

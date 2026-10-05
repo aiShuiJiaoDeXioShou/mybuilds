@@ -1,0 +1,128 @@
+  ios:
+    runner:
+      platform: ios
+      framework: flutter
+      labels: [flutter, xcode]
+    params:
+      version: "1.0.0"
+      channel: "internal"
+      flavor: ""
+      build_number: "1"
+      xcode_project:
+        required: true
+      scheme:
+        required: true
+      bundle_id:
+        required: true
+      export_method:
+        default: debugging
+        choices: [debugging, release-testing, app-store-connect, enterprise]
+    ios_signing:
+      p12: "${IOS_P12_FILE}"
+      profile: "${IOS_PROFILE_FILE}"
+      password: "${IOS_P12_PASSWORD}"
+      bundle_id: "{{bundle_id}}"
+      export_method: "{{export_method}}"
+    env:
+      APP_VERSION: "{{version}}"
+      APP_CHANNEL: "{{channel}}"
+      APP_FLAVOR: "{{flavor}}"
+      BUILD_NUMBER: "{{build.number}}"
+      IOS_PROJECT: "{{xcode_project}}"
+      IOS_SCHEME: "{{scheme}}"
+      IOS_BUNDLE_ID: "{{bundle_id}}"
+    timeout: 30m
+    steps:
+      - kind: run
+        name: flutter-ios-configure
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CI=true FLUTTER_SUPPRESS_ANALYTICS=true
+          args=(--release --config-only --no-codesign --no-pub --build-name "$APP_VERSION" --build-number "$BUILD_NUMBER" --dart-define "MYBUILDS_CHANNEL=$APP_CHANNEL")
+          if [[ -n "$APP_FLAVOR" ]]; then args+=(--flavor "$APP_FLAVOR"); fi
+          flutter --no-version-check --suppress-analytics pub get
+          flutter --no-version-check --suppress-analytics build ios "${args[@]}"
+      - kind: run
+        name: flutter-ios-archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CI=true FLUTTER_SUPPRESS_ANALYTICS=true
+          configuration=Release
+          if [[ -n "$APP_FLAVOR" ]]; then
+            [[ "$IOS_SCHEME" == "$APP_FLAVOR" ]] || { echo 'flavor 与明确 scheme 不一致' >&2; exit 2; }
+            configuration="Release-$APP_FLAVOR"
+          fi
+          case "$IOS_PROJECT" in
+            *.xcworkspace) project_flag=-workspace ;;
+            *.xcodeproj) project_flag=-project ;;
+            *) echo '需要明确 Xcode 工程' >&2; exit 2 ;;
+          esac
+          xcodebuild "$project_flag" "$IOS_PROJECT" -scheme "$IOS_SCHEME" -configuration "$configuration" \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath "$MYBUILDS_IOS_BUILD_DIR/DerivedData" \
+            -archivePath "$MYBUILDS_IOS_BUILD_DIR/App.xcarchive" archive \
+            CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$MYBUILDS_IOS_TEAM_ID" \
+            CODE_SIGN_IDENTITY="$MYBUILDS_IOS_SIGNING_IDENTITY" \
+            PROVISIONING_PROFILE_SPECIFIER="$MYBUILDS_IOS_PROFILE_UUID" \
+            OTHER_CODE_SIGN_FLAGS="--keychain \"$MYBUILDS_IOS_KEYCHAIN\"" \
+            MARKETING_VERSION="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            DEBUG_INFORMATION_FORMAT=dwarf-with-dsym
+          apps=("$MYBUILDS_IOS_BUILD_DIR/App.xcarchive/Products/Applications/"*.app)
+          [[ ${#apps[@]} == 1 && -d "${apps[0]}" ]] || { echo '归档必须包含单个 app' >&2; exit 1; }
+          info="${apps[0]}/Info.plist"
+          actual_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info")
+          actual_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info")
+          actual_number=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info")
+          [[ "$actual_id" == "$IOS_BUNDLE_ID" && "$actual_version" == "$APP_VERSION" && "$actual_number" == "$BUILD_NUMBER" ]] || { echo '归档身份或版本不一致' >&2; exit 1; }
+      - kind: run
+        name: flutter-ios-export
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CI=true FLUTTER_SUPPRESS_ANALYTICS=true
+          archive="$MYBUILDS_IOS_BUILD_DIR/App.xcarchive"
+          xcodebuild -exportArchive -archivePath "$archive" \
+            -exportPath "$MYBUILDS_IOS_BUILD_DIR/export" -exportOptionsPlist "$MYBUILDS_IOS_EXPORT_OPTIONS"
+          ipas=("$MYBUILDS_IOS_BUILD_DIR/export/"*.ipa)
+          [[ ${#ipas[@]} == 1 && -s "${ipas[0]}" ]] || { echo '导出必须包含单个 IPA' >&2; exit 1; }
+          verify_dir="$MYBUILDS_IOS_BUILD_DIR/verify"
+          mkdir -p "$verify_dir"
+          /usr/bin/ditto -x -k "${ipas[0]}" "$verify_dir"
+          apps=("$verify_dir/Payload/"*.app)
+          [[ ${#apps[@]} == 1 && -d "${apps[0]}" ]] || { echo 'IPA 必须包含单个 app' >&2; exit 1; }
+          app="${apps[0]}"
+          info="$app/Info.plist"
+          actual_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info")
+          actual_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info")
+          actual_number=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info")
+          [[ "$actual_id" == "$IOS_BUNDLE_ID" && "$actual_version" == "$APP_VERSION" && "$actual_number" == "$BUILD_NUMBER" ]] || { echo 'IPA 身份或版本不一致' >&2; exit 1; }
+          /usr/bin/codesign --verify --deep --strict "$app"
+          /usr/bin/security cms -D -i "$app/embedded.mobileprovision" > "$verify_dir/profile.plist"
+          profile_uuid=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$verify_dir/profile.plist")
+          profile_app=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$verify_dir/profile.plist")
+          profile_prefix=$(/usr/libexec/PlistBuddy -c 'Print :ApplicationIdentifierPrefix:0' "$verify_dir/profile.plist")
+          profile_team=$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$verify_dir/profile.plist")
+          [[ "$profile_uuid" == "$MYBUILDS_IOS_PROFILE_UUID" && "$profile_team" == "$MYBUILDS_IOS_TEAM_ID" && "$profile_app" == "$profile_prefix.$IOS_BUNDLE_ID" ]] || { echo 'IPA profile 不一致' >&2; exit 1; }
+          /usr/bin/codesign -d --extract-certificates "$verify_dir/cert" "$app"
+          actual_cert=$(/usr/bin/openssl x509 -inform DER -in "$verify_dir/cert0" -noout -fingerprint -sha1 | sed 's/.*=//' | tr -d ':' | tr 'a-f' 'A-F')
+          expected_cert=$(printf '%s' "$MYBUILDS_IOS_SIGNING_IDENTITY" | tr 'a-f' 'A-F')
+          [[ "$actual_cert" == "$expected_cert" ]] || { echo 'IPA 签名身份不一致' >&2; exit 1; }
+          archive_apps=("$archive/Products/Applications/"*.app)
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$info")
+          symbols=("$archive/dSYMs/"*.dSYM)
+          [[ ${#symbols[@]} -ge 1 && -d "${symbols[0]}" ]] || { echo '归档缺少 dSYM' >&2; exit 1; }
+          app_uuids=$(/usr/bin/xcrun dwarfdump --uuid "$app/$executable" | awk '{print $2, $3}' | sort)
+          archive_uuids=$(/usr/bin/xcrun dwarfdump --uuid "${archive_apps[0]}/$executable" | awk '{print $2, $3}' | sort)
+          dsym_uuids=$(/usr/bin/xcrun dwarfdump --uuid "$archive/dSYMs/$(basename "${archive_apps[0]}").dSYM/Contents/Resources/DWARF/$executable" | awk '{print $2, $3}' | sort)
+          [[ -n "$app_uuids" && "$app_uuids" == "$archive_uuids" && "$app_uuids" == "$dsym_uuids" ]] || { echo 'IPA/归档/dSYM UUID 不一致' >&2; exit 1; }
+          cp "${ipas[0]}" "$MYBUILDS_IOS_OUTPUT_DIR/App.ipa"
+          /usr/bin/ditto -c -k --keepParent "$archive" "$MYBUILDS_IOS_OUTPUT_DIR/App.xcarchive.zip"
+          /usr/bin/ditto -c -k --keepParent "$archive/dSYMs" "$MYBUILDS_IOS_OUTPUT_DIR/App.dSYM.zip"
+      - kind: artifact
+        name: flutter-ios-artifacts
+        paths:
+          - "{{ios.output_dir}}/App.ipa"
+          - "{{ios.output_dir}}/App.xcarchive.zip"
+          - "{{ios.output_dir}}/App.dSYM.zip"

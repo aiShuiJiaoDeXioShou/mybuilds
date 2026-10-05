@@ -1,0 +1,12 @@
+# 已锁定的wrapper脚本及JAR随示例提交；本地SDK与签名材料不提交。
+/.gradle
+/captures/
+/local.properties
+GeneratedPluginRegistrant.java
+.cxx/
+
+# Remember to never publicly share your keystore.
+# See https://flutter.dev/to/reference-keystore
+key.properties
+**/*.keystore
+**/*.jks

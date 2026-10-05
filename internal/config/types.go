@@ -28,8 +28,9 @@ type Build struct {
 }
 
 type Runner struct {
-	Platform string   `yaml:"platform"`
-	Labels   []string `yaml:"labels,omitempty"`
+	Framework string   `yaml:"framework,omitempty" json:",omitempty"`
+	Platform  string   `yaml:"platform"`
+	Labels    []string `yaml:"labels,omitempty"`
 }
 
 type Parameter struct {

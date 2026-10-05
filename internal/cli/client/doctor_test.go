@@ -43,7 +43,7 @@ func TestNativeAndroidInitAndOptionBoundaries(t *testing.T) {
 	}
 	for _, args := range [][]string{
 		{"init", "--framework", "native"},
-		{"init", "--framework", "flutter", "--platform", "android"},
+		{"init", "--framework", "unknown", "--platform", "android"},
 		{"init", "--platform", "unknown"},
 		{"init", "--template", "absent.yml", "--platform", "android"},
 	} {

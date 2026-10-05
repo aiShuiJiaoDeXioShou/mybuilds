@@ -127,11 +127,18 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 			p.facts[key] = value
 		}
 	}
-	parameters := make([]map[string]string, len(names))
-	for i, name := range names {
-		parameters[i], err = config.ResolveParams(document.Builds[name], options.Params)
-		if err != nil {
-			return nil, err
+	parameters, err := resolveBuildParameters(document, names, options.PreviewOptions)
+	if err != nil {
+		return nil, err
+	}
+	if remote != nil {
+		for i, name := range names {
+			build := document.Builds[name]
+			if build.Runner != nil && build.Runner.Framework == "flutter" {
+				if err := mobile.ValidateFlutterParameters(build.Runner.Platform, parameters[i], p.facts["build.number"]); err != nil {
+					return nil, err
+				}
+			}
 		}
 	}
 	// 所有模板（包括未显示步骤、post 和公共通知）先按共享规则检查。
@@ -148,6 +155,9 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 		}
 		build, err := p.build(name, document.Builds[name], parameters[i], options.Step, effectiveNotifications)
 		if err != nil {
+			return nil, err
+		}
+		if err := p.flutterTools(document.Builds[name], &build, parameters[i]); err != nil {
 			return nil, err
 		}
 		prepared = append(prepared, build)
@@ -271,6 +281,12 @@ func resultDirectory(workspace string) (string, error) {
 
 func (p *runPreparation) build(name string, build *config.Build, params map[string]string, selected string, notifications *config.Notifications) (preparedBuild, error) {
 	b := preparedBuild{iosDeclared: build.IOSSigning != nil, name: name, steps: []preparedStep{}, postTimeout: 2 * time.Minute}
+	if p.remote == nil {
+		delete(p.facts, "build.number")
+		if build.Runner != nil && build.Runner.Framework == "flutter" && params["build_number"] != "" {
+			p.facts["build.number"] = params["build_number"]
+		}
+	}
 	b.timeout, _ = time.ParseDuration(build.Timeout)
 	if build.Post != nil && build.Post.Timeout != "" {
 		b.postTimeout, _ = time.ParseDuration(build.Post.Timeout)

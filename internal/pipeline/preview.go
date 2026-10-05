@@ -10,14 +10,16 @@ import (
 	"strings"
 
 	"mybuilds/internal/config"
+	"mybuilds/internal/mobile"
 )
 
 type PreviewOptions struct {
-	Names  []string
-	All    bool
-	Params map[string]string
-	Step   string
-	Facts  map[string]string
+	Names       []string
+	All         bool
+	Params      map[string]string
+	BuildParams map[string]map[string]string
+	Step        string
+	Facts       map[string]string
 }
 
 // PreviewPlan 仅含可公开的摘要，不保存配置正文或任何参数值。
@@ -28,6 +30,8 @@ type PreviewPlan struct {
 
 type BuildPreview struct {
 	Name          string             `json:"name"`
+	Platform      string             `json:"platform,omitempty"`
+	Framework     string             `json:"framework,omitempty"`
 	Parameters    []ParameterPreview `json:"parameters"`
 	Condition     string             `json:"condition"`
 	Reasons       []string           `json:"reasons"`
@@ -80,12 +84,9 @@ func Preview(document *config.Document, options PreviewOptions) (*PreviewPlan, e
 	if options.Step != "" && len(names) != 1 {
 		return nil, fmt.Errorf("step: 只允许选择一个 build")
 	}
-	params := make([]map[string]string, len(names))
-	for i, name := range names {
-		params[i], err = config.ResolveParams(document.Builds[name], options.Params)
-		if err != nil {
-			return nil, err
-		}
+	params, err := resolveBuildParameters(document, names, options)
+	if err != nil {
+		return nil, err
 	}
 	plan := &PreviewPlan{Builds: make([]BuildPreview, 0, len(names)), SensitiveValuesHidden: true}
 	for i, name := range names {
@@ -184,6 +185,10 @@ func previewBuild(document *config.Document, name string, params, facts map[stri
 		}
 	}
 	b := BuildPreview{Name: name, Parameters: []ParameterPreview{}, Condition: state.Condition, Reasons: state.Reasons, Timeout: build.Timeout, Steps: []StepPreview{}, Reports: build.Reports != nil}
+	if build.Runner != nil {
+		b.Platform = build.Runner.Platform
+		b.Framework = build.Runner.Framework
+	}
 	for _, key := range sortedKeys(params) {
 		b.Parameters = append(b.Parameters, ParameterPreview{Name: key, ValueHidden: true})
 	}
@@ -432,4 +437,35 @@ func iosOutputReferenced(b *config.Build) bool {
 		}
 	}
 	return false
+}
+
+// resolveBuildParameters 由纯预览与唯一 Run 共用，不混入未选择构建的作用域。
+func resolveBuildParameters(document *config.Document, names []string, options PreviewOptions) ([]map[string]string, error) {
+	for name := range options.BuildParams {
+		if !slices.Contains(names, name) {
+			return nil, fmt.Errorf("params: 未选择或未知构建作用域")
+		}
+	}
+	resolved := make([]map[string]string, len(names))
+	for i, name := range names {
+		overrides := maps.Clone(options.Params)
+		if overrides == nil {
+			overrides = map[string]string{}
+		}
+		for key, value := range options.BuildParams[name] {
+			overrides[key] = value
+		}
+		params, err := config.ResolveParams(document.Builds[name], overrides)
+		if err != nil {
+			return nil, err
+		}
+		build := document.Builds[name]
+		if build.Runner != nil && build.Runner.Framework == "flutter" {
+			if err := mobile.ValidateFlutterParameters(build.Runner.Platform, params, params["build_number"]); err != nil {
+				return nil, err
+			}
+		}
+		resolved[i] = params
+	}
+	return resolved, nil
 }

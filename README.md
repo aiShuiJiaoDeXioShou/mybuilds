@@ -26,12 +26,14 @@
 客户端已接入 `init`、本地模板、严格配置校验与 `run --dry-run` 脱敏预览；支持单/多 build 选择、参数覆盖和条件三态。
 `001-pipeline-preview` 已实现并通过集成验证，证据见[验证记录](specs/001-pipeline-preview/validation.md)。`002-local-run` 已接入本地顺序执行、进程组取消、预算/post 和 UTC 脱敏日志，已通过验收；`003-build-artifacts` 已接入产物快照与本地结果/步骤日志并通过验收，见[验证记录](specs/003-build-artifacts/validation.md)。审批、通知和上传仍待实现。
 MVP 目标已扩展至原生/Flutter 双平台、多节点构建、Google Play/App Store 分发与用户自定义，见 [构建与分发设计](docs/plans/BUILD_DISTRIBUTION.md)。
-`004-android-build` 已完成本机 `doctor`、可编辑模板和真实工程验收：APK/AAB 版本与签名、mapping、快照摘要、离线缓存、失败和取消均通过，见[验证记录](specs/004-android-build/validation.md)。`005-ios-build` 已实现严格签名配置、init/doctor、同一Run/Agent资源准备与独立Close、私有journal恢复及中央原生关闭guard；必要自动检查与人工指南随功能交付，真实Apple profile兼容、签名IPA/dSYM及相关成功/取消组合由用户人工验收，不把自产证书或unsigned归档视为真实签名通过。Flutter 模板仍待后续功能交付。
+`004-android-build` 已完成本机 `doctor`、可编辑模板和真实工程验收：APK/AAB 版本与签名、mapping、快照摘要、离线缓存、失败和取消均通过，见[验证记录](specs/004-android-build/validation.md)。`005-ios-build` 已实现严格签名配置、init/doctor、同一Run/Agent资源准备与独立Close、私有journal恢复及中央原生关闭guard；必要自动检查与人工指南随功能交付，真实Apple profile兼容、签名IPA/dSYM及相关成功/取消组合由用户人工验收，不把自产证书或unsigned归档视为真实签名通过。Flutter 的可编辑双平台与 production/staging 模板已接入，真实 APK/AAB/IPA 人工待验。
 `006-control-plane` 已接入严格管理配置、双数据库 Store、单控制端独占、鉴权 HTTP、只读 Git 固定提交与远程 CLI。已通过最终全量/race/vet、SQLite 与 PostgreSQL 各 37 项真实二进制验收，以及 Linux 上 37 项闭环；Spec Kit 收敛无缺口并按整功能提交，见[验证记录](specs/006-control-plane/validation.md)。006 验收范围只包含 queued/skipped，不含实际远程构建；007 已接入独立 Agent 执行，发布和审批仍待后续功能。
 项目组已经接入：注册时可选组，未指定归入 default，支持普通组改名、空组删除和项目迁移，项目历史与编号保持。
 一个 YAML 的多个命名 build、本地参数/env 映射、when、累计超时、post 和日志时间戳已经实现；无 YAML 绑定双平台方案、自动变更筛选、Webhook 等待窗口、保留策略与发布审批仍待实现。019 JUnit 已接入本地检查、原XML快照与封存，以及Agent回传、中央详情和下载；双库名义应用各92项、最终20故障192断言及macOS/Linux实机门通过；全量test/race/vet、12编译通过，Spec Kit收敛无缺口，验收通过，整功能提交见[实施历史](docs/IMPLEMENTATION_HISTORY.md)。
 
 `020-project-retention` 已完成自动及实际联验：策略继承、候选/事项管理、读取保护、中央及原节点清理、分钟后台与持久公平续扫已接通。macOS/Linux各SQLite/PostgreSQL三程序通过离线重连、轮换、20次重放、101幂等与102继续、真实SQL故障恢复及周边文件/进程保持；全量普通、必要race/vet和六平台18CLI编译通过，见[验证记录](specs/020-project-retention/validation.md)。后续审批与发布unknown由对应模块接入同一保护函数。
+
+009 Flutter框架选择、独立build参数、真实SDK诊断与框架调度已经实现，默认模板支持一个YAML同时配置android/ios以及production/staging；`init --framework flutter --platform android,ios`生成一个配置，原生模板继续支持android或ios。完整示例见[Flutter工程](examples/flutter/README.md)。
 
 ## 开发与运行
 
@@ -331,6 +333,7 @@ mybuilds/
 ├── examples/local-run.yml       # 可执行本地 shell 示例
 ├── examples/local-artifacts.yml # 快照、日志与 post 示例
 ├── examples/android/           # 原生 Java 工程与参数/签名接入示例
+├── examples/flutter/           # 可编辑 Flutter 双平台工程、参数与签名接入示例
 ├── specs/                       # 各功能规范、计划、任务与验证
 ├── docs/plans/                  # 产品决策与功能实施路线
 ├── .agents/skills/              # 项目内 Codex 技能
@@ -354,7 +357,7 @@ mybuilds/
 | `internal/protocol` | 控制端与 Agent 共用的任务、租约及回报格式 |
 | `internal/store` | 已接入双数据库独占、业务事务、快照与步骤进度持久化 |
 | `internal/scm` | 已接入只读 Git 固定提交与 SSH 显式凭据；Webhook 来源后续接入 |
-| `internal/mobile` | 已接入 Android 模板/doctor；iOS/Flutter、签名生命周期随后交付 |
+| `internal/mobile` | 已接入 Android/Flutter 模板、真实受限doctor和纯参数检查；iOS签名生命周期由005提供 |
 | `internal/distribute` | fastlane 商店封装与 custom 上传，共用发布记录 |
 | `internal/notify` | 飞书等通知渠道 |
 | `examples` | 可运行的配置与工程示例 |

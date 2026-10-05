@@ -176,14 +176,23 @@ func candidateReason(db *gorm.DB, row buildRecord, node nodeRecord, session node
 		}
 	}
 	if runner := snapshot.Definition.Runner; runner != nil {
-		requiredTools := []string{"java", "android_aapt2", "android_apksigner"}
-		if runner.Platform == "ios" {
+		requiredTools := []string{}
+		switch runner.Platform {
+		case "android":
+			requiredTools = []string{"java", "android_aapt2", "android_apksigner"}
+		case "ios":
 			if session.OS != "darwin" {
 				return "capability_mismatch", nil
 			}
 			requiredTools = []string{"xcode", "ios_signing"}
-		} else if runner.Platform != "android" {
+		default:
 			return "capability_mismatch", nil
+		}
+		if runner.Framework == "flutter" {
+			requiredTools = append(requiredTools, "flutter", "dart")
+			if runner.Platform == "ios" {
+				requiredTools = append(requiredTools, "cocoapods")
+			}
 		}
 		for _, required := range requiredTools {
 			if !passed[required] {

@@ -20,7 +20,7 @@ func validNodeReport(report protocol.NodeReport) bool {
 	if !validArch || report.Capacity < 1 || report.Capacity > 32 || len(report.Tools) > 32 {
 		return false
 	}
-	names := []string{"shell", "git", "java", "android_aapt2", "android_apksigner", "xcode", "ios_signing", "node_journal"}
+	names := []string{"shell", "git", "java", "android_aapt2", "android_apksigner", "xcode", "ios_signing", "node_journal", "flutter", "dart", "cocoapods"}
 	reasons := []string{"", "tool_missing", "tool_error", "tool_version_invalid", "tool_incompatible", "tool_timeout", "cancelled", "output_limit", "cleanup_error", "unsupported", "uninitialized", "journal_unconfirmed", "data_invalid", "data_locked"}
 	seen := map[string]bool{}
 	for _, tool := range report.Tools {

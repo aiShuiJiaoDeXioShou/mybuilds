@@ -1,0 +1,113 @@
+  android:
+    runner:
+      platform: android
+      framework: flutter
+      labels: [flutter, android-sdk]
+    params:
+      version: "1.0.0"
+      channel: "internal"
+      flavor: ""
+      build_number: "1"
+      application_id:
+        required: true
+    env:
+      APP_VERSION: "{{version}}"
+      APP_CHANNEL: "{{channel}}"
+      APP_FLAVOR: "{{flavor}}"
+      BUILD_NUMBER: "{{build.number}}"
+      APPLICATION_ID: "{{application_id}}"
+      ANDROID_KEYSTORE: "${ANDROID_KEYSTORE}"
+      ANDROID_KEY_ALIAS: "${ANDROID_KEY_ALIAS}"
+      ANDROID_KEYSTORE_PASSWORD: "${ANDROID_KEYSTORE_PASSWORD}"
+      ANDROID_KEY_PASSWORD: "${ANDROID_KEY_PASSWORD}"
+    timeout: 30m
+    # 默认验收路径为标准 app 模块；其它工程需显式编辑这些命令。
+    steps:
+      - kind: run
+        name: flutter-android-release
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CI=true FLUTTER_SUPPRESS_ANALYTICS=true
+          # 变体只用于确定叶文件，不把任意参数解释成路径或 shell。
+          [[ -z "$APP_FLAVOR" || "$APP_FLAVOR" =~ ^[a-z][a-z0-9_]*$ ]] || { echo '请使用工程已配置的小写 flavor' >&2; exit 2; }
+          variant="${APP_FLAVOR}Release"
+          if [[ -z "$APP_FLAVOR" ]]; then variant=release; fi
+          suffix="${APP_FLAVOR:+$APP_FLAVOR-}release"
+          apk="build/app/outputs/flutter-apk/app-$suffix.apk"
+          aab="build/app/outputs/bundle/$variant/app-$suffix.aab"
+          stage=build/mybuilds-flutter
+          [[ ! -L build && ! -L "$stage" ]] || { echo '产物目录不能为链接' >&2; exit 2; }
+          mkdir -p "$stage"
+          # 只清本次确切输出叶文件，保留其它变体与所有共享缓存。
+          rm -f -- "$apk" "$aab" "$stage/app-release.apk" "$stage/app-release.aab"
+          args=(--release --no-pub --build-name "$APP_VERSION" --build-number "$BUILD_NUMBER" --dart-define "MYBUILDS_CHANNEL=$APP_CHANNEL")
+          if [[ -n "$APP_FLAVOR" ]]; then args+=(--flavor "$APP_FLAVOR"); fi
+          flutter --no-version-check --suppress-analytics pub get
+          flutter --no-version-check --suppress-analytics build appbundle "${args[@]}"
+          flutter --no-version-check --suppress-analytics build apk "${args[@]}"
+          [[ -s "$apk" && -s "$aab" && ! -L "$apk" && ! -L "$aab" ]] || { echo '缺少本次完整产物' >&2; exit 1; }
+          cp -- "$apk" "$stage/app-release.apk"
+          cp -- "$aab" "$stage/app-release.aab"
+      - kind: run
+        name: flutter-android-verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CI=true FLUTTER_SUPPRESS_ANALYTICS=true
+          export LC_ALL=C
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          [[ -n "$sdk" && -n "${JAVA_HOME:-}" ]] || { echo '工具环境缺失' >&2; exit 1; }
+          tools=$(find "$sdk/build-tools" -mindepth 1 -maxdepth 1 -type d -name '*.*.*' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)
+          [[ -x "$tools/aapt2" && -x "$tools/apksigner" ]] || { echo '构建工具缺失' >&2; exit 1; }
+          apk="$PWD/build/mybuilds-flutter/app-release.apk"
+          aab="$PWD/build/mybuilds-flutter/app-release.aab"
+          metadata=$("$tools/aapt2" dump badging "$apk")
+          actual_id=$(printf '%s\n' "$metadata" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
+          actual_number=$(printf '%s\n' "$metadata" | sed -n "s/^package:.* versionCode='\([^']*\)'.*/\1/p")
+          actual_version=$(printf '%s\n' "$metadata" | sed -n "s/^package:.* versionName='\([^']*\)'.*/\1/p")
+          [[ "$actual_id" == "$APPLICATION_ID" && "$actual_version" == "$APP_VERSION" && "$actual_number" == "$BUILD_NUMBER" ]] || { echo 'APK 身份或版本不一致' >&2; exit 1; }
+          expected=$("$JAVA_HOME/bin/keytool" -J-Duser.language=en -J-Duser.country=US -list -v -keystore "$ANDROID_KEYSTORE" -alias "$ANDROID_KEY_ALIAS" -storepass:env ANDROID_KEYSTORE_PASSWORD | sed -n 's/.*SHA256: //p' | tr -d ':[:space:]' | tr 'A-F' 'a-f')
+          [[ "$expected" =~ ^[a-f0-9]{64}$ ]] || { echo '签名声明不完整' >&2; exit 1; }
+          apk_cert=$("$tools/apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr -d '[:space:]' | tr 'A-F' 'a-f')
+          [[ "$apk_cert" == "$expected" ]] || { echo 'APK 签名不一致' >&2; exit 1; }
+          "$JAVA_HOME/bin/jarsigner" -J-Duser.language=en -J-Duser.country=US -verify "$aab"
+          aab_cert=$("$JAVA_HOME/bin/keytool" -J-Duser.language=en -J-Duser.country=US -printcert -jarfile "$aab" | sed -n 's/.*SHA256: //p' | tr -d ':[:space:]' | tr 'A-F' 'a-f')
+          [[ "$aab_cert" == "$expected" ]] || { echo 'AAB 签名不一致' >&2; exit 1; }
+          # 使用该工程已解析的官方 bundletool；不下载 standalone JAR。
+          export MYBUILDS_FLUTTER_AAB="$aab"
+          umask 077
+          verify_dir=$(mktemp -d "$PWD/.mybuilds-flutter-verify.XXXXXXXX")
+          trap 'rm -rf -- "$verify_dir"' EXIT
+          cat > "$verify_dir/manifest.init.gradle" <<'GROOVY'
+          gradle.projectsEvaluated {
+              def app = gradle.rootProject.project(':app')
+              app.tasks.register('mybuildsVerifyBundleManifest') {
+                  doLast {
+                      def loader = app.plugins.getPlugin('com.android.application').class.classLoader
+                      def command = loader.loadClass('com.android.tools.build.bundletool.commands.DumpCommand')
+                      def target = loader.loadClass('com.android.tools.build.bundletool.commands.DumpCommand$DumpTarget').enumConstants.find { it.name() == 'MANIFEST' }
+                      def bytes = new ByteArrayOutputStream()
+                      def output = new PrintStream(bytes, false, 'UTF-8')
+                      command.builder().setBundlePath(java.nio.file.Paths.get(System.getenv('MYBUILDS_FLUTTER_AAB'))).setModuleName('base').setDumpTarget(target).setOutputStream(output).build().execute()
+                      output.flush()
+                      def factory = javax.xml.parsers.DocumentBuilderFactory.newInstance()
+                      factory.setNamespaceAware(true)
+                      factory.setFeature('http://apache.org/xml/features/disallow-doctype-decl', true)
+                      factory.setFeature('http://xml.org/sax/features/external-general-entities', false)
+                      factory.setFeature('http://xml.org/sax/features/external-parameter-entities', false)
+                      def root = factory.newDocumentBuilder().parse(new ByteArrayInputStream(bytes.toByteArray())).documentElement
+                      def android = 'http://schemas.android.com/apk/res/android'
+                      if (root.getAttribute('package') != System.getenv('APPLICATION_ID') || root.getAttributeNS(android, 'versionName') != System.getenv('APP_VERSION') || root.getAttributeNS(android, 'versionCode') != System.getenv('BUILD_NUMBER')) {
+                          throw new GradleException('AAB 身份或版本不一致')
+                      }
+                  }
+              }
+          }
+          GROOVY
+          (cd android && ./gradlew --offline --no-daemon -Pandroid.builder.sdkDownload=false -I "$verify_dir/manifest.init.gradle" :app:mybuildsVerifyBundleManifest)
+      - kind: artifact
+        name: flutter-android-artifacts
+        paths:
+          - build/mybuilds-flutter/app-release.apk
+          - build/mybuilds-flutter/app-release.aab
