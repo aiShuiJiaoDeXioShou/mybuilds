@@ -94,6 +94,7 @@ type BuildFilter struct {
 	Page                                       Page
 }
 type BuildView struct {
+	PublishIDs            []string                 `json:"publish_ids,omitempty"`
 	HistoryState          string                   `json:"history_state,omitempty"`
 	TerminalAt            *time.Time               `json:"terminal_at,omitempty"`
 	CleanedAt             *time.Time               `json:"cleaned_at,omitempty"`
@@ -188,6 +189,7 @@ type auditRecord struct {
 func (auditRecord) TableName() string { return "audits" }
 
 type batchRecord struct {
+	AllowUpload                                         bool          `gorm:"not null;default:false"`
 	ID                                                  string        `gorm:"primaryKey;size:36"`
 	ProjectID                                           string        `gorm:"not null;size:36"`
 	Project                                             projectRecord `gorm:"foreignKey:ProjectID;constraint:OnDelete:RESTRICT"`

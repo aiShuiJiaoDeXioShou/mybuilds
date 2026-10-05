@@ -16,7 +16,7 @@ import (
 	"mybuilds/internal/protocol"
 )
 
-var progressReasons = []string{"", "exit", "start_error", "directory_error", "artifact_error", "timeout", "cancelled", "log_error", "cleanup_error", "progress_error", "condition", "not_started", "budget_exhausted", "not_selected", "authority_lost", "persistence_error", "precheck_error", "checkout_error", "post_error", "report_failed", "report_invalid", "report_missing", "report_secret", "report_error"}
+var progressReasons = []string{"", "exit", "start_error", "directory_error", "artifact_error", "timeout", "cancelled", "log_error", "cleanup_error", "progress_error", "condition", "not_started", "budget_exhausted", "not_selected", "authority_lost", "persistence_error", "precheck_error", "checkout_error", "post_error", "report_failed", "report_invalid", "report_missing", "report_secret", "report_error", "publish_precheck", "publish_unknown"}
 
 func progressDigest(p protocol.ExecutionProgress) string {
 	b, err := json.Marshal(p)
@@ -32,10 +32,10 @@ func validProgress(p protocol.ExecutionProgress) bool {
 	if p.IOSResourceDigest != "" && (!p.IOSCleanupConfirmed || !validHex(p.IOSResourceDigest, 64)) {
 		return false
 	}
-	if p.IOSCleanupConfirmed && p.Kind != "build_finished" {
+	if p.IOSCleanupConfirmed && p.Kind != "build_finished" || len(p.PublishIntents) != 0 && p.Kind != "build_finished" {
 		return false
 	}
-	if len(p.LocalReports) != 0 || (p.Reports != nil) != reportEvent || p.ReportManifest != nil && p.Kind != "build_finished" {
+	if len(p.LocalReports) != 0 || (p.Reports != nil) != reportEvent || p.ReportManifest != nil && p.Kind != "build_finished" || len(p.PublishIntents) != 0 && p.Kind != "build_finished" {
 		return false
 	}
 	return !p.At.IsZero() && offset == 0 && p.ElapsedNS >= 0 && p.RemainingPostBudgetNS >= 0 && slices.Contains(progressReasons, p.Reason) && slices.Contains([]string{"intent", "started", "finished", "post_selected", "skipped", "build_finished", "reports_checked", "reports_sealed"}, p.Kind) && p.PID == 0 && p.PGID == 0 && p.LocalResultDir == "" && len(p.LocalArtifacts) == 0
@@ -187,7 +187,10 @@ func applyStep(db *gorm.DB, row *buildRecord, p protocol.ExecutionProgress) erro
 	default:
 		return ErrEventConflict
 	}
-	return db.Model(step).Updates(map[string]any{"status": step.Status, "intent": step.Intent, "started": step.Started, "stop_confirmed": step.StopConfirmed, "cleanup_failed": step.CleanupFailed, "reason": step.Reason, "exit_code": step.ExitCode, "elapsed_ns": step.ElapsedNS, "artifact_ids_json": step.ArtifactIDsJSON}).Error
+	if err := db.Model(step).Updates(map[string]any{"status": step.Status, "intent": step.Intent, "started": step.Started, "stop_confirmed": step.StopConfirmed, "cleanup_failed": step.CleanupFailed, "reason": step.Reason, "exit_code": step.ExitCode, "elapsed_ns": step.ElapsedNS, "artifact_ids_json": step.ArtifactIDsJSON}).Error; err != nil {
+		return err
+	}
+	return closePublishStep(db, *row, *step)
 }
 func applyPostSelection(db *gorm.DB, row *buildRecord, p protocol.ExecutionProgress) error {
 	if p.Phase != "" || p.Index != 0 || p.Name != "" || p.StepKind != "" || p.Status != "" || row.PostPhase != "" || !slices.Contains([]string{"success", "failure", "none"}, p.PostPhase) || len(p.ArtifactIDs) != 0 {
@@ -284,6 +287,9 @@ func verifyManifest(db *gorm.DB, row buildRecord, p protocol.ExecutionProgress, 
 	return validateReportManifest(db, row, p)
 }
 func applyTerminal(db *gorm.DB, row *buildRecord, p protocol.ExecutionProgress) error {
+	if err := validatePublishManifest(db, *row, p); err != nil {
+		return err
+	}
 	if p.Phase != "" || p.Index != 0 || p.Name != "" || p.StepKind != "" || !slices.Contains([]string{"succeeded", "failed", "cancelled", "skipped"}, p.Status) || len(p.ArtifactIDs) != 0 {
 		return ErrEventConflict
 	}

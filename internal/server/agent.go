@@ -19,6 +19,9 @@ func (s *Server) agentRoutes(w http.ResponseWriter, r *http.Request, actor store
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	r = r.WithContext(ctx)
+	if s.publishAgentRoutes(w, r, actor) {
+		return
+	}
 	if s.retentionAgentRoutes(w, r, actor) {
 		return
 	}

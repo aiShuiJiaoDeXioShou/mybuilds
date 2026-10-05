@@ -147,6 +147,6 @@ func newRemoteProjectCommand() *cobra.Command {
 	remove := &cobra.Command{Use: "rm <name>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return remoteRequest(cmd, http.MethodDelete, "/api/projects/"+url.PathEscape(args[0]), nil, nil, "")
 	}}
-	project.AddCommand(init, set, list, move, remove)
+	project.AddCommand(newProjectAppCommand(), init, set, list, move, remove)
 	return project
 }

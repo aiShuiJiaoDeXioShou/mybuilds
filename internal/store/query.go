@@ -77,9 +77,14 @@ func buildView(db *gorm.DB, row buildRecord) (BuildView, error) {
 		return BuildView{}, err
 	}
 	result := BuildView{HistoryState: row.HistoryState, TerminalAt: row.TerminalAt, CleanedAt: row.CleanedAt, ID: row.ID, Project: project.Name, Group: project.Group.Name, BatchID: row.BatchID, Name: row.Name, Number: row.Number, Status: row.Status, Reason: row.Reason, SHA: batch.SHA, Branch: batch.Branch, Source: batch.Source, File: batch.File, SourceDigest: batch.SourceDigest, Condition: row.Condition, InitialBudgetNS: row.InitialBudgetNS, RemainingBudgetNS: row.RemainingBudgetNS, PostBudgetNS: row.PostBudgetNS, CreatedAt: row.CreatedAt.UTC(), Steps: []StepProgress{}, Post: []StepProgress{}}
+	// 只关联已经持久化的发布意图，未授权构建不生成假记录。
+	if err := db.Model(&publishIntentRecord{}).Where("build_id = ?", row.ID).Order("created_at,id").Pluck("id", &result.PublishIDs).Error; err != nil {
+		return BuildView{}, err
+	}
 	// 完整清理后仅投影仍存在的身份与结果，不再解释已删除的大JSON或报告。
 	if row.HistoryState == "cleaned" {
 		minimal := BuildView{HistoryState: row.HistoryState, TerminalAt: row.TerminalAt, CleanedAt: row.CleanedAt, ID: row.ID, Project: project.Name, Group: project.Group.Name, BatchID: row.BatchID, Name: row.Name, Number: row.Number, Status: row.Status, Reason: row.Reason, SHA: batch.SHA, CreatedAt: row.CreatedAt.UTC(), ParameterKeys: []string{}, Reasons: []string{}, Steps: []StepProgress{}, Post: []StepProgress{}}
+		minimal.PublishIDs = result.PublishIDs
 		if row.RetryOf != nil {
 			minimal.RetryOf = *row.RetryOf
 		}

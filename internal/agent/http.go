@@ -90,11 +90,15 @@ func (client *agentHTTP) request(parent context.Context, method, path string, in
 		return client.requestError(parent, err)
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	limit := 1 << 20
+	if strings.HasPrefix(path, "/api/agent/publish") {
+		limit = 64 << 10
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, int64(limit)+1))
 	if err != nil {
 		return client.requestError(parent, err)
 	}
-	if len(body) > 1<<20 {
+	if len(body) > limit {
 		return failure("invalid_response")
 	}
 	if response.StatusCode >= 300 && response.StatusCode < 400 {
@@ -109,7 +113,7 @@ func (client *agentHTTP) request(parent context.Context, method, path string, in
 		}
 		return failure("request_failed")
 	}
-	if response.StatusCode == http.StatusNoContent && path == "/api/agent/claim" && len(body) == 0 {
+	if response.StatusCode == http.StatusNoContent && (path == "/api/agent/claim" || path == "/api/agent/publish-queries/claim") && len(body) == 0 {
 		return nil
 	}
 	if output == nil {
@@ -126,7 +130,7 @@ func (client *agentHTTP) request(parent context.Context, method, path string, in
 		return failure("invalid_response")
 	}
 	// 终态和删除回执不得用重复字段后值覆盖原事实；null也不能代表空事项。
-	if path == "/api/agent/terminal-receipt" || deletion {
+	if path == "/api/agent/terminal-receipt" || deletion || strings.HasPrefix(path, "/api/agent/publishes/") || strings.HasPrefix(path, "/api/agent/publish-queries/") {
 		tokens := json.NewDecoder(bytes.NewReader(body))
 		count := 0
 		if journalJSONValue(tokens, 0, &count) != nil {

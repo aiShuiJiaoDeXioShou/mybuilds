@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -26,6 +27,9 @@ func validArtifactName(name string) bool {
 	return true
 }
 func validArtifactDeclaration(in protocol.ArtifactDeclaration) bool {
+	if in.SourcePath != "" && (!validSourcePath(in.SourcePath) || path.Base(in.SourcePath) != in.Name || in.Purpose == "junit") {
+		return false
+	}
 	switch in.Purpose {
 	case "", "artifact":
 		if in.ReportRevision != 0 || in.ReportKey != "" {
@@ -44,7 +48,7 @@ func artifactView(build buildRecord, file artifactRecord) protocol.ArtifactView 
 	return protocol.ArtifactView{ID: file.ID, BuildID: file.BuildID, AttemptID: file.AttemptID, BuildName: build.Name, Phase: file.Phase, Step: file.Step, Name: file.Name, Index: file.Index, Size: file.Size, SHA256: file.SHA256, Purpose: file.Purpose, ReportRevision: file.ReportRevision, ReportKey: file.ReportKey, CompletedAt: file.CreatedAt.UTC()}
 }
 func sameArtifact(file artifactRecord, in protocol.ArtifactDeclaration) bool {
-	return file.ID == in.ID && file.BuildID == in.Ref.BuildID && file.AttemptID == in.Ref.AttemptID && file.Seq == in.Seq && file.Phase == in.Phase && file.Step == in.Step && file.Index == in.Index && file.Name == in.Name && file.Size == in.Size && file.SHA256 == in.SHA256 && file.Purpose == in.Purpose && file.ReportRevision == in.ReportRevision && file.ReportKey == in.ReportKey
+	return file.ID == in.ID && file.BuildID == in.Ref.BuildID && file.AttemptID == in.Ref.AttemptID && file.Seq == in.Seq && file.Phase == in.Phase && file.Step == in.Step && file.Index == in.Index && file.Name == in.Name && file.Size == in.Size && file.SHA256 == in.SHA256 && file.Purpose == in.Purpose && file.ReportRevision == in.ReportRevision && file.ReportKey == in.ReportKey && file.SourcePath == in.SourcePath
 }
 func (s *Store) CommitArtifact(ctx context.Context, actor NodeActor, in ArtifactCommit) (ArtifactCommitted, error) {
 	if !validArtifactDeclaration(in.Declaration) || !validUUID(in.StorageID) {
@@ -108,7 +112,7 @@ func (s *Store) CommitArtifact(ctx context.Context, actor NodeActor, in Artifact
 		if totals.Count >= 128 || totals.Size > (4<<30)-d.Size {
 			return ErrArtifactConflict
 		}
-		file := artifactRecord{ID: d.ID, BuildID: build.ID, AttemptID: d.Ref.AttemptID, Seq: d.Seq, Phase: d.Phase, Step: d.Step, Name: d.Name, Index: d.Index, Size: d.Size, SHA256: d.SHA256, StorageID: in.StorageID, Purpose: d.Purpose, ReportRevision: d.ReportRevision, ReportKey: d.ReportKey, VerifiedJUnitJSON: verifiedJSON, CreatedAt: time.Now().UTC()}
+		file := artifactRecord{SourcePath: d.SourcePath, ID: d.ID, BuildID: build.ID, AttemptID: d.Ref.AttemptID, Seq: d.Seq, Phase: d.Phase, Step: d.Step, Name: d.Name, Index: d.Index, Size: d.Size, SHA256: d.SHA256, StorageID: in.StorageID, Purpose: d.Purpose, ReportRevision: d.ReportRevision, ReportKey: d.ReportKey, VerifiedJUnitJSON: verifiedJSON, CreatedAt: time.Now().UTC()}
 		if err = tx.Create(&file).Error; err != nil {
 			return err
 		}
@@ -229,4 +233,8 @@ func (s *Store) GetArtifact(ctx context.Context, actor Actor, id string) (Artifa
 		}
 	}
 	return ArtifactStored{View: artifactView(build, file), StorageID: file.StorageID}, nil
+}
+
+func validSourcePath(value string) bool {
+	return len(value) <= 4096 && !strings.HasPrefix(value, "/") && value != ".." && !strings.HasPrefix(value, "../") && path.Clean(value) == value && !strings.ContainsAny(value, "\\\x00\r\n")
 }

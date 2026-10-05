@@ -66,6 +66,11 @@ func taskSecrets(cfg config.AgentConfig, build config.Build, values map[string]s
 		steps = append(steps, build.Post.Always...)
 	}
 	for _, step := range steps {
+		if step.Kind == "upload" && step.Credentials != "" {
+			if err := take(map[string]string{"credentials": step.Credentials}); err != nil {
+				return nil, err
+			}
+		}
 		if err := take(step.Env); err != nil {
 			return nil, err
 		}

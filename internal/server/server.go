@@ -104,6 +104,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		s.controlDoctor(w, r, actor)
 		return
 	}
+	if s.publishRoutes(w, r, actor) {
+		return
+	}
 	if s.nodeRoutes(w, r, actor) {
 		return
 	}

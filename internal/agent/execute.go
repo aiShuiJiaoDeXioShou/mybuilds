@@ -9,6 +9,7 @@ import (
 	"mybuilds/internal/pipeline"
 	"mybuilds/internal/protocol"
 	"mybuilds/internal/scm"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,12 +18,16 @@ import (
 
 // 每个真实租约只调用一次现有Run，私有journal先于任何网络进度写入。
 type taskExecution struct {
-	lease     *executionLease
-	client    *agentHTTP
-	journal   *executionJournal
-	spool     *logSpool
-	terminal  bool
-	stopRenew func()
+	publishEvidence map[string]os.FileInfo
+	cfg             config.AgentConfig
+	task            *protocol.TaskSnapshot
+	publishSecrets  map[string]string
+	lease           *executionLease
+	client          *agentHTTP
+	journal         *executionJournal
+	spool           *logSpool
+	terminal        bool
+	stopRenew       func()
 }
 
 func (execution *taskExecution) progress(ctx context.Context, p protocol.ExecutionProgress) error {
@@ -57,6 +62,10 @@ func (execution *taskExecution) progress(ctx context.Context, p protocol.Executi
 		if err := execution.lease.check(); err != nil {
 			return err
 		}
+	}
+	if err := execution.publishManifest(ctx, &p); err != nil {
+		execution.lease.cancel()
+		return err
 	}
 	if err := execution.prepareReports(&p); err != nil {
 		execution.lease.cancel()
@@ -142,7 +151,7 @@ func executeTask(parent context.Context, client *agentHTTP, lock *dataLock, cfg 
 	stopRenew := func() { renewOnce.Do(func() { close(renewStop) }); <-renewDone }
 	go func() { defer close(renewDone); lease.renew(client, renewStop) }()
 	defer func() { lease.cancel(); stopRenew() }()
-	execution := &taskExecution{lease: lease, client: client, journal: journal, spool: newSpool(journal, usage), stopRenew: stopRenew}
+	execution := &taskExecution{cfg: cfg, task: grant.Task, lease: lease, client: client, journal: journal, spool: newSpool(journal, usage), stopRenew: stopRenew}
 	task := grant.Task
 	journal.mu.Lock()
 	journal.state.IOSSigningRequired = task.Definition.IOSSigning != nil
@@ -159,6 +168,7 @@ func executeTask(parent context.Context, client *agentHTTP, lock *dataLock, cfg 
 	if err != nil {
 		return execution.zeroAction("precheck_error", grant.RemainingBudgetNS, grant.RemainingPostBudgetNS)
 	}
+	execution.publishSecrets = secrets
 	journal.mu.Lock()
 	journal.state.StopConfirmed = false
 	err = journal.saveLocked()
@@ -214,7 +224,7 @@ func executeTask(parent context.Context, client *agentHTTP, lock *dataLock, cfg 
 	facts := map[string]string{"project": task.Project, "build.id": grant.Ref.BuildID, "build.number": strconv.FormatInt(task.Number, 10), "node.name": cfg.Node, "git.sha": task.SHA, "git.branch": task.Branch}
 	document := &config.Document{Version: 1, Builds: map[string]*config.Build{task.BuildName: &task.Definition}}
 	runStart := time.Now()
-	result, runErr := pipeline.Run(lease.user, document, pipeline.RunOptions{PreviewOptions: pipeline.PreviewOptions{Names: []string{task.BuildName}, Params: task.Parameters}, Workspace: checkout.Workspace, Output: io.Discard, Remote: &pipeline.RemoteOptions{AuthorityContext: lease.ctx, Facts: facts, Secrets: secrets, ResultParent: resultParent, ResultCreated: execution.registerResult, RemainingBudgetNS: remaining, RemainingPostBudgetNS: grant.RemainingPostBudgetNS, IOSCheckpoint: execution.saveIOSOwnership, Progress: execution.progress, Log: execution.log}})
+	result, runErr := pipeline.Run(lease.user, document, pipeline.RunOptions{PreviewOptions: pipeline.PreviewOptions{Names: []string{task.BuildName}, Params: task.Parameters}, Workspace: checkout.Workspace, Output: io.Discard, Remote: &pipeline.RemoteOptions{Publish: execution.publish, AuthorityContext: lease.ctx, Facts: facts, Secrets: secrets, ResultParent: resultParent, ResultCreated: execution.registerResult, RemainingBudgetNS: remaining, RemainingPostBudgetNS: grant.RemainingPostBudgetNS, IOSCheckpoint: execution.saveIOSOwnership, Progress: execution.progress, Log: execution.log}})
 	if execution.terminal {
 		journal.mu.Lock()
 		stopped := journal.state.StopConfirmed && !journal.state.CleanupFailed && iosClosedState(journal.state)

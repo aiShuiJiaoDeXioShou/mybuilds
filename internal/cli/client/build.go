@@ -80,6 +80,9 @@ func buildDetails(v store.BuildView) [][]string {
 	if v.RetryOf != "" {
 		rows = append(rows, []string{"retry_of", v.RetryOf})
 	}
+	if len(v.PublishIDs) > 0 {
+		rows = append(rows, []string{"publish_ids", strings.Join(v.PublishIDs, ",")})
+	}
 	for _, step := range append(append([]store.StepProgress{}, v.Steps...), v.Post...) {
 		prefix := fmt.Sprintf("%s[%d]", step.Phase, step.Index)
 		rows = append(rows, []string{prefix, strings.Join([]string{step.Name, step.Kind, step.Condition, step.Status, strings.Join(step.Reasons, ","), "elapsed_ns=" + strconv.FormatInt(step.ElapsedNS, 10), "intent=" + strconv.FormatBool(step.Intent), "started=" + strconv.FormatBool(step.Started), "stop_confirmed=" + strconv.FormatBool(step.StopConfirmed), "cleanup_failed=" + strconv.FormatBool(step.CleanupFailed), "reason=" + step.Reason, "exit_code=" + strconv.Itoa(step.ExitCode)}, " ")})

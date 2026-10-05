@@ -19,6 +19,7 @@ type RunOptions struct {
 
 // RemoteOptions只供Agent同一Run的实际持久化消费者，nil保持本地行为。
 type RemoteOptions struct {
+	Publish               func(context.Context, PublishInput) (protocol.PublishReceipt, error)
 	AuthorityContext      context.Context
 	Facts, Secrets        map[string]string
 	ResultParent          string

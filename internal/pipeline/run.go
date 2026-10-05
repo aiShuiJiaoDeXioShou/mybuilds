@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -320,6 +321,14 @@ func (p *runPreparation) build(name string, build *config.Build, params map[stri
 				return b, errors.New("ios_signing: 资源持久化不可用")
 			}
 			p.facts["ios.output_dir"] = ".mybuilds-ios-" + rand.Text()
+			if p.remote != nil {
+				// 原任务身份派生系统路径，中央可按同一冻结build核对发布文件。
+				id := p.remote.options.Facts["build.id"]
+				if matched, _ := regexp.MatchString(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`, id); !matched {
+					return b, errors.New("远程iOS构建身份无效")
+				}
+				p.facts["ios.output_dir"] = ".mybuilds-ios-" + id
+			}
 			defer delete(p.facts, "ios.output_dir")
 			local := maps.Clone(p.facts)
 			local["build.name"] = name
@@ -543,6 +552,21 @@ func (p *runPreparation) step(buildName string, step config.Step, buildEnv map[s
 	}
 	prepared.skipped = state.Condition == "skipped"
 	if prepared.skipped {
+		return prepared, nil
+	}
+	if step.Kind == "upload" && p.remote != nil && p.remote.options.Publish != nil && (step.Target == "google_play" || step.Target == "app_store") {
+		local := maps.Clone(p.facts)
+		local["build.name"], local["workspace"], local["step.name"] = buildName, p.root, step.Name
+		for _, item := range []struct {
+			source string
+			out    *string
+		}{{step.File, &prepared.step.File}, {step.AppIdentifier, &prepared.step.AppIdentifier}, {step.Track, &prepared.step.Track}} {
+			value, e := p.render(item.source, "upload", params, local)
+			if e != nil {
+				return prepared, e
+			}
+			*item.out = value
+		}
 		return prepared, nil
 	}
 	if step.Kind != "run" && step.Kind != "artifact" {
@@ -956,7 +980,24 @@ func executeBuild(ctx context.Context, root string, build preparedBuild, logger 
 		if ios != nil && step.step.Kind == "run" {
 			step.ios = ios
 		}
-		s := executeStep(ctx, root, build.name, step, limit, logger)
+		// 首个发布屏障封存声明测试；之后仅使用原seal，不重采被post改写的工作区。
+		if step.step.Kind == "upload" && reportSet != nil && b.ReportSealDigest == "" {
+			err := checkBuildReports(ctx, build, &b, logger, reportSet, 0, "", true, reportRemaining(build, elapsed, logger.remote))
+			if err != nil || b.Reports == nil || b.Reports.Outcome != "passed" {
+				b.Status, b.Reason = "failed", "report_failed"
+				b.Steps = append(b.Steps, skippedStep(step, "not_started"))
+				if logger.remote != nil {
+					logger.remote.skipped(step, "not_started")
+				}
+				continue
+			}
+		}
+		var s StepRun
+		if step.step.Kind == "upload" {
+			s = executePublishStep(ctx, root, build.name, step, b.Steps, b.Reports, b.ReportSealDigest, b.iosTeamID, limit, logger)
+		} else {
+			s = executeStep(ctx, root, build.name, step, limit, logger)
+		}
 		elapsed += time.Since(stepStart)
 		b.Steps = append(b.Steps, s)
 		if ios != nil && ios.resources != nil && ios.resources.Ownership().Prepared {
@@ -985,7 +1026,7 @@ func executeBuild(ctx context.Context, root string, build preparedBuild, logger 
 	if !started && b.Status == "succeeded" {
 		b.Status, b.Reason = "skipped", "condition"
 	}
-	if reportSet != nil && started && !unsafe && reportReady && logger.failure() == nil && (logger.remote == nil || logger.remote.blocked() == "") {
+	if reportSet != nil && b.ReportSealDigest == "" && started && !unsafe && reportReady && logger.failure() == nil && (logger.remote == nil || logger.remote.blocked() == "") {
 		checkStart := time.Now()
 		err := checkBuildReports(ctx, build, &b, logger, reportSet, 0, "", true, reportRemaining(build, elapsed, logger.remote))
 		elapsed += time.Since(checkStart)

@@ -239,6 +239,9 @@ func retentionCleanHistory(tx *gorm.DB, row buildRecord, at time.Time) error {
 	if err := retentionDeletionAllowed(tx, row); err != nil {
 		return err
 	}
+	if err := retirePublishArtifacts(tx, row.ID); err != nil {
+		return err
+	}
 	for _, model := range []any{&stepRecord{}, &artifactRecord{}, &logChunkRecord{}} {
 		if err := tx.Where("build_id = ?", row.ID).Delete(model).Error; err != nil {
 			return err

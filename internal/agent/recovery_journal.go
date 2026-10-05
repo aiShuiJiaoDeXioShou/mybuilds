@@ -64,6 +64,9 @@ func readTerminalJournal(lock *dataLock, name string) (*executionJournal, error)
 		}
 	}
 	checkpoint := &executionJournal{state: state}
+	if err := validatePublisherJournal(state); err != nil {
+		return nil, err
+	}
 	if err := (&taskExecution{journal: checkpoint}).checkSealed(&p); err != nil {
 		return nil, failure("journal_unconfirmed")
 	}

@@ -15,6 +15,9 @@ import (
 // Recover只核对已有持久证据，成功前不改变任何可调度身份；不会恢复旧动作。
 func (s *Store) Recover(ctx context.Context) error {
 	err := s.write(ctx, func(tx *gorm.DB) error {
+		if err := validatePublishRecovery(tx); err != nil {
+			return err
+		}
 		cursor := ""
 		for {
 			var rows []buildRecord

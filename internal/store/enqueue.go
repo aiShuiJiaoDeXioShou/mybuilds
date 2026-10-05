@@ -269,7 +269,7 @@ func (s *Store) Enqueue(ctx context.Context, input EnqueueInput) (BatchResult, e
 		if queued > math.MaxInt64-project.NextNumber {
 			return ErrConflict
 		}
-		batch := batchRecord{ID: uuid.NewString(), ProjectID: project.ID, IdentityID: input.Actor.ID, SHA: input.SHA, Branch: input.Branch, Source: input.Source, File: input.File, SourceDigest: input.SourceDigest, CreatedAt: time.Now().UTC()}
+		batch := batchRecord{AllowUpload: input.AllowUpload && input.Actor.Role == "admin", ID: uuid.NewString(), ProjectID: project.ID, IdentityID: input.Actor.ID, SHA: input.SHA, Branch: input.Branch, Source: input.Source, File: input.File, SourceDigest: input.SourceDigest, CreatedAt: time.Now().UTC()}
 		if err := tx.Create(&batch).Error; err != nil {
 			return err
 		}

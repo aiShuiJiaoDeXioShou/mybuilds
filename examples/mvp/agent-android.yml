@@ -1,0 +1,9 @@
+server: http://127.0.0.1:8787
+node: flutter-android
+token: '${MYBUILDS_AGENT_TOKEN}'
+capacity: 1
+data_dir: agent-android-data
+secrets_file: android.secrets.env
+publish_tools:
+  bundle_dir: tools/fastlane
+  bundletool: tools/bundletool-1.18.3.jar

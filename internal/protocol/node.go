@@ -92,6 +92,7 @@ type ArtifactExpectation struct {
 
 // CollectedArtifact 仅在本地把真实收集结果交给Agent，路径不进入网络事件。
 type CollectedArtifact struct {
+	SourcePath                 string `json:"-"`
 	SnapshotPath, Name, SHA256 string
 	Size                       int64
 }
@@ -171,6 +172,7 @@ type CollectedReport struct {
 	SnapshotPath string     `json:"-"`
 }
 type ExecutionProgress struct {
+	PublishIntents        []PublishExpectation  `json:"publish_intents,omitempty"`
 	IOSResourceDigest     string                `json:"ios_resource_digest,omitempty"`
 	IOSCleanupConfirmed   bool                  `json:"ios_cleanup_confirmed,omitempty"`
 	Kind                  string                `json:"kind"`
@@ -234,6 +236,7 @@ type LogAck struct {
 	Digest     string `json:"digest"`
 }
 type ArtifactDeclaration struct {
+	SourcePath     string   `json:"source_path,omitempty"`
 	Ref            LeaseRef `json:"ref"`
 	ID             string   `json:"id"`
 	Seq            int64    `json:"seq"`

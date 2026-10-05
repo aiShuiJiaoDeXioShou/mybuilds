@@ -14,6 +14,7 @@ import (
 )
 
 type journalState struct {
+	Publishes                             []publishCheckpoint            `json:"publishes,omitempty"`
 	IOSSigningRequired                    bool                           `json:"ios_signing_required,omitempty"`
 	IOSResources                          *mobile.IOSResourceOwnership   `json:"ios_resources,omitempty"`
 	Reports                               *reportCheckpoint              `json:"reports,omitempty"`

@@ -245,6 +245,9 @@ func validateStep(s *Step, params map[string]Parameter, field, defaultName strin
 	case "artifact":
 		return validatePaths(s.Paths, field+".paths")
 	case "upload":
+		if err := ValidateStoreUpload(*s, field); err != nil {
+			return err
+		}
 		if !slices.Contains([]string{"google_play", "app_store", "custom"}, s.Target) {
 			return invalid(field+".target", "不支持上传目标")
 		}

@@ -265,7 +265,7 @@ func TestPreviewRenderedPathFieldRules(t *testing.T) {
 	for _, tc := range []struct{ step, value string }{
 		{`{kind: run, run: "true", working_dir: "{{output}}"}`, "out/*"},
 		{`{kind: upload, target: custom, argv: ["true"], result_file: "{{output}}"}`, "out/?.json"},
-		{`{kind: upload, target: google_play, credentials: "${CREDS}", file: "{{output}}"}`, "out["},
+		{`{kind: upload, target: google_play, app_identifier: com.example.app, credentials: "${CREDS}", file: "{{output}}"}`, "out["},
 	} {
 		d := document(t, "version: 1\nparams: {output: out}\nsteps: ["+tc.step+"]\n")
 		if _, err := Preview(d, PreviewOptions{Params: map[string]string{"output": tc.value}}); err == nil {
@@ -274,7 +274,7 @@ func TestPreviewRenderedPathFieldRules(t *testing.T) {
 	}
 	d := document(t, `version: 1
 params: {output: "out/*.aab"}
-steps: [{kind: upload, target: google_play, credentials: "${CREDS}", file: "{{output}}"}]
+steps: [{kind: upload, target: google_play, app_identifier: com.example.app, credentials: "${CREDS}", file: "{{output}}"}]
 `)
 	if _, err := Preview(d, PreviewOptions{}); err != nil {
 		t.Fatalf("file 支持合法 glob: %v", err)

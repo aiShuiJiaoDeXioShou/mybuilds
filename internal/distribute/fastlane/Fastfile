@@ -1,0 +1,4 @@
+require File.join(ENV.fetch('MYBUILDS_PUBLISH_TOOLS'), 'channel')
+lane :mybuilds_channel do
+  MybuildsChannels.execute
+end

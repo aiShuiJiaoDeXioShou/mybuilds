@@ -24,9 +24,23 @@ func newDoctorCommand() *cobra.Command {
 	var asJSON bool
 	var remoteServer bool
 	var remoteNode string
+	var publishing publishDoctorOptions
 	cmd := &cobra.Command{
 		Use: "doctor", Short: "检查本机移动端构建环境", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if cmd.Flags().Changed("target") {
+				for _, name := range []string{"server", "node", "framework", "platform", "working-dir", "gradle-wrapper", "keystore", "key-alias", "store-password-env", "key-password-env", "p12", "profile", "password-env", "bundle-id", "export-method"} {
+					if cmd.Flags().Changed(name) {
+						return errors.New("发布诊断不能混用构建或远程检查选项")
+					}
+				}
+				return publishDoctor(cmd, publishing, asJSON)
+			}
+			for _, name := range []string{"agent-config", "app-id", "credentials-env", "upload-cert-sha256"} {
+				if cmd.Flags().Changed(name) {
+					return errors.New("发布诊断选项需要显式target")
+				}
+			}
 			if cmd.Flags().Changed("node") && remoteNode == "" {
 				return errors.New("远程节点名称无效")
 			}
@@ -145,6 +159,11 @@ func newDoctorCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&remoteServer, "server", false, "检查控制端")
+	cmd.Flags().StringVar(&publishing.Target, "target", "", "显式诊断google-play或app-store发布环境")
+	cmd.Flags().StringVar(&publishing.AgentConfig, "agent-config", "", "发布工具所在Agent配置，不加载身份token")
+	cmd.Flags().StringVar(&publishing.AppID, "app-id", "", "明确的包名或bundle ID")
+	cmd.Flags().StringVar(&publishing.CredentialsEnv, "credentials-env", "", "发布材料路径的环境变量名")
+	cmd.Flags().StringVar(&publishing.Certificate, "upload-cert-sha256", "", "Google Play上传证书摘要")
 	cmd.Flags().StringVar(&remoteNode, "node", "", "检查指定节点最近实际报告")
 	cmd.Flags().StringVar(&framework, "framework", "native", "构建框架（native/flutter）")
 	cmd.Flags().StringVar(&platform, "platform", "android", "检查目标平台")

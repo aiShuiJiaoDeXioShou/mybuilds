@@ -1,0 +1,9 @@
+listen: 127.0.0.1:8787
+data_dir: server-data
+concurrency: 2
+database:
+  driver: sqlite
+  dsn: server-data/control.db
+retention:
+  builds: 10
+  days: 7

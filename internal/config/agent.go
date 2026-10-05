@@ -12,7 +12,13 @@ import (
 )
 
 // AgentConfig仅由serve消费；运行凭据及其环境来源不进入公开JSON。
+type PublishTools struct {
+	BundleDir  string `yaml:"bundle_dir" mapstructure:"bundle_dir" json:"-"`
+	Bundletool string `yaml:"bundletool" mapstructure:"bundletool" json:"-"`
+}
+
 type AgentConfig struct {
+	PublishTools                               *PublishTools `json:"-"`
 	Server, Node, DataDir, SecretsFile, CAFile string
 	Capacity                                   int
 	HeartbeatInterval, LeaseDuration           time.Duration
@@ -23,15 +29,16 @@ type AgentLoadOptions struct {
 	Explicit bool
 }
 type agentFile struct {
-	Server            string `yaml:"server" mapstructure:"server"`
-	Node              string `yaml:"node" mapstructure:"node"`
-	Token             string `yaml:"token" mapstructure:"token"`
-	Capacity          int    `yaml:"capacity" mapstructure:"capacity"`
-	DataDir           string `yaml:"data_dir" mapstructure:"data_dir"`
-	SecretsFile       string `yaml:"secrets_file" mapstructure:"secrets_file"`
-	CAFile            string `yaml:"ca_file" mapstructure:"ca_file"`
-	HeartbeatInterval string `yaml:"heartbeat_interval" mapstructure:"heartbeat_interval"`
-	LeaseDuration     string `yaml:"lease_duration" mapstructure:"lease_duration"`
+	PublishTools      *PublishTools `yaml:"publish_tools" mapstructure:"publish_tools"`
+	Server            string        `yaml:"server" mapstructure:"server"`
+	Node              string        `yaml:"node" mapstructure:"node"`
+	Token             string        `yaml:"token" mapstructure:"token"`
+	Capacity          int           `yaml:"capacity" mapstructure:"capacity"`
+	DataDir           string        `yaml:"data_dir" mapstructure:"data_dir"`
+	SecretsFile       string        `yaml:"secrets_file" mapstructure:"secrets_file"`
+	CAFile            string        `yaml:"ca_file" mapstructure:"ca_file"`
+	HeartbeatInterval string        `yaml:"heartbeat_interval" mapstructure:"heartbeat_interval"`
+	LeaseDuration     string        `yaml:"lease_duration" mapstructure:"lease_duration"`
 }
 
 // LoadAgent严格校验输入，未配置的身份不能从宿主其它客户端配置猜测。
@@ -120,7 +127,25 @@ func LoadAgent(options AgentLoadOptions) (AgentConfig, error) {
 			return AgentConfig{}, err
 		}
 	}
-	return AgentConfig{Server: endpoint, Node: merged.Node, Capacity: merged.Capacity, DataDir: dataDir, SecretsFile: secrets, CAFile: ca, HeartbeatInterval: heartbeat, LeaseDuration: lease, RuntimeToken: token, TokenEnv: tokenEnv}, nil
+	var tools *PublishTools
+	if merged.PublishTools != nil {
+		if merged.PublishTools.BundleDir == "" {
+			return AgentConfig{}, invalid("发布工具", "缺少bundle_dir")
+		}
+		bundle, e := expandConfigurationPath(merged.PublishTools.BundleDir, base)
+		if e != nil {
+			return AgentConfig{}, e
+		}
+		jar := ""
+		if merged.PublishTools.Bundletool != "" {
+			jar, e = expandConfigurationPath(merged.PublishTools.Bundletool, base)
+			if e != nil {
+				return AgentConfig{}, e
+			}
+		}
+		tools = &PublishTools{BundleDir: bundle, Bundletool: jar}
+	}
+	return AgentConfig{PublishTools: tools, Server: endpoint, Node: merged.Node, Capacity: merged.Capacity, DataDir: dataDir, SecretsFile: secrets, CAFile: ca, HeartbeatInterval: heartbeat, LeaseDuration: lease, RuntimeToken: token, TokenEnv: tokenEnv}, nil
 }
 func validAgentName(name string) bool {
 	return len(name) >= 1 && len(name) <= 64 && name == strings.TrimSpace(name) && name != "." && name != ".." && !strings.ContainsAny(name, "/\\") && !containsConfigurationControl(name)

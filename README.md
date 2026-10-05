@@ -20,20 +20,19 @@
 
 ## 当前状态
 
-已完成 `000-project-bootstrap`：Go 单模块、双 CLI 帮助与共享版本、Spec Kit 项目原则和开发流程。
-多节点设计见 [MULTI_NODE.md](docs/plans/MULTI_NODE.md)。`007-node-agents` 已实现并验收，节点管理、独立身份、完整远程 Run、日志/SSE、快照回传和中央下载已接通；两个 macOS 节点与一个真实 Linux 节点闭环通过；SQLite、PostgreSQL 各 51 项实际应用检查，以及 Android 签名构建号 101 的中央下载已通过。全量 test/race/vet、12 次三入口跨平台构建与本机 help/version 已通过；Linux 普通/always 真实取消强化及 Spec Kit 收敛也已通过；整功能本地提交见[实施历史](docs/IMPLEMENTATION_HISTORY.md)，整个 MVP 未完成。
-`008-build-recovery` 已完成并验收：启动核对、临时网络中断的有界处理、显式原快照重试与已确认终态 journal 只读核对已接通。SQLite/PostgreSQL 各36项最终真实应用检查、此前负例与Linux普通/always中断通过；共享停止确认修复及真实ARM Android签名/中央下载/精确取消通过，全量test/race/vet、12构建/6入口与Spec Kit收敛均通过，见[验证记录](specs/008-build-recovery/validation.md)和[实施历史](docs/IMPLEMENTATION_HISTORY.md)。
-客户端已接入 `init`、本地模板、严格配置校验与 `run --dry-run` 脱敏预览；支持单/多 build 选择、参数覆盖和条件三态。
-`001-pipeline-preview` 已实现并通过集成验证，证据见[验证记录](specs/001-pipeline-preview/validation.md)。`002-local-run` 已接入本地顺序执行、进程组取消、预算/post 和 UTC 脱敏日志，已通过验收；`003-build-artifacts` 已接入产物快照与本地结果/步骤日志并通过验收，见[验证记录](specs/003-build-artifacts/validation.md)。审批、通知和上传仍待实现。
-MVP 目标已扩展至原生/Flutter 双平台、多节点构建、Google Play/App Store 分发与用户自定义，见 [构建与分发设计](docs/plans/BUILD_DISTRIBUTION.md)。
-`004-android-build` 已完成本机 `doctor`、可编辑模板和真实工程验收：APK/AAB 版本与签名、mapping、快照摘要、离线缓存、失败和取消均通过，见[验证记录](specs/004-android-build/validation.md)。`005-ios-build` 已实现严格签名配置、init/doctor、同一Run/Agent资源准备与独立Close、私有journal恢复及中央原生关闭guard；必要自动检查与人工指南随功能交付，真实Apple profile兼容、签名IPA/dSYM及相关成功/取消组合由用户人工验收，不把自产证书或unsigned归档视为真实签名通过。Flutter 的可编辑双平台与 production/staging 模板已接入，真实 APK/AAB/IPA 人工待验。
-`006-control-plane` 已接入严格管理配置、双数据库 Store、单控制端独占、鉴权 HTTP、只读 Git 固定提交与远程 CLI。已通过最终全量/race/vet、SQLite 与 PostgreSQL 各 37 项真实二进制验收，以及 Linux 上 37 项闭环；Spec Kit 收敛无缺口并按整功能提交，见[验证记录](specs/006-control-plane/validation.md)。006 验收范围只包含 queued/skipped，不含实际远程构建；007 已接入独立 Agent 执行，发布和审批仍待后续功能。
-项目组已经接入：注册时可选组，未指定归入 default，支持普通组改名、空组删除和项目迁移，项目历史与编号保持。
-一个 YAML 的多个命名 build、本地参数/env 映射、when、累计超时、post 和日志时间戳已经实现；无 YAML 绑定双平台方案、自动变更筛选、Webhook 等待窗口、保留策略与发布审批仍待实现。019 JUnit 已接入本地检查、原XML快照与封存，以及Agent回传、中央详情和下载；双库名义应用各92项、最终20故障192断言及macOS/Linux实机门通过；全量test/race/vet、12编译通过，Spec Kit收敛无缺口，验收通过，整功能提交见[实施历史](docs/IMPLEMENTATION_HISTORY.md)。
+MVP有16个功能模块，目前13个已经完成代码与必要自动检查并本地提交；Apple/Flutter合法签名和真实商店发布由用户集中人工验收。实现顺序、精确提交与验证记录见[实施历史](docs/IMPLEMENTATION_HISTORY.md)，不把代码交付等同于全部人工验收通过。
 
-`020-project-retention` 已完成自动及实际联验：策略继承、候选/事项管理、读取保护、中央及原节点清理、分钟后台与持久公平续扫已接通。macOS/Linux各SQLite/PostgreSQL三程序通过离线重连、轮换、20次重放、101幂等与102继续、真实SQL故障恢复及周边文件/进程保持；全量普通、必要race/vet和六平台18CLI编译通过，见[验证记录](specs/020-project-retention/validation.md)。后续审批与发布unknown由对应模块接入同一保护函数。
+| 能力 | 状态与验证入口 |
+|---|---|
+| 001–003 配置预览、shell执行、产物快照 | 已完成；单YAML多build、scoped参数、when、累计超时、post与脱敏日志 |
+| 004 Android | 已完成实际APK/AAB签名与版本验证；[指南](specs/004-android-build/quickstart.md) |
+| 005 iOS、009 Flutter | 代码与自动检查完成；临时签名资源、可编辑双平台模板与框架调度；[iOS指南](specs/005-ios-build/quickstart.md)、[Flutter工程](examples/flutter/README.md)；合法IPA等由用户人工验收 |
+| 006–008 控制端、节点、恢复 | 已完成双库与macOS/Linux实际程序验收；项目组、多节点授权/调度、原SHA入队、日志/下载、恢复与显式retry |
+| 019 测试报告、020 保留 | 已完成实际联验；JUnit原XML解析/封存与下载、受保护的中央及原节点清理；[报告记录](specs/019-test-reports/validation.md)、[清理记录](specs/020-project-retention/validation.md) |
+| 010/011 Google Play/App Store | 代码与必要自动检查完成；共同发布授权、工具、应用保护、精确GET核对与CLI；[Google记录](specs/010-google-play/validation.md)、[Apple记录](specs/011-app-store/validation.md)；真实商店人工待验 |
+| 012 可复用方案/custom、014 审批、015 Webhook | 独立worktree并行实现，主工作区串行集成；尚未声明整功能交付 |
 
-009 Flutter框架选择、独立build参数、真实SDK诊断与框架调度已经实现，默认模板支持一个YAML同时配置android/ios以及production/staging；`init --framework flutter --platform android,ios`生成一个配置，原生模板继续支持android或ios。完整示例见[Flutter工程](examples/flutter/README.md)。
+[Flutter集中验收案例](examples/mvp/acceptance.md)从实际CLI模板生成一个仓库的Android/iOS配置、控制端和两个节点设置，串联测试、下载、审批与商店分发。当前生成/dry-run已通过，012/014/015最终集成与集中人工执行仍在完成。通知013、轮询/cron016、额外渠道017与部署打磨018属于后续功能。
 
 ## 开发与运行
 
@@ -82,7 +81,7 @@ go build -o bin/mybuilds-agent ./cmd/mybuilds-agent
 `mybuilds doctor --platform android --json --working-dir <工程目录>` 检查实际 Java、SDK 包和 wrapper。签名检查须显式提供 `--keystore`、`--key-alias`、`--store-password-env`、`--key-password-env`，两个密码仅从指定环境变量读取；未声明签名为 skipped，任一 failed 返回非零。doctor 默认 android；007 支持 `doctor --node NODE` 和 `doctor --server`；节点诊断读取最近实际报告，节点离线明确失败。首次 wrapper 检查可能下载工程锁定的 Gradle 到缓存，普通 run 不会自动调用 doctor。
 `run --dry-run` 只输出脱敏 JSON，不执行脚本、Git 或网络请求，也不读取密钥。多 build 必须用 `--build android,ios` 或 `--all`，参数用重复的 `--param key=value`；`--step` 仅限单 build。
 去掉 `--dry-run` 执行本地脚本：日志写 stderr，脱敏结果 JSON 写 stdout，失败/取消返回非零。配置路径不改变当前工作目录，多个 build 顺序执行；`--step` 只运行选中普通步骤，不自动执行前序依赖。
-先校验整批再启动脚本，当前生效的 approval/notifications 会报未支持；有效通知 `enabled: false` 可关闭。实际上传通过后续远程控制端，生效 upload 在任何流水线脚本前拒绝。
+先校验整批再启动脚本；审批由014接入，通知仍明确未支持，`enabled: false`可关闭。本地生效upload在任何脚本前拒绝，商店分发使用远程控制端授权和节点实际工具。
 artifact 支持相对根目录递归 glob（`**`）；每个模式须匹配普通文件，按步骤保存独立快照、大小和 SHA-256。结果 JSON 的 `result_dir` 定位临时结果根，`log_path` 定位 UTC 脱敏步骤日志，失败后仍保留完整证据。普通与 post 的快照分开；结果数据不进入源码工作树。预览、预检查失败、全部跳过不创建结果目录。
 可运行的本地例子见 [local-run.yml](examples/local-run.yml) 和 [local-artifacts.yml](examples/local-artifacts.yml)，在临时目录以已构建二进制的绝对路径和 `--file` 指向该例子运行。
 
@@ -180,7 +179,7 @@ cd "$project_dir"
 
 这个演示没有登记并启动合格 Agent，结果保持 queued，示例的 `printf` 不会执行。完整节点执行见下节。`build show` 默认输出安全详情表格，`--json` 返回同一视图。参数值、脚本正文和凭据不公开，列表默认 20 条、最大 200 条，支持 limit/offset 及项目、组、build 名、批次和状态过滤。
 
-`--settings ./settings.yml` 由客户端按当前目录读取内容；`pipeline.file` 和注册时的 `--file ci/mybuilds.yml` 都是仓库相对路径，`--file` 与 `--settings` 互斥。`project set mobile --settings ./settings.yml` 替换设置；项目 framework/platform 绑定方案、hook/poll/schedule 当前明确报未支持。流水线必须存在于所选提交，source 仅支持 auto/repo，尚无缺文件时的绑定方案回退。
+`--settings ./settings.yml` 由客户端按当前目录读取内容；`pipeline.file` 和注册时的 `--file ci/mybuilds.yml` 都是仓库相对路径，`--file` 与 `--settings` 互斥。`project set mobile --settings ./settings.yml` 替换设置；项目framework/platform与profile绑定由012接入、Webhook由015接入；当前尚未集成的选项明确报未支持。poll/schedule属于后续016。
 
 触发可用 `--build android,ios` 或 `--all`。共享 `--param key=value` 应用到所有所选 build，`--param android:key=value` 只覆盖指定 build；命名值优先，同 scope 重复参数拒绝。`--version`、`--channel` 是共享参数快捷选项。客户端每次新请求生成一个随机 key，在发起网络请求前写到 stderr，成功 JSON 含 `request_key`；网络失败后用原 `--idempotency-key` 和相同参数恢复，重放返回原 SHA/编号/结果，不自动重试或换 key。
 
@@ -188,7 +187,7 @@ cd "$project_dir"
 
 | 命令端 | 当前命令 |
 |---|---|
-| 客户端 | group create/ls/rename/rm；project init/set/ls/move/rm；trigger；build ls/show/cancel/confirm-stopped/retry；node；logs；artifact ls/download；status；远程 doctor |
+| 客户端 | group create/ls/rename/rm；project init/set/ls/move/rm/app；trigger；build ls/show/cancel/confirm-stopped/retry；node；logs；artifact ls/download；publish；status；doctor |
 | 服务端本机 | serve/migrate；group create/ls/rename/rm；project add/set/ls/move/rm；token create/ls/revoke |
 
 serve 在线时同一数据库被独占，本机 migrate、project/group/token 管理会拒绝，使用客户端远程管理或鉴权 HTTP API。停止示例控制端后，可创建身份并查看安全列表：
@@ -286,7 +285,7 @@ mkdir -m 0700 ./downloads
   --lease "$LEASE_ID" --epoch "$LEASE_EPOCH" --note '已核实原PID和整个PGID均不存在'
 ```
 
-admin 管理并读取证据；approver 可读脱敏 build/log/artifact，但不管理、不触发、不取消；trigger 只能读 status 和允许的触发入口。节点 token 只用于节点协议。审批、通知、上传和 iOS 签名执行尚未交付；007 的签名 Android 验收不等于 005 Apple 签名验收或全 MVP 完成。
+admin 管理并读取证据；approver 可读脱敏 build/log/artifact，但不管理、不触发、不取消；trigger 只能读 status 和允许的触发入口。节点 token 只用于节点协议。以上007验收仅覆盖节点执行；当前iOS、发布与审批进度见本文当前状态，Android签名不代替合法Apple签名验收。
 
 ## 重启与原快照重试
 
@@ -299,7 +298,7 @@ admin 管理并读取证据；approver 可读脱敏 build/log/artifact，但不�
   --idempotency-key retry-demo-1 --json
 ```
 
-retry必须明确提供key，响应丢失后使用同ID、同key和同 `--allow-upload` 输入重发；客户端不自动重发。原SHA、定义、参数和when事实保持，新的编号与attempt从原定义完整预算开始，当前节点授权只收窄。不能用retry替换分支或参数，需另发trigger；活动/queued/skipped/停止未知拒绝。包含upload定义仍要求admin与明确 `--allow-upload`，生效上传尚未实现。列表和详情中的 `retry_of` 指向原构建，原证据保持。
+retry必须明确提供key，响应丢失后使用同ID、同key和同 `--allow-upload` 输入重发；客户端不自动重发。原SHA、定义、参数和when事实保持，新的编号与attempt从原定义完整预算开始，当前节点授权只收窄。不能用retry替换分支或参数，需另发trigger；活动/queued/skipped/停止未知拒绝。包含upload定义仍要求admin与明确 `--allow-upload`，实际分发进度见当前状态。列表和详情中的 `retry_of` 指向原构建，原证据保持。
 
 终态响应丢失时，Agent重启先用当前独立节点凭据只读核对精确原回执。只有本地已知停止、完整终态/归属/序号/摘要/制品清单匹配中央才清该条journal；results/spool保持。其余未知journal仍阻止新session，不按旧PID发送信号或重放动作。文件必须是自有0600普通文件，最多128条、每条1MiB；链接、替换、损坏和未确认停止均保留。轮换后先把当前token更新到私有配置；新session仍遵守原注册窗口。
 
@@ -322,7 +321,8 @@ mybuilds/
 │   ├── config/                  # 流水线及管理配置
 │   ├── pipeline/                # 预览、执行、预算/收尾、日志与产物快照
 │   ├── process/                 # pipeline/doctor 共用的进程执行与取消
-│   ├── mobile/                  # Android doctor 与可编辑内嵌模板
+│   ├── mobile/                  # Android/iOS/Flutter诊断、签名与可编辑模板
+│   ├── distribute/              # 锁定第三方商店工具与单次发布
 │   ├── server/                  # 鉴权HTTP、排队与节点路由
 │   ├── agent/                   # 节点诊断、注册与执行接线
 │   ├── protocol/                # 节点消息、租约与执行证据
@@ -334,6 +334,7 @@ mybuilds/
 ├── examples/local-artifacts.yml # 快照、日志与 post 示例
 ├── examples/android/           # 原生 Java 工程与参数/签名接入示例
 ├── examples/flutter/           # 可编辑 Flutter 双平台工程、参数与签名接入示例
+├── examples/mvp/               # 双平台集中验收生成器、配置与指南
 ├── specs/                       # 各功能规范、计划、任务与验证
 ├── docs/plans/                  # 产品决策与功能实施路线
 ├── .agents/skills/              # 项目内 Codex 技能
@@ -350,7 +351,7 @@ mybuilds/
 | 目录 | 职责 |
 |---|---|
 | `internal/config` | 流水线、客户端及服务端配置与校验 |
-| `internal/pipeline` | 已接入本地预览、执行、产物与脱敏；审批/上传后续接入 |
+| `internal/pipeline` | 同一Run的预览、脚本、预算、post、产物、报告与发布屏障；审批接入中 |
 | `cmd/mybuilds-agent`、`internal/cli/agent` | 007 已验收帮助/版本/doctor/serve、实际执行闭环与全量检查；008恢复/重试已验收 |
 | `internal/server` | 已接入控制端生命周期、鉴权 HTTP、节点调度、租约、中央日志/制品与停止保护 |
 | `internal/agent` | 007 已验收诊断/注册/心跳、任务领取/续租、同一 Run 执行与日志/产物回传；008网络及终态核对已验收 |
@@ -358,8 +359,8 @@ mybuilds/
 | `internal/store` | 已接入双数据库独占、业务事务、快照与步骤进度持久化 |
 | `internal/scm` | 已接入只读 Git 固定提交与 SSH 显式凭据；Webhook 来源后续接入 |
 | `internal/mobile` | 已接入 Android/Flutter 模板、真实受限doctor和纯参数检查；iOS签名生命周期由005提供 |
-| `internal/distribute` | fastlane 商店封装与 custom 上传，共用发布记录 |
-| `internal/notify` | 飞书等通知渠道 |
+| `internal/distribute` | 锁定fastlane商店工具与具体单发动作；custom由012扩展同一授权/记录 |
+| `internal/notify` | 后续013飞书等通知渠道，尚未创建 |
 | `examples` | 可运行的配置与工程示例 |
 | `deploy` | 部署模板与操作说明 |
 

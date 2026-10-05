@@ -116,6 +116,31 @@ func Serve(ctx context.Context, cfg config.AgentConfig) (result error) {
 			}
 		}
 	}()
+	// 商店只读管理工作独立于构建容量；一次claim，失败不自动重授动作。
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-live.Done():
+				return
+			case <-ticker.C:
+				if cfg.PublishTools == nil || client.paused.Load() {
+					continue
+				}
+				err := runPublishQuery(live, client, lock, cfg, request.SessionID, grant.NodeID)
+				if err != nil && !temporaryNetwork(err) {
+					select {
+					case heartbeatErrors <- err:
+					case <-live.Done():
+					}
+					return
+				}
+			}
+		}
+	}()
 	completion := make(chan error, cfg.Capacity)
 	active := 0
 	var pending *executionJournal

@@ -38,7 +38,7 @@ func (execution *taskExecution) declare(p *protocol.ExecutionProgress) error {
 		}
 		id := uuid.NewString()
 		seq := int64(len(journal.state.Artifacts) + 1)
-		declaration := protocol.ArtifactDeclaration{Ref: *journal.state.Ref, ID: id, Seq: seq, Phase: p.Phase, Index: p.Index, Step: p.Name, Name: artifact.Name, Size: artifact.Size, SHA256: artifact.SHA256}
+		declaration := protocol.ArtifactDeclaration{SourcePath: artifact.SourcePath, Ref: *journal.state.Ref, ID: id, Seq: seq, Phase: p.Phase, Index: p.Index, Step: p.Name, Name: artifact.Name, Size: artifact.Size, SHA256: artifact.SHA256}
 		journal.state.Artifacts = append(journal.state.Artifacts, localArtifact{Declaration: declaration, SnapshotPath: artifact.SnapshotPath})
 		expected.IDs = append(expected.IDs, id)
 		total += artifact.Size

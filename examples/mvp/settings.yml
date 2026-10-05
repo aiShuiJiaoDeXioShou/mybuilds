@@ -1,0 +1,19 @@
+pipeline:
+  source: repo
+  file: mybuilds.yml
+  builds:
+    android:
+      params:
+        version: "1.0.0"
+        application_id: dev.mybuilds.mvp_flutter
+        flavor: production
+    ios:
+      params:
+        version: "1.0.0"
+        xcode_project: ios/Runner.xcworkspace
+        scheme: Runner
+        bundle_id: dev.mybuilds.mvpFlutter
+        export_method: app-store-connect
+retention:
+  builds: 10
+  days: 7

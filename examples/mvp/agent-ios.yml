@@ -1,0 +1,8 @@
+server: http://127.0.0.1:8787
+node: flutter-ios
+token: '${MYBUILDS_AGENT_TOKEN}'
+capacity: 1
+data_dir: agent-ios-data
+secrets_file: ios.secrets.env
+publish_tools:
+  bundle_dir: tools/fastlane

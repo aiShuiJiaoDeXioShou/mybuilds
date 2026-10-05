@@ -25,7 +25,7 @@ steps:
   - {kind: run, run: 'echo ${SECRET}', shell: bash, working_dir: '.', timeout: 1m}
   - {kind: artifact, paths: ['build/**/*.aab']}
   - {kind: approval, name: 发布审核, notify: false}
-  - {kind: upload, target: google_play, file: '*.aab', credentials: '${CREDS}', track: internal}
+  - {kind: upload, target: google_play, app_identifier: com.example.app, file: '*.aab', credentials: '${CREDS}', track: internal}
 post:
   timeout: 2m
   failure: [{kind: run, run: diagnostics}]
@@ -98,7 +98,7 @@ func TestRejectInvalidConfiguration(t *testing.T) {
 		"empty-when": minimal + "when: {}\n", "empty-branches": minimal + "when: {branches: []}\n", "unknown-param": minimal + "when: {params: {missing: x}}\n", "empty-when-params": minimal + "when: {params: {}}\n", "changes-traverse": minimal + "when: {changes: ['../**']}\n",
 		"post-kind": minimal + "post: {always: [{kind: approval}]}\n", "post-empty": minimal + "post: {}\n", "reports-empty": minimal + "reports: {}\n", "reports-paths": minimal + "reports: {junit: {paths: []}}\n", "bad-platform": minimal + "runner: {platform: linux}\n", "engine-env": minimal + "env: {MYBUILDS_BUILD_ID: value}\n", "bad-env-name": minimal + "env: {'bad-name': value}\n",
 		"notify-type": minimal + "notifications: {webhooks: [{type: bad, url: 'https://example.org'}]}\n", "notify-url": minimal + "notifications: {webhooks: [{type: generic, url: 'file:///tmp/a'}]}\n", "notify-event": minimal + "notifications: {on: [unknown]}\n", "notify-null": minimal + "notifications: {enabled: null}\n", "notify-empty-url": minimal + "notifications: {webhooks: [{type: generic, url: ''}]}\n",
-		"publish-order": "version: 1\nsteps: [{kind: approval}, {kind: run, run: echo}, {kind: upload, target: google_play, file: '*.aab', credentials: '${CREDS}'}]", "upload-required": "version: 1\nsteps: [{kind: upload, target: google_play}]", "upload-fields": "version: 1\nsteps: [{kind: upload, target: google_play, file: '*.aab', credentials: '${CREDS}', argv: [secret]}]", "custom-required": "version: 1\nsteps: [{kind: upload, target: custom, argv: []}]",
+		"publish-order": "version: 1\nsteps: [{kind: approval}, {kind: run, run: echo}, {kind: upload, target: google_play, app_identifier: com.example.app, file: '*.aab', credentials: '${CREDS}'}]", "upload-required": "version: 1\nsteps: [{kind: upload, target: google_play}]", "upload-fields": "version: 1\nsteps: [{kind: upload, target: google_play, app_identifier: com.example.app, file: '*.aab', credentials: '${CREDS}', argv: [secret]}]", "custom-required": "version: 1\nsteps: [{kind: upload, target: custom, argv: []}]",
 	}
 	for name, input := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -142,7 +142,7 @@ func TestSafeErrorsAndLimits(t *testing.T) {
 func TestTargetAndOrdinaryApproval(t *testing.T) {
 	for _, steps := range []string{
 		"[{kind: approval}, {kind: run, run: echo}]",
-		"[{kind: upload, target: app_store, file: '*.ipa', credentials: '${CREDS}', submit_for_review: true, automatic_release: false}]",
+		"[{kind: upload, target: app_store, app_identifier: com.example.app, file: '*.ipa', credentials: '${CREDS}', submit_for_review: true, automatic_release: false}]",
 		"[{kind: upload, target: custom, argv: [bash, ci/publish.sh], result_file: publish/result.json, query_argv: [bash, ci/query.sh], working_dir: '.', timeout: 1m}]",
 	} {
 		if _, err := Parse([]byte("version: 1\nsteps: " + steps)); err != nil {
@@ -168,7 +168,7 @@ func TestNestedTypesAndPresence(t *testing.T) {
 		})
 	}
 	steps := []string{
-		"{kind: run, run: echo, shell: null}", "{kind: run, run: echo, name: ''}", "{kind: run, run: echo, working_dir: ''}", "{kind: run, run: echo, paths: []}", "{kind: artifact, paths: [x], timeout: 1m}", "{kind: approval, notify: 'false'}", "{kind: approval, run: ''}", "{kind: approval, env: {}}", "{kind: upload, target: custom, argv: [3], result_file: x}", "{kind: upload, target: custom, argv: [''], result_file: x}", "{kind: upload, target: custom, argv: [publish], result_file: '../x'}", "{kind: upload, target: custom, argv: [publish], result_file: '*.json'}", "{kind: upload, target: custom, argv: [publish], result_file: x, query_argv: []}", "{kind: upload, target: google_play, file: x, credentials: y, submit_for_review: false}", "{kind: upload, target: app_store, file: x, credentials: y, track: internal}",
+		"{kind: run, run: echo, shell: null}", "{kind: run, run: echo, name: ''}", "{kind: run, run: echo, working_dir: ''}", "{kind: run, run: echo, paths: []}", "{kind: artifact, paths: [x], timeout: 1m}", "{kind: approval, notify: 'false'}", "{kind: approval, run: ''}", "{kind: approval, env: {}}", "{kind: upload, target: custom, argv: [3], result_file: x}", "{kind: upload, target: custom, argv: [''], result_file: x}", "{kind: upload, target: custom, argv: [publish], result_file: '../x'}", "{kind: upload, target: custom, argv: [publish], result_file: '*.json'}", "{kind: upload, target: custom, argv: [publish], result_file: x, query_argv: []}", "{kind: upload, target: google_play, app_identifier: com.example.app, file: x, credentials: y, submit_for_review: false}", "{kind: upload, target: app_store, app_identifier: com.example.app, file: x, credentials: y, track: internal}",
 	}
 	for _, step := range steps {
 		t.Run(step, func(t *testing.T) {
@@ -237,7 +237,7 @@ func TestFullCollectionValidated(t *testing.T) {
 	for _, input := range []string{
 		minimal + "notifications: {enabled: false, webhooks: []}",
 		minimal + "params: {empty: {default: '', choices: ['']}}",
-		"version: 1\nsteps: [{kind: upload, target: google_play, file: '{{channel}}/*.aab', credentials: '${CREDS}', track: named-testing-track}]",
+		"version: 1\nsteps: [{kind: upload, target: google_play, app_identifier: com.example.app, file: '{{channel}}/*.aab', credentials: '${CREDS}', track: named-testing-track}]",
 		"version: 1\nbuilds:\n  中文: {steps: [{kind: run, run: echo}]}\nnotifications: {webhooks: [{type: generic, url: 'https://example.org/hook'}]}",
 	} {
 		if _, err := Parse([]byte(input)); err != nil {

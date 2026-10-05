@@ -89,7 +89,7 @@ func (s *Store) Retry(ctx context.Context, actor Actor, in RetryInput) (BatchRes
 			return err
 		}
 		for _, step := range steps {
-			if step.Condition != "skipped" && step.Kind != "run" && step.Kind != "artifact" {
+			if step.Condition != "skipped" && step.Kind != "run" && step.Kind != "artifact" && step.Kind != "upload" {
 				return ErrInvalid
 			}
 		}
@@ -107,7 +107,7 @@ func (s *Store) Retry(ctx context.Context, actor Actor, in RetryInput) (BatchRes
 			return err
 		}
 		now := time.Now().UTC()
-		newBatch := batchRecord{ID: uuid.NewString(), ProjectID: project.ID, IdentityID: actor.ID, SHA: batch.SHA, Branch: batch.Branch, Source: batch.Source, File: batch.File, SourceDigest: batch.SourceDigest, CreatedAt: now}
+		newBatch := batchRecord{AllowUpload: in.AllowUpload && actor.Role == "admin", ID: uuid.NewString(), ProjectID: project.ID, IdentityID: actor.ID, SHA: batch.SHA, Branch: batch.Branch, Source: batch.Source, File: batch.File, SourceDigest: batch.SourceDigest, CreatedAt: now}
 		if err = tx.Create(&newBatch).Error; err != nil {
 			return err
 		}

@@ -15,7 +15,7 @@ import (
 	"mybuilds/internal/reports"
 )
 
-var retentionProtectionOrder = []string{"active", "terminal_time_unknown", "stop_unconfirmed", "execution_unconfirmed", "resource_unconfirmed", "logs_unconfirmed", "artifacts_unconfirmed", "reports_unconfirmed", "retry_dependency", "readers_active", "ownership_unknown", "state_unknown"}
+var retentionProtectionOrder = []string{"active", "publish_unknown", "terminal_time_unknown", "stop_unconfirmed", "execution_unconfirmed", "resource_unconfirmed", "logs_unconfirmed", "artifacts_unconfirmed", "reports_unconfirmed", "retry_dependency", "readers_active", "ownership_unknown", "state_unknown"}
 
 // 保护只核已持久的具体证据；文件读写、PID解释与停止确认不属于此事务。
 func retentionProtection(tx *gorm.DB, row buildRecord) ([]string, error) {
@@ -28,6 +28,11 @@ func retentionProtection(tx *gorm.DB, row buildRecord) ([]string, error) {
 
 func retentionProtectionWithRetries(tx *gorm.DB, row buildRecord, retryDependency bool) ([]string, error) {
 	guard := map[string]bool{}
+	held, err := protectPublishHistory(tx, row.ID)
+	if err != nil {
+		return nil, err
+	}
+	guard["publish_unknown"] = held
 	if row.Status == "queued" || row.Status == "running" {
 		guard["active"] = true
 	} else if !retentionTerminal(row.Status) {

@@ -259,7 +259,7 @@ func (r *remoteRun) finishStep(step preparedStep, result StepRun, started time.T
 	p.Status, p.Reason, p.Started, p.StopConfirmed, p.CleanupFailed, p.ExitCode = result.Status, result.Reason, result.started, !result.CleanupFailed, result.CleanupFailed, result.ExitCode
 	p.ElapsedNS = time.Since(started).Nanoseconds()
 	for _, artifact := range result.Artifacts {
-		p.LocalArtifacts = append(p.LocalArtifacts, protocol.CollectedArtifact{SnapshotPath: artifact.SnapshotPath, Name: filepath.Base(artifact.SnapshotPath), SHA256: artifact.SHA256, Size: artifact.Size})
+		p.LocalArtifacts = append(p.LocalArtifacts, protocol.CollectedArtifact{SourcePath: artifact.SourcePath, SnapshotPath: artifact.SnapshotPath, Name: filepath.Base(artifact.SnapshotPath), SHA256: artifact.SHA256, Size: artifact.Size})
 	}
 	_ = r.emit(p)
 }

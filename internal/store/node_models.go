@@ -180,6 +180,7 @@ type logChunkRecord struct {
 func (logChunkRecord) TableName() string { return "log_chunks" }
 
 type artifactRecord struct {
+	SourcePath                           string        `gorm:"not null;default:''"`
 	Purpose                              string        `gorm:"not null;default:''"`
 	ReportRevision                       int64         `gorm:"not null;default:0"`
 	ReportKey                            string        `gorm:"not null;default:''"`

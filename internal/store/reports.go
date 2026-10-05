@@ -225,17 +225,28 @@ func applyReportsChecked(tx *gorm.DB, row *buildRecord, p protocol.ExecutionProg
 		if p.Phase != "" || p.Name != "" || p.StepKind != "" {
 			return ErrEventConflict
 		}
-		complete, started, _, _ := ordinarySummary(steps)
-		if !complete || !started {
-			return ErrEventConflict
-		}
+		started := false
 		for _, step := range steps {
+			if step.Phase != "ordinary" {
+				continue
+			}
+			// 发布段尚未授意执行；普通构建脚本必须先全部停止并检查原报告。
+			if (step.Kind == "upload" || step.Kind == "approval") && step.Status == "pending" && !step.Intent && !step.Started && !step.StopConfirmed && !step.CleanupFailed {
+				continue
+			}
+			if !terminalStep(step.Status) {
+				return ErrEventConflict
+			}
+			started = started || step.Started
 			if step.Phase == "ordinary" && (!step.StopConfirmed || step.CleanupFailed) {
 				return ErrEventConflict
 			}
 			if step.Phase == "ordinary" && step.Kind == "run" && step.Started && step.Index > row.ReportCheckedIndex {
 				return ErrEventConflict
 			}
+		}
+		if !started {
+			return ErrEventConflict
 		}
 	} else {
 		if p.Phase != "ordinary" || p.StepKind != "run" || p.Index <= row.ReportCheckedIndex {
@@ -300,6 +311,15 @@ func validateReportIntent(tx *gorm.DB, row *buildRecord, p protocol.ExecutionPro
 		return err
 	}
 	if row.ReportFinal {
+		if p.StepKind == "upload" || p.StepKind == "approval" {
+			evidence, e := storedReports(*row)
+			if e != nil {
+				return e
+			}
+			if evidence != nil && evidence.Sealed && evidence.Outcome == "passed" && validDigest(row.ReportSealDigest) {
+				return nil
+			}
+		}
 		return ErrEventConflict
 	}
 	evidence, err := storedReports(*row)

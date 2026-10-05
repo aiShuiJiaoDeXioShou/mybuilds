@@ -52,7 +52,7 @@ func TestRetryUploadPermissionPrecedesSkippedCondition(t *testing.T) {
 		}
 		input := enqueueInput(p, "original-upload")
 		input.AllowUpload = true
-		input.Builds[0].Snapshot.Definition.Steps[0] = config.Step{Kind: "upload", Name: "upload", Target: "google_play", File: "app.aab", Credentials: "${DECLARED_SECRET}", When: &config.When{Params: map[string]string{"version": "never"}}}
+		input.Builds[0].Snapshot.Definition.Steps[0] = config.Step{Kind: "upload", Name: "upload", Target: "google_play", AppIdentifier: "com.example.app", File: "app.aab", Credentials: "${DECLARED_SECRET}", When: &config.When{Params: map[string]string{"version": "never"}}}
 		input.Builds[0].Steps[0].Kind = "upload"
 		input.Builds[0].Steps[0].Name = "upload"
 		input.Builds[0].Steps[0].Condition = "skipped"
