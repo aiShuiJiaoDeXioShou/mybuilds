@@ -15,6 +15,7 @@ import (
 
 	"mybuilds/internal/config"
 	"mybuilds/internal/pipeline"
+	"mybuilds/internal/protocol"
 	"mybuilds/internal/store"
 )
 
@@ -138,16 +139,25 @@ func (s *Server) Trigger(ctx context.Context, actor store.Actor, project, key st
 	}
 	source, err := s.resolvePipeline(ctx, p, request.Branch, request.Ref)
 	if err != nil {
+		return store.BatchResult{}, errPipeline
+	}
+	prepared, names, hasUpload, err := s.prepareTrigger(ctx, p, source, request, actor.Role == "admin", nil)
+	if err != nil {
 		return store.BatchResult{}, err
 	}
+	return s.store.Enqueue(ctx, store.EnqueueInput{Actor: actor, ProjectID: p.ID, ProjectVersion: p.PolicyVersion, Key: key, RequestDigest: digest, SHA: source.SHA, Branch: request.Branch, Source: source.Mode, File: source.File, SourceDigest: source.SourceDigest, HasUpload: hasUpload, AllowUpload: request.AllowUpload, Builds: prepared, SelectedBuilds: names})
+}
+
+// prepareTrigger用于手动与Webhook同一冻结来源，不执行任何用户脚本。
+func (s *Server) prepareTrigger(ctx context.Context, p store.Project, source resolvedPipeline, request TriggerRequest, admin bool, changes map[string]*protocol.ChangeFacts) ([]store.PreparedBuild, []string, bool, error) {
 	document := source.Document
 	names, err := document.Select(request.BuildNames, request.All)
 	if err != nil || len(names) > 64 {
-		return store.BatchResult{}, errPipeline
+		return nil, nil, false, errPipeline
 	}
 	for name := range request.BuildParams {
 		if !slices.Contains(names, name) {
-			return store.BatchResult{}, store.ErrInvalid
+			return nil, nil, false, store.ErrInvalid
 		}
 	}
 	hasUpload := false
@@ -158,14 +168,14 @@ func (s *Server) Trigger(ctx context.Context, actor store.Actor, project, key st
 		}
 	}
 	// 发布权限依据所有所选定义检查，false when不能豁免。
-	if hasUpload && (actor.Role != "admin" || !request.AllowUpload) {
-		return store.BatchResult{}, store.ErrForbidden
+	if hasUpload && (!admin || !request.AllowUpload) {
+		return nil, nil, false, store.ErrForbidden
 	}
 	prepared := make([]store.PreparedBuild, 0, len(names))
 	for _, name := range names {
 		b := document.Builds[name]
 		if b.Runner == nil && p.DefaultNode == "" {
-			return store.BatchResult{}, errPipeline
+			return nil, nil, false, errPipeline
 		}
 		overrides := map[string]string{}
 		if settings := p.Settings.Pipeline; settings != nil {
@@ -178,12 +188,12 @@ func (s *Server) Trigger(ctx context.Context, actor store.Actor, project, key st
 		maps.Copy(overrides, request.BuildParams[name])
 		params, err := config.ResolveParams(b, overrides)
 		if err != nil || !boundedParams(params) {
-			return store.BatchResult{}, errPipeline
+			return nil, nil, false, errPipeline
 		}
 		facts := map[string]string{"project": p.Name, "build.name": name, "git.branch": request.Branch, "git.sha": source.SHA}
-		plan, err := pipeline.Preview(document, pipeline.PreviewOptions{Names: []string{name}, Params: params, Facts: facts})
+		plan, err := pipeline.Preview(document, pipeline.PreviewOptions{Names: []string{name}, Params: params, Facts: facts, Changes: changes[name]})
 		if err != nil {
-			return store.BatchResult{}, errPipeline
+			return nil, nil, false, errPipeline
 		}
 		preview := plan.Builds[0]
 		notification := b.Notifications
@@ -192,17 +202,21 @@ func (s *Server) Trigger(ctx context.Context, actor store.Actor, project, key st
 		}
 		notification = config.ResolveNotifications(p.Settings.Notifications, notification, s.config.Defaults.Notifications)
 		if notification != nil && (notification.Enabled == nil || *notification.Enabled) {
-			return store.BatchResult{}, errUnsupported
+			return nil, nil, false, errUnsupported
 		}
 		for _, step := range b.Steps {
 			if step.Kind == "upload" && step.Credentials != "" && !nodeSecret.MatchString(step.Credentials) {
-				return store.BatchResult{}, errPipeline
+				return nil, nil, false, errPipeline
 			}
 		}
-		condition, reasons := buildCondition(b.When, params, request.Branch)
+		when := pipeline.WhenCondition(b.When, params, facts, changes[name])
+		condition, reasons := when.Condition, when.Reasons
+		if len(reasons) > 1 {
+			reasons = slices.DeleteFunc(slices.Clone(reasons), func(reason string) bool { return reason == "条件已满足" })
+		}
 		definition := *b
 		definition.Notifications = nil
-		build := store.PreparedBuild{Name: name, Status: "queued", Snapshot: store.BuildSnapshot{Origin: source.Origins[name], Definition: definition, Params: params, Facts: facts, Condition: condition, Reasons: reasons, AllowedNodes: slices.Clone(p.AllowedNodes), DefaultNode: p.DefaultNode}, PostBudgetNS: int64(2 * time.Minute)}
+		build := store.PreparedBuild{Name: name, Status: "queued", Snapshot: store.BuildSnapshot{Origin: source.Origins[name], Definition: definition, Changes: changes[name], Params: params, Facts: facts, Condition: condition, Reasons: reasons, AllowedNodes: slices.Clone(p.AllowedNodes), DefaultNode: p.DefaultNode}, PostBudgetNS: int64(2 * time.Minute)}
 		if condition == "skipped" {
 			build.Status = "skipped"
 			build.Reason = "condition_skipped"
@@ -229,43 +243,15 @@ func (s *Server) Trigger(ctx context.Context, actor store.Actor, project, key st
 				}
 			}
 		}
+		build.Snapshot.ComparisonKey = store.ComparisonKey(p.ID, request.Branch, name, names, build.Snapshot)
 		prepared = append(prepared, build)
 	}
-	return s.store.Enqueue(ctx, store.EnqueueInput{Actor: actor, ProjectID: p.ID, ProjectVersion: p.PolicyVersion, Key: key, RequestDigest: digest, SHA: source.SHA, Branch: request.Branch, Source: source.Mode, File: source.File, SourceDigest: source.SourceDigest, HasUpload: hasUpload, AllowUpload: request.AllowUpload, Builds: prepared})
+	return prepared, names, hasUpload, nil
 }
 
-// 这里只判定build.when，缺失编号/节点/工作目录的模板仍留待节点处理。
 func buildCondition(when *config.When, params map[string]string, branch string) (string, []string) {
-	condition := "ready"
-	reasons := []string{}
-	if when != nil {
-		if len(when.Changes) > 0 {
-			reasons = append(reasons, "changes: 手动预览忽略变更筛选")
-		}
-		for _, key := range slices.Sorted(maps.Keys(when.Params)) {
-			if params[key] != when.Params[key] {
-				condition = "skipped"
-				if !slices.Contains(reasons, "参数条件不满足") {
-					reasons = append(reasons, "参数条件不满足")
-				}
-			}
-		}
-		if len(when.Branches) > 0 {
-			match := false
-			for _, pattern := range when.Branches {
-				ok, _ := path.Match(pattern, branch)
-				match = match || ok
-			}
-			if !match {
-				condition = "skipped"
-				reasons = append(reasons, "分支条件不满足")
-			}
-		}
-	}
-	if len(reasons) == 0 {
-		reasons = []string{"条件已满足"}
-	}
-	return condition, reasons
+	v := pipeline.WhenCondition(when, params, map[string]string{"git.branch": branch}, nil)
+	return v.Condition, v.Reasons
 }
 func stepProgress(phase string, step pipeline.StepPreview) store.StepProgress {
 	status := "pending"

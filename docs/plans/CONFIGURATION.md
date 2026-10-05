@@ -6,7 +6,7 @@
 
 ### 服务端配置 `~/.mybuilds/server.yml`（由 `mybuilds-server serve` 读取）
 
-006 当前支持下方的 listen、data_dir、concurrency、database 与 secrets_file；build_profiles、retention、defaults 分别随对应功能接入，当前明确拒绝。可运行的最小配置见 [README](../../README.md#控制端与远程排队)。PostgreSQL 使用明确 DSN，不读取宿主 PG 环境/service/passfile；显式 TLS 材料受限普通文件读取后在内存校验。
+最终集成源码支持listen、data_dir、concurrency、database、secrets_file、节点时序、020 retention及012 build_profiles/defaults通知继承，015独立Webhook策略由项目settings保存；全局保留默认100个/30天，项目按字段继承。16个MVP模块代码与必要自动检查已完成，双库联合案例118项通过，准确记录见README和实施历史。013通知发送仍后置，配置继承不等于可发送；本专题中的后续设计不能视为当前入口。可运行的最小配置见 [README](../../README.md#控制端与远程排队)。PostgreSQL 使用明确 DSN，不读取宿主 PG 环境/service/passfile；显式 TLS 材料受限普通文件读取后在内存校验。
 
 数据库选型见[数据库设计选择](ARCHITECTURE.md#3-数据库默认-sqlite可切-postgresql统一走-gorm)。
 
@@ -19,7 +19,7 @@ database:                   # 见设计选择 3，默认 sqlite
   driver: sqlite            # sqlite | postgres
   dsn: ~/.mybuilds/mybuilds.db
 
-secrets_file: ~/.mybuilds/secrets.env     # 0600，控制端 Git 只读凭据和通知密钥
+secrets_file: ~/.mybuilds/secrets.env     # 0600，控制端只读Git凭据；通知材料随013接入
 
 build_profiles:                         # 可复用构建方案，名称由管理员定义
   flutter-android:
@@ -49,7 +49,7 @@ defaults:                                # 项目未指定时采用的全局默�
 token 由数据库管理；首次启动可设置 `MYBUILDS_BOOTSTRAP_ADMIN_TOKEN`，随后用 `token create/revoke` 管理。
 日志、产物和工作区保留策略不清理排队、运行中、待审批或结果未知的构建。
 
-### 项目独立通知与全局默认值（随通知功能实现）
+### 项目独立通知与全局默认值（配置继承归012，发送归后续013）
 
 - 项目管理设置、仓库 mybuilds.yml 和构建方案都可以直接填写 notifications.webhooks，
   每项包含 type 与 url；支持 URL 字面量或环境变量引用，不要求先在服务端注册机器人名称。
@@ -71,7 +71,7 @@ token 由数据库管理；首次启动可设置 `MYBUILDS_BOOTSTRAP_ADMIN_TOKEN
 
 ### 项目管理设置（导入数据库）
 
-项目设置文件由管理员导入数据库，示例（pipeline 在 MVP 接入，通知部分随后续功能接入）：
+项目设置文件由管理员导入数据库；下面保留012来源绑定与后续013通知设计示例。通知继承不提供发送器，可运行配置与命令按各功能quickstart及最终集成状态选用：
 
 ```yaml
 pipeline:
@@ -94,7 +94,7 @@ notifications:
   on: [failure]                          # 其余字段继承流水线/全局默认
 ```
 
-拟定入口为 `project init/add <name> --settings <本地YAML>` 和 `project set <name> --settings <本地YAML>`；
+入口为客户端`project init <name> --settings <本地YAML>`、控制端离线`project add <name> --settings <本地YAML>`与`project set <name> --settings <本地YAML>`；控制端在线仍独占拒绝本机管理，应使用远程命令。
 --settings 接受绝对路径或相对执行命令当前目录的路径，客户端读取内容后导入，不要求提交到仓库，也不每次构建重读。
 注册时 --file 则保存相对仓库根目录的流水线路径，由控制端读取固定 SHA 上的文件，两者不等价。
 --file 默认 mybuilds.yml；--framework 与 --platform 可直接绑定内置方案，无需额外项目设置文件。
@@ -126,7 +126,7 @@ set 只更新文件中显式提供的顶层设置块，每个块整体替换，�
 项目组、仓库、允许节点和构建号计数器仍由项目管理；每个 build 独立声明 runner、params、env 和有序 steps。
 名称须为非空稳定标识，唯一且不包含路径分隔符；重命名定义不改写历史记录，旧任务和 retry 保留原名称与快照。
 
-仓库使用一份 mybuilds.yml，示例（待实现）：
+仓库使用一份mybuilds.yml，以下为已支持的多build结构；真实工程与签名须自行准备：
 
 ```yaml
 version: 1
@@ -177,9 +177,9 @@ trigger --build android、--build android,ios 或 --all 选择构建，--build �
 同项目同名 build 串行，不同 build 可在容量允许时并行；审批只保留当前 build 的互斥。
 共享同一商店应用的上传须按商店与应用身份互斥，并核对远端版本，避免不同 build 的并行发布冲突。
 上传结果为 unknown 时继续阻止该应用的新上传，先查询或人工确认；不能通过切换 build 名称绕过保护。
-后续 Webhook/轮询/cron 使用管理员显式设置的 build 名称列表；多 build 未设置自动触发范围时拒绝启用，不默认全部发布。
+015 Webhook及后续016轮询/cron使用管理员显式设置的build名称列表；多 build 未设置自动触发范围时拒绝启用，不默认全部发布。
 
-### Agent 配置 `~/.mybuilds/agent.yml`（待实现）
+### Agent 配置 `~/.mybuilds/agent.yml`（serve读取）
 
 ```yaml
 server: https://build.example.com
@@ -204,17 +204,19 @@ token: "${MYBUILDS_CLIENT_TOKEN}"   # 也支持环境变量覆盖
 timeout: 30s                     # 普通 API 请求超时，不作为日志流总时长上限
 ```
 
-### 项目注册（`mybuilds-server project` 写入数据库，自动触发后续接入）
+### 项目注册（控制端离线管理；Hook独立凭据）
 
 ```bash
 mybuilds-server project add app-android \
   --repo git@gitlab.example.com:team/app.git \
   --provider gitlab --branches 'main,release/*' \
   --nodes linux-android-01 --default-node linux-android-01 \
-  --hook          # 后续 Webhook 功能：打印 URL 和 secret
+  --hook --hook-repository-key own-repo --json  # 独立Hook密钥仅一次JSON返回
 ```
 
 ### `<repo>/mybuilds.yml`（优先采用的流水线；也可保存在控制端作为方案）
+
+下面保留包含后续013通知的设计示例，不代表启用通知即可执行。可运行的签名/商店配置见[005](../../specs/005-ios-build/quickstart.md)、[010](../../specs/010-google-play/quickstart.md)与[011](../../specs/011-app-store/quickstart.md)；真实签名和商店结果按集中案例人工验收，代码入口不因材料待验而关闭。
 
 ```yaml
 version: 1                              # 流水线格式版本
@@ -263,6 +265,7 @@ steps:
     target: google_play                 # google_play | app_store | custom（MVP）
     file: "*.aab"                       # 匹配已收集产物；零个或多个匹配均报错
     channel: "{{channel}}"
+    app_identifier: dev.mybuilds.app     # 须与已登记应用及实际产物一致
     track: internal                     # production 必须显式选择并授权
     credentials: "${GOOGLE_PLAY_CREDENTIALS_FILE}"  # 节点受限文件，配置只保存引用
 ```
@@ -282,7 +285,7 @@ v1 步骤**顺序执行**；多渠道先通过参数分别触发，`parallel:` �
 
 run 支持多行内联 shell，也支持调用仓库脚本；与 Jenkins 的 shell 使用方式类似，但不承诺 Jenkins 插件或 Groovy 语法兼容。
 参考 [Jenkins 环境变量与参数](https://www.jenkins.io/doc/book/pipeline/jenkinsfile/)、[sh 步骤](https://www.jenkins.io/doc/pipeline/steps/workflow-durable-task-step/)。
-以下补全待实现的执行约定，不代表当前 CLI 已能运行脚本。
+以下shell、参数、超时与收尾约定已由原Run执行链支持；移动工具、签名与发布依旧要求实际材料和权限。
 
 | run 步骤字段 | 默认与行为 |
 |---|---|
@@ -392,7 +395,7 @@ changes 使用区分大小写的仓库根目录相对路径，复用 doublestar 
 手动触发和本地 run 默认不做 changes 路径过滤，分支和参数条件仍生效；原提交 retry 使用原条件事实。
 本地执行分支条件时需能可靠确定当前 Git 分支，否则明确报错；dry-run 缺少运行事实时显示待确定，不执行 Git 网络请求或命令。
 
-条件发布示例（待实现）：
+条件发布设计示例（014最终集成后审批可用；商店外部结果人工待验）：
 
 ```yaml
 version: 1
@@ -427,6 +430,7 @@ builds:
           branches: [main]
           params: {channel: production}
         target: google_play
+        app_identifier: dev.mybuilds.app
         file: "*.aab"
         track: production
         credentials: "${GOOGLE_PLAY_CREDENTIALS_FILE}"
@@ -517,7 +521,7 @@ retention:
   days: 60
 ```
 
-builds/days 须为正整数；省略字段继承全局，null/未知字段拒绝，不允许仓库 YAML 改写管理策略。
+builds须为正int64，days须为1至106751的整数；全局省略块默认100/30，项目省略字段继承全局，null/未知字段拒绝，不允许仓库 YAML 改写管理策略。
 计数按项目所有命名 build 汇总；超出数量或天数的终态记录进入清理，但活动、待审批、停止未确认与上传 unknown 始终受保护。
 日志、产物、测试原始报告及 Agent 工作区沿用同一策略；保护判断与执行删除前均重新核对状态，下载中的文件不半途删除。
 中央删除使用持久化清理记录，先令产物不可再被新下载引用，等待已有下载结束再删除文件；计数器与必要操作审计不随历史文件清理重置。

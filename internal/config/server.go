@@ -22,30 +22,32 @@ type DatabaseConfig struct {
 	DSN    string `yaml:"dsn" mapstructure:"dsn" json:"-"`
 }
 type ServerConfig struct {
-	Defaults          ServerDefaults          `yaml:"defaults,omitempty" mapstructure:"defaults"`
-	BuildProfiles     map[string]BuildProfile `yaml:"build_profiles,omitempty" mapstructure:"build_profiles" json:"-"`
-	Retention         Retention               `yaml:"retention" mapstructure:"retention" json:"retention"`
-	Listen            string                  `yaml:"listen" mapstructure:"listen"`
-	DataDir           string                  `yaml:"data_dir" mapstructure:"data_dir"`
-	SecretsFile       string                  `yaml:"secrets_file" mapstructure:"secrets_file" json:"-"`
-	Concurrency       int                     `yaml:"concurrency" mapstructure:"concurrency"`
-	Database          DatabaseConfig          `yaml:"database" mapstructure:"database"`
-	HeartbeatInterval time.Duration           `yaml:"heartbeat_interval" mapstructure:"heartbeat_interval"`
-	LeaseDuration     time.Duration           `yaml:"lease_duration" mapstructure:"lease_duration"`
+	WebhookSecretsFile string                  `yaml:"webhook_secrets_file,omitempty" mapstructure:"webhook_secrets_file" json:"-"`
+	Defaults           ServerDefaults          `yaml:"defaults,omitempty" mapstructure:"defaults"`
+	BuildProfiles      map[string]BuildProfile `yaml:"build_profiles,omitempty" mapstructure:"build_profiles" json:"-"`
+	Retention          Retention               `yaml:"retention" mapstructure:"retention" json:"retention"`
+	Listen             string                  `yaml:"listen" mapstructure:"listen"`
+	DataDir            string                  `yaml:"data_dir" mapstructure:"data_dir"`
+	SecretsFile        string                  `yaml:"secrets_file" mapstructure:"secrets_file" json:"-"`
+	Concurrency        int                     `yaml:"concurrency" mapstructure:"concurrency"`
+	Database           DatabaseConfig          `yaml:"database" mapstructure:"database"`
+	HeartbeatInterval  time.Duration           `yaml:"heartbeat_interval" mapstructure:"heartbeat_interval"`
+	LeaseDuration      time.Duration           `yaml:"lease_duration" mapstructure:"lease_duration"`
 }
 
 // serverFile保留duration的严格YAML字符串类型，合并后再转换为time.Duration。
 type serverFile struct {
-	Defaults          ServerDefaults          `yaml:"defaults,omitempty"`
-	BuildProfiles     map[string]BuildProfile `yaml:"build_profiles,omitempty"`
-	Retention         Retention               `yaml:"retention"`
-	Listen            string                  `yaml:"listen"`
-	DataDir           string                  `yaml:"data_dir"`
-	SecretsFile       string                  `yaml:"secrets_file"`
-	Concurrency       int                     `yaml:"concurrency"`
-	Database          DatabaseConfig          `yaml:"database"`
-	HeartbeatInterval string                  `yaml:"heartbeat_interval"`
-	LeaseDuration     string                  `yaml:"lease_duration"`
+	WebhookSecretsFile string                  `yaml:"webhook_secrets_file,omitempty"`
+	Defaults           ServerDefaults          `yaml:"defaults,omitempty"`
+	BuildProfiles      map[string]BuildProfile `yaml:"build_profiles,omitempty"`
+	Retention          Retention               `yaml:"retention"`
+	Listen             string                  `yaml:"listen"`
+	DataDir            string                  `yaml:"data_dir"`
+	SecretsFile        string                  `yaml:"secrets_file"`
+	Concurrency        int                     `yaml:"concurrency"`
+	Database           DatabaseConfig          `yaml:"database"`
+	HeartbeatInterval  string                  `yaml:"heartbeat_interval"`
+	LeaseDuration      string                  `yaml:"lease_duration"`
 }
 type ServerOverrides struct {
 	Listen, DataDir, SecretsFile, DatabaseDriver, DatabaseDSN *string
@@ -156,6 +158,12 @@ func LoadServer(options ServerLoadOptions) (ServerConfig, error) {
 	cfg.DataDir, err = expandConfigurationPath(cfg.DataDir, base)
 	if err != nil {
 		return ServerConfig{}, err
+	}
+	if cfg.WebhookSecretsFile != "" {
+		cfg.WebhookSecretsFile, err = expandConfigurationPath(cfg.WebhookSecretsFile, base)
+		if err != nil {
+			return ServerConfig{}, err
+		}
 	}
 	cfg.SecretsFile, err = expandConfigurationPath(cfg.SecretsFile, base)
 	if err != nil {

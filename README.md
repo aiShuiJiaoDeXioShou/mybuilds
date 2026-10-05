@@ -20,7 +20,7 @@
 
 ## 当前状态
 
-MVP有16个功能模块，目前15个已经完成代码与必要自动检查并本地提交；Apple/Flutter合法签名和真实商店发布由用户集中人工验收。实现顺序、精确提交与验证记录见[实施历史](docs/IMPLEMENTATION_HISTORY.md)，不把代码交付等同于全部人工验收通过。
+MVP有16个功能模块，目前16个已经完成代码与必要自动检查并本地提交；Apple/Flutter合法签名和真实商店发布由用户集中人工验收。实现顺序、精确提交与验证记录见[实施历史](docs/IMPLEMENTATION_HISTORY.md)，不把代码交付等同于全部人工验收通过。
 
 | 能力 | 状态与验证入口 |
 |---|---|
@@ -32,9 +32,9 @@ MVP有16个功能模块，目前15个已经完成代码与必要自动检查并�
 | 010/011 Google Play/App Store | 代码与必要自动检查完成；共同发布授权、工具、应用保护、精确GET核对与CLI；[Google记录](specs/010-google-play/validation.md)、[Apple记录](specs/011-app-store/validation.md)；真实商店人工待验 |
 | 012 可复用方案/custom | 代码与必要自动检查完成；repo/auto/profile完整来源选择、四内置方案、命名参数与原快照重试、用户argv发布和metadata查询；[指南](specs/012-custom-workflows/quickstart.md)、[脚本案例](examples/custom/README.md) |
 | 014 审批 | 代码与必要自动检查完成；精确CLI决定、释放容量与原节点续执行、本地TTY；[指南](specs/014-release-approval/quickstart.md) |
-| 015 Webhook | 源码已集成，最终双库联合案例与整功能提交正在完成 |
+| 015 Webhook | 代码与必要自动检查完成；四来源有限认证、固定窗口去重与原SHA changes筛选；[指南](specs/015-webhook-trigger/quickstart.md) |
 
-[Flutter集中验收案例](examples/mvp/acceptance.md)从实际CLI模板生成一个仓库的Android/iOS配置、控制端和两个节点设置，串联测试、下载、审批与商店分发。当前生成/dry-run已通过，015最终提交正在完成，双平台合法签名与真实商店由用户人工验收。通知013、轮询/cron016、额外渠道017与部署打磨018属于后续功能。
+[Flutter集中验收案例](examples/mvp/acceptance.md)从实际CLI模板生成一个仓库的Android/iOS配置、控制端和两个节点设置，串联测试、下载、审批与商店分发。生成/dry-run和实际Flutter测试已通过；双库三CLI联合案例覆盖两次审批、custom实际HTTPS上传、原文件下载和只读核对，验证见[案例记录](examples/mvp/validation.md)。合法签名与真实商店人工待验。通知013、轮询/cron016、额外渠道017与部署打磨018属于后续功能。
 
 ## 开发与运行
 
@@ -189,7 +189,7 @@ cd "$project_dir"
 
 | 命令端 | 当前命令 |
 |---|---|
-| 客户端 | group create/ls/rename/rm；project init/set/ls/move/rm/app；trigger；build ls/show/cancel/confirm-stopped/retry；node；logs；artifact ls/download；approvals/approve/reject；publish；status；doctor |
+| 客户端 | group create/ls/rename/rm；project init/set/ls/move/rm/app/hook；trigger；build ls/show/cancel/confirm-stopped/retry；node；logs；artifact ls/download；approvals/approve/reject；publish；status；doctor |
 | 服务端本机 | serve/migrate；group create/ls/rename/rm；project add/set/ls/move/rm；token create/ls/revoke |
 
 serve 在线时同一数据库被独占，本机 migrate、project/group/token 管理会拒绝，使用客户端远程管理或鉴权 HTTP API。停止示例控制端后，可创建身份并查看安全列表：
@@ -359,7 +359,7 @@ mybuilds/
 | `internal/agent` | 007 已验收诊断/注册/心跳、任务领取/续租、同一 Run 执行与日志/产物回传；008网络及终态核对已验收 |
 | `internal/protocol` | 控制端与 Agent 共用的任务、租约及回报格式 |
 | `internal/store` | 已接入双数据库独占、业务事务、快照与步骤进度持久化 |
-| `internal/scm` | 已接入只读 Git 固定提交与 SSH 显式凭据；Webhook 来源后续接入 |
+| `internal/scm` | 已接入只读 Git 固定提交与 SSH 显式凭据；四种Webhook来源认证、固定SHA变更比较 |
 | `internal/mobile` | 已接入 Android/Flutter 模板、真实受限doctor和纯参数检查；iOS签名生命周期由005提供 |
 | `internal/distribute` | 锁定fastlane商店工具与具体单发动作；custom由012扩展同一授权/记录 |
 | `internal/notify` | 后续013飞书等通知渠道，尚未创建 |
@@ -440,3 +440,9 @@ $speckit-specify → $speckit-plan → $speckit-tasks → $speckit-analyze → $
 变更入口、目录、运行方式或已实现能力时，同步更新本文。
 
 用户于2026-10-05调整交付方式：剩余模块先完成代码和必要自动验证，最后使用统一Flutter双平台案例集中人工验收；真实Apple签名、两大商店和外部Webhook成功门明确列为人工待验，不阻塞并行开发，也不冒称已通过。
+
+## 审批与Webhook
+
+`approvals --project-id PROJECT_UUID --state pending --json` 读取安全检查点；`approve BUILD_ID --approval-id ID --revision N --checkpoint-digest SHA256 --json` 或 `reject`只决定该次审批。批准后原节点复核原工作区、制品和剩余预算，再续未执行步骤；等待不扣执行预算，不迁移或重跑。多审批各自决定，跳过审批不会授权上传。
+
+项目settings中的`hook`与`triggers`启用自动触发，也可用`project hook enable/show/events/windows/disable/rotate PROJECT`管理；初始化/轮换秘密仅显示一次，使用`--json`保存私有文件。真实外部入口需验证证书的HTTPS；GitHub/GitLab/Gitee/generic仅可信普通分支push触发，payload URL不成为仓库来源。固定quiet_period不随后续push延长；手动构建豁免changes，自动构建使用冻结的变化事实。四个外部托管来源的真实投递按[人工指南](specs/015-webhook-trigger/quickstart.md)验收。

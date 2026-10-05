@@ -77,6 +77,9 @@ func buildDetails(v store.BuildView) [][]string {
 	}
 	rows := [][]string{{"id", v.ID}, {"project", v.Project}, {"group", v.Group}, {"batch_id", v.BatchID}, {"build_name", v.Name}, {"number", budget(v.Number)}, {"status", v.Status}, {"reason", v.Reason}, {"sha", v.SHA}, {"branch", v.Branch}, {"source", v.Source}, {"file", v.File}, {"source_digest", v.SourceDigest}, {"parameter_keys", strings.Join(v.ParameterKeys, ",")}, {"condition", v.Condition}, {"reasons", strings.Join(v.Reasons, ",")}, {"initial_budget_ns", budget(v.InitialBudgetNS)}, {"remaining_budget_ns", budget(v.RemainingBudgetNS)}, {"post_budget_ns", strconv.FormatInt(v.PostBudgetNS, 10)}, {"created_at", v.CreatedAt.UTC().Format("2006-01-02T15:04:05Z")}}
 	rows = append(rows, [][]string{{"node_id", v.NodeID}, {"node_name", v.NodeName}, {"session_id", v.SessionID}, {"attempt_id", v.AttemptID}, {"lease_id", v.LeaseID}, {"lease_epoch", strconv.FormatInt(v.LeaseEpoch, 10)}, {"cancel_requested", strconv.FormatBool(v.CancelRequested)}, {"stop_unconfirmed", strconv.FormatBool(v.StopUnconfirmed)}, {"remaining_post_budget_ns", strconv.FormatInt(v.RemainingPostBudgetNS, 10)}, {"post_phase", v.PostPhase}}...)
+	if c := v.Changes; c != nil {
+		rows = append(rows, []string{"changes_mode", c.Mode}, []string{"changes_reason", c.Reason}, []string{"changes_baseline", c.BaselineBuildID}, []string{"changes_path_count", strconv.Itoa(c.PathCount)}, []string{"changes_digest", c.Digest})
+	}
 	if v.RetryOf != "" {
 		rows = append(rows, []string{"retry_of", v.RetryOf})
 	}

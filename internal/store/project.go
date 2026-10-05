@@ -123,6 +123,9 @@ func projectView(row projectRecord) (Project, error) {
 	return p, nil
 }
 func (s *Store) CreateProject(ctx context.Context, actor Actor, input ProjectInput) (Project, error) {
+	if input.Settings.Hook != nil && input.PreparedHook == nil {
+		return Project{}, ErrInvalid
+	}
 	input, err := normalizeProject(input)
 	if err != nil {
 		return Project{}, err
@@ -133,7 +136,14 @@ func (s *Store) CreateProject(ctx context.Context, actor Actor, input ProjectInp
 	if err != nil {
 		return Project{}, err
 	}
-	row := projectRecord{ID: uuid.NewString(), Name: input.Name, Repository: input.Repository, Provider: input.Provider, DefaultNode: input.DefaultNode, BranchesJSON: branches, NodesJSON: nodes, SettingsJSON: settings, NextNumber: input.BuildNumberStart, PolicyVersion: 1}
+	id := uuid.NewString()
+	if input.ID != "" {
+		if !validID(input.ID) || input.PreparedHook == nil {
+			return Project{}, ErrInvalid
+		}
+		id = input.ID
+	}
+	row := projectRecord{ID: id, Name: input.Name, Repository: input.Repository, Provider: input.Provider, DefaultNode: input.DefaultNode, BranchesJSON: branches, NodesJSON: nodes, SettingsJSON: settings, NextNumber: input.BuildNumberStart, PolicyVersion: 1}
 	err = s.write(ctx, func(tx *gorm.DB) error {
 		if err := authorize(tx, actor, "admin"); err != nil {
 			return err
@@ -147,6 +157,14 @@ func (s *Store) CreateProject(ctx context.Context, actor Actor, input ProjectInp
 			return err
 		}
 		row.Group = group
+		if input.PreparedHook != nil {
+			policy, e := configureWebhookTx(tx, actor, WebhookPolicyInput{Policy: *input.PreparedHook, Settings: input.Settings, ExpectedPolicyVersion: 1})
+			if e != nil {
+				return e
+			}
+			row.PolicyVersion = policy.PolicyVersion
+			row.SettingsJSON, _ = encode(input.Settings)
+		}
 		return audit(tx, actor, "project_create", row.ID, "", group.ID)
 	})
 	if err != nil {
@@ -197,7 +215,7 @@ func (s *Store) ListProjects(ctx context.Context, filter ProjectFilter) ([]Proje
 	return result, nil
 }
 func (s *Store) SetProjectSettings(ctx context.Context, actor Actor, name string, settings config.ProjectSettings) (Project, error) {
-	if !validName(name) || config.ValidateProjectSettings(settings) != nil {
+	if !validName(name) || config.ValidateProjectSettings(settings) != nil || settings.Hook != nil || settings.Triggers != nil {
 		return Project{}, ErrInvalid
 	}
 	var row projectRecord
@@ -208,7 +226,7 @@ func (s *Store) SetProjectSettings(ctx context.Context, actor Actor, name string
 		if err := tx.Preload("Group").First(&row, "name = ?", name).Error; err != nil {
 			return err
 		}
-		if settings.Pipeline == nil || settings.Notifications == nil {
+		{
 			var previous config.ProjectSettings
 			if json.Unmarshal([]byte(row.SettingsJSON), &previous) != nil {
 				return errDatabase
@@ -216,6 +234,8 @@ func (s *Store) SetProjectSettings(ctx context.Context, actor Actor, name string
 			if settings.Pipeline == nil {
 				settings.Pipeline = previous.Pipeline
 			}
+			settings.Hook = previous.Hook
+			settings.Triggers = previous.Triggers
 			if settings.Notifications == nil {
 				settings.Notifications = previous.Notifications
 			}

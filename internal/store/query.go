@@ -95,6 +95,9 @@ func buildView(db *gorm.DB, row buildRecord) (BuildView, error) {
 		return BuildView{}, errDatabase
 	}
 	result.Origin = snapshot.Origin
+	if c := snapshot.Changes; c != nil {
+		result.Changes = &ChangeSummary{Mode: c.Mode, Reason: c.Reason, BaselineBuildID: c.BaselineBuildID, BaselineSHA: c.BaselineSHA, TargetSHA: c.TargetSHA, PathCount: len(c.Paths), Digest: c.Digest}
+	}
 	sealed, err := sealedReports(row)
 	if err != nil {
 		return BuildView{}, err

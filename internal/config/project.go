@@ -17,9 +17,11 @@ type PipelineSettings struct {
 	Params  map[string]string        `yaml:"params,omitempty" json:"params,omitempty"`
 }
 type ProjectSettings struct {
-	Notifications *Notifications     `yaml:"notifications,omitempty" json:"notifications,omitempty"`
+	Hook          *HookSettings      `yaml:"hook,omitempty" json:"hook,omitempty"`
+	Triggers      *TriggerSettings   `yaml:"triggers,omitempty" json:"triggers,omitempty"`
 	Retention     *RetentionOverride `yaml:"retention,omitempty" json:"retention,omitempty"`
 	Pipeline      *PipelineSettings  `yaml:"pipeline,omitempty" json:"pipeline,omitempty"`
+	Notifications *Notifications     `yaml:"notifications,omitempty" json:"notifications,omitempty"`
 }
 
 func ParseProjectSettings(data []byte) (ProjectSettings, error) {
@@ -40,6 +42,9 @@ func ParseProjectSettings(data []byte) (ProjectSettings, error) {
 
 // ValidateProjectSettings不读取Git或节点秘密，默认值由解析与实际业务入口补全。
 func ValidateProjectSettings(settings ProjectSettings) error {
+	if err := ValidateWebhookSettings(settings.Hook, settings.Triggers); err != nil {
+		return err
+	}
 	if err := validateNotifications(settings.Notifications, "notifications"); err != nil {
 		return err
 	}

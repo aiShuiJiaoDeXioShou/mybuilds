@@ -1,0 +1,22 @@
+{
+  "utc": "2026-10-05T05:26:27.960527+00:00",
+  "production_unchanged": true,
+  "cases": {
+    "sqlite": 2,
+    "postgres": 2
+  },
+  "checks": 118,
+  "success": true,
+  "elapsed_utc": [
+    "2026-10-05T05:24:10.618210+00:00",
+    "2026-10-05T05:24:57.367071+00:00"
+  ],
+  "owned_processes_waited": 8,
+  "manual_auto_merged": false,
+  "manual_and_auto_each_two_approvals_single_upload": true,
+  "automatic_pending_semantic_reuse_original_ids_no_new_number": true,
+  "manual_signature_real_store_uploads": "not part of this self-owned custom case",
+  "evidence_sha256": "0c1922150daeab9af079a46cdaac7557affdb7a7b71221ea1a8cb50760ca5eeb",
+  "production_files_sha256": "1e390b1e06b5e4ed0d7ca3c1cc5ed58418b33d3c93ef419328ae7d1cd5204cc1",
+  "safe_manifest_sha256": "fb80c40c246f199c2ae43a43ade4643a6caa3a4c8da7175f6277af3e0bda89ff"
+}

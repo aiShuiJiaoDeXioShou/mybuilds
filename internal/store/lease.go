@@ -109,7 +109,7 @@ func taskSnapshot(db *gorm.DB, row buildRecord) (protocol.TaskSnapshot, error) {
 	if row.Number == nil {
 		return protocol.TaskSnapshot{}, errDatabase
 	}
-	return protocol.TaskSnapshot{Project: project.Name, BuildName: row.Name, Number: *row.Number, Repository: project.Repository, Branch: batch.Branch, SHA: batch.SHA, SourceDigest: batch.SourceDigest, Definition: snapshot.Definition, Parameters: snapshot.Params, Facts: snapshot.Facts}, nil
+	return protocol.TaskSnapshot{Changes: snapshot.Changes, Project: project.Name, BuildName: row.Name, Number: *row.Number, Repository: project.Repository, Branch: batch.Branch, SHA: batch.SHA, SourceDigest: batch.SourceDigest, Definition: snapshot.Definition, Parameters: snapshot.Params, Facts: snapshot.Facts}, nil
 }
 func grantFor(db *gorm.DB, row buildRecord, includeTask bool) (protocol.LeaseGrant, error) {
 	if row.LeaseExpiresAt == nil {

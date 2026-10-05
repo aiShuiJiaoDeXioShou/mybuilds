@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"mybuilds/internal/config"
+	"mybuilds/internal/protocol"
 )
 
 func validHex(value string, lengths ...int) bool {
@@ -37,7 +38,7 @@ func validKey(key string) bool {
 	return true
 }
 func safeReasons(reasons []string) bool {
-	allowed := []string{"条件已满足", "参数条件不满足", "分支条件不满足", "分支事实待确定", "模板上下文待确定", "收尾阶段等待构建结果", "changes: 手动预览忽略变更筛选", "通知已关闭"}
+	allowed := []string{"条件已满足", "参数条件不满足", "分支条件不满足", "分支事实待确定", "模板上下文待确定", "收尾阶段等待构建结果", "changes: 手动预览忽略变更筛选", "通知已关闭", "变更条件不满足", "变更事实待确定"}
 	if len(reasons) > 128 {
 		return false
 	}
@@ -108,6 +109,9 @@ func validatePrepared(prepared PreparedBuild) (PreparedBuild, bool, error) {
 		return prepared, false, ErrInvalid
 	}
 	definition := &prepared.Snapshot.Definition
+	if !validateOrigin(prepared.Snapshot.Origin, *definition) {
+		return prepared, false, ErrInvalid
+	}
 	if err = config.Validate(&config.Document{Version: 1, Builds: map[string]*config.Build{prepared.Name: definition}}); err != nil {
 		return prepared, false, ErrInvalid
 	}
@@ -116,9 +120,6 @@ func validatePrepared(prepared PreparedBuild) (PreparedBuild, bool, error) {
 			return prepared, false, ErrInvalid
 		}
 		definition.Notifications = nil
-	}
-	if !validateOrigin(prepared.Snapshot.Origin, *definition) {
-		return prepared, false, ErrInvalid
 	}
 	if len(prepared.Snapshot.Params) > 128 {
 		return prepared, false, ErrInvalid
@@ -241,107 +242,129 @@ func (s *Store) Enqueue(ctx context.Context, input EnqueueInput) (BatchResult, e
 		if err := tx.First(&project, "id = ?", input.ProjectID).Error; err != nil {
 			return err
 		}
-		if project.PolicyVersion != input.ProjectVersion {
-			return ErrConflict
-		}
-		if !validHex(input.SHA, 40, 64) || !validHex(input.SourceDigest, 64) || !validBranchPattern(input.Branch) || strings.ContainsAny(input.Branch, "*?[") || !slices.Contains([]string{"auto", "repo", "profile"}, input.Source) || !sourceFileValid(input.File) || len(input.Builds) == 0 || len(input.Builds) > 64 {
-			return ErrInvalid
-		}
-		prepared := make([]PreparedBuild, len(input.Builds))
-		names := map[string]bool{}
-		queued := int64(0)
-		hasUpload := input.HasUpload
-		for i, b := range input.Builds {
-			if names[b.Name] {
-				return ErrInvalid
-			}
-			names[b.Name] = true
-			validated, upload, err := validatePrepared(b)
-			if !originBatchMatches(b.Snapshot.Origin, input.SHA, input.Source, input.File) {
-				return ErrInvalid
-			}
-			if err != nil {
-				return err
-			}
-			prepared[i] = validated
-			hasUpload = hasUpload || upload
-			if b.Status == "queued" {
-				queued++
-			}
-		}
-		if hasUpload && (input.Actor.Role != "admin" || !input.AllowUpload) {
-			return ErrForbidden
-		}
-		if queued > math.MaxInt64-project.NextNumber {
-			return ErrConflict
-		}
-		batch := batchRecord{AllowUpload: input.AllowUpload && input.Actor.Role == "admin", ID: uuid.NewString(), ProjectID: project.ID, IdentityID: input.Actor.ID, SHA: input.SHA, Branch: input.Branch, Source: input.Source, File: input.File, SourceDigest: input.SourceDigest, CreatedAt: time.Now().UTC()}
-		if err := tx.Create(&batch).Error; err != nil {
+		result, err = enqueuePreparedTx(tx, project, input, input.Actor.Role == "admin" && input.AllowUpload)
+		if err != nil {
 			return err
 		}
-		var nodes []string
-		if err := json.Unmarshal([]byte(project.NodesJSON), &nodes); err != nil {
-			return errDatabase
-		}
-		number := project.NextNumber
-		for position, b := range prepared {
-			id := uuid.NewString()
-			// 全部事实由真实事务来源构造，未就绪的节点/工作目录不预造。
-			b.Snapshot.Facts = map[string]string{"project": project.Name, "build.name": b.Name, "build.id": id, "git.sha": input.SHA, "git.branch": input.Branch}
-			b.Snapshot.AllowedNodes = slices.Clone(nodes)
-			b.Snapshot.DefaultNode = project.DefaultNode
-			var allocated *int64
-			if b.Status == "queued" {
-				value := number
-				allocated = &value
-				number++
-				b.Snapshot.Facts["build.number"] = strconv.FormatInt(value, 10)
-			}
-			snapshot, err := encode(b.Snapshot)
-			if err != nil {
-				return err
-			}
-			keys := make([]string, 0, len(b.Snapshot.Params))
-			for key := range b.Snapshot.Params {
-				keys = append(keys, key)
-			}
-			sort.Strings(keys)
-			encodedKeys, _ := encode(keys)
-			reasons, _ := encode(b.Snapshot.Reasons)
-			row := buildRecord{ID: id, BatchID: batch.ID, ProjectID: project.ID, Number: allocated, Position: position, Name: b.Name, Status: b.Status, Reason: b.Reason, SnapshotJSON: snapshot, ParameterKeysJSON: encodedKeys, Condition: b.Snapshot.Condition, ReasonsJSON: reasons, InitialBudgetNS: b.InitialBudgetNS, RemainingBudgetNS: b.InitialBudgetNS, PostBudgetNS: b.PostBudgetNS, CreatedAt: batch.CreatedAt}
-			if b.Status == "skipped" {
-				row.Reason = "condition_skipped"
-				row.TerminalAt = &row.CreatedAt
-			}
-			if err := tx.Create(&row).Error; err != nil {
-				return err
-			}
-			for _, progress := range b.Steps {
-				reasons, _ := encode(progress.Reasons)
-				step := stepRecord{ID: uuid.NewString(), BuildID: id, Phase: progress.Phase, Index: progress.Index, Name: progress.Name, Kind: progress.Kind, Condition: progress.Condition, Status: progress.Status, ReasonsJSON: reasons, ElapsedNS: 0}
-				if err := tx.Create(&step).Error; err != nil {
-					return err
-				}
-			}
-		}
-		if queued != 0 {
-			update := tx.Model(&projectRecord{}).Where("id = ? AND policy_version = ? AND next_number = ?", project.ID, input.ProjectVersion, project.NextNumber).Update("next_number", number)
-			if update.Error != nil {
-				return update.Error
-			}
-			if update.RowsAffected != 1 {
-				return ErrConflict
-			}
-		}
-		request := requestRecord{ID: uuid.NewString(), IdentityID: input.Actor.ID, Key: input.Key, RequestDigest: input.RequestDigest, BatchID: batch.ID, CreatedAt: batch.CreatedAt}
+
+		request := requestRecord{ID: uuid.NewString(), IdentityID: input.Actor.ID, Key: input.Key, RequestDigest: input.RequestDigest, BatchID: result.ID, CreatedAt: time.Now().UTC()}
 		if err := tx.Create(&request).Error; err != nil {
 			return err
 		}
-		result, err = batchView(tx, batch.ID)
-		return err
+		return nil
 	})
 	if err != nil {
 		return BatchResult{}, err
 	}
 	return result, nil
+}
+
+// enqueuePreparedTx是人工与自动触发共同的真实入队体；权限由各自的当前身份复核。
+func enqueuePreparedTx(tx *gorm.DB, project projectRecord, input EnqueueInput, uploadAuthorized bool) (BatchResult, error) {
+	if project.PolicyVersion != input.ProjectVersion {
+		return BatchResult{}, ErrConflict
+	}
+	if !validHex(input.SHA, 40, 64) || !validHex(input.SourceDigest, 64) || !validBranchPattern(input.Branch) || strings.ContainsAny(input.Branch, "*?[") || !slices.Contains([]string{"auto", "repo", "profile"}, input.Source) || !sourceFileValid(input.File) || len(input.Builds) == 0 || len(input.Builds) > 64 {
+		return BatchResult{}, ErrInvalid
+	}
+	prepared := make([]PreparedBuild, len(input.Builds))
+	names := map[string]bool{}
+	queued := int64(0)
+	hasUpload := input.HasUpload
+	for i, b := range input.Builds {
+		if names[b.Name] {
+			return BatchResult{}, ErrInvalid
+		}
+		names[b.Name] = true
+		validated, upload, err := validatePrepared(b)
+		if err != nil {
+			return BatchResult{}, err
+		}
+		if !originBatchMatches(b.Snapshot.Origin, input.SHA, input.Source, input.File) {
+			return BatchResult{}, ErrInvalid
+		}
+		prepared[i] = validated
+		hasUpload = hasUpload || upload
+		if b.Status == "queued" {
+			queued++
+		}
+	}
+	if hasUpload && !uploadAuthorized {
+		return BatchResult{}, ErrForbidden
+	}
+	if queued > math.MaxInt64-project.NextNumber {
+		return BatchResult{}, ErrConflict
+	}
+	if input.SelectedBuilds == nil {
+		for _, b := range input.Builds {
+			input.SelectedBuilds = append(input.SelectedBuilds, b.Name)
+		}
+	}
+	for _, b := range prepared {
+		if b.Snapshot.Changes != nil && !protocol.ValidateChanges(b.Snapshot.Changes, input.SHA) {
+			return BatchResult{}, ErrInvalid
+		}
+		if b.Snapshot.ComparisonKey != "" && b.Snapshot.ComparisonKey != ComparisonKey(project.ID, input.Branch, b.Name, input.SelectedBuilds, b.Snapshot) {
+			return BatchResult{}, ErrInvalid
+		}
+	}
+	batch := batchRecord{AllowUpload: uploadAuthorized, ID: uuid.NewString(), ProjectID: project.ID, IdentityID: input.Actor.ID, SHA: input.SHA, Branch: input.Branch, Source: input.Source, File: input.File, SourceDigest: input.SourceDigest, CreatedAt: time.Now().UTC()}
+	if err := tx.Create(&batch).Error; err != nil {
+		return BatchResult{}, err
+	}
+	var nodes []string
+	if err := json.Unmarshal([]byte(project.NodesJSON), &nodes); err != nil {
+		return BatchResult{}, errDatabase
+	}
+	number := project.NextNumber
+	for position, b := range prepared {
+		id := uuid.NewString()
+		// 全部事实由真实事务来源构造，未就绪的节点/工作目录不预造。
+		b.Snapshot.Facts = map[string]string{"project": project.Name, "build.name": b.Name, "build.id": id, "git.sha": input.SHA, "git.branch": input.Branch}
+		b.Snapshot.AllowedNodes = slices.Clone(nodes)
+		b.Snapshot.DefaultNode = project.DefaultNode
+		var allocated *int64
+		if b.Status == "queued" {
+			value := number
+			allocated = &value
+			number++
+			b.Snapshot.Facts["build.number"] = strconv.FormatInt(value, 10)
+		}
+		snapshot, err := encode(b.Snapshot)
+		if err != nil {
+			return BatchResult{}, err
+		}
+		keys := make([]string, 0, len(b.Snapshot.Params))
+		for key := range b.Snapshot.Params {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		encodedKeys, _ := encode(keys)
+		reasons, _ := encode(b.Snapshot.Reasons)
+		row := buildRecord{ID: id, ComparisonKey: b.Snapshot.ComparisonKey, AutomaticWindowID: b.Snapshot.AutomaticWindowID, SemanticKey: automaticSemantic(b.Snapshot, input.SHA), BatchID: batch.ID, ProjectID: project.ID, Number: allocated, Position: position, Name: b.Name, Status: b.Status, Reason: b.Reason, SnapshotJSON: snapshot, ParameterKeysJSON: encodedKeys, Condition: b.Snapshot.Condition, ReasonsJSON: reasons, InitialBudgetNS: b.InitialBudgetNS, RemainingBudgetNS: b.InitialBudgetNS, PostBudgetNS: b.PostBudgetNS, CreatedAt: batch.CreatedAt}
+		if b.Status == "skipped" {
+			row.Reason = "condition_skipped"
+			row.TerminalAt = &row.CreatedAt
+		}
+		if err := tx.Create(&row).Error; err != nil {
+			return BatchResult{}, err
+		}
+		for _, progress := range b.Steps {
+			reasons, _ := encode(progress.Reasons)
+			step := stepRecord{ID: uuid.NewString(), BuildID: id, Phase: progress.Phase, Index: progress.Index, Name: progress.Name, Kind: progress.Kind, Condition: progress.Condition, Status: progress.Status, ReasonsJSON: reasons, ElapsedNS: 0}
+			if err := tx.Create(&step).Error; err != nil {
+				return BatchResult{}, err
+			}
+		}
+	}
+	if queued != 0 {
+		update := tx.Model(&projectRecord{}).Where("id = ? AND policy_version = ? AND next_number = ?", project.ID, input.ProjectVersion, project.NextNumber).Update("next_number", number)
+		if update.Error != nil {
+			return BatchResult{}, update.Error
+		}
+		if update.RowsAffected != 1 {
+			return BatchResult{}, ErrConflict
+		}
+	}
+	return batchView(tx, batch.ID)
 }

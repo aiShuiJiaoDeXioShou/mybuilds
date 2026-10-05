@@ -24,10 +24,11 @@ func projectInputFlags(cmd *cobra.Command) {
 	}
 	cmd.Flags().String("framework", "", "构建框架native/flutter")
 	cmd.Flags().String("platform", "", "android/ios或android,ios")
-	cmd.Flags().Bool("hook", false, "当前未实现")
+	cmd.Flags().Bool("hook", false, "启用独立Webhook凭据")
+	cmd.Flags().String("hook-repository-key", "", "Webhook仓库身份")
 }
 func localProjectInput(cmd *cobra.Command, name string) (store.ProjectInput, error) {
-	for _, flag := range []string{"hook", "poll", "schedule"} {
+	for _, flag := range []string{"poll", "schedule"} {
 		if cmd.Flags().Changed(flag) {
 			return store.ProjectInput{}, errors.New("项目绑定方案与自动触发尚未支持")
 		}
@@ -71,6 +72,20 @@ func localProjectInput(cmd *cobra.Command, name string) (store.ProjectInput, err
 		}
 		input.Settings = config.ProjectSettings{Pipeline: &config.PipelineSettings{Source: "repo", File: file}}
 	}
+	if cmd.Flags().Changed("hook") || cmd.Flags().Changed("hook-repository-key") {
+		enabled, _ := cmd.Flags().GetBool("hook")
+		key, _ := cmd.Flags().GetString("hook-repository-key")
+		if key == "" {
+			return input, errors.New("需要hook-repository-key")
+		}
+		input.Settings.Hook = &config.HookSettings{Enabled: enabled, RepositoryKey: key}
+	}
+	if input.Settings.Hook != nil && input.Settings.Hook.Enabled && input.Settings.Hook.Secret == "" {
+		json, _ := cmd.Flags().GetBool("json")
+		if !json {
+			return input, errors.New("一次密钥响应需要json输出")
+		}
+	}
 	if cmd.Flags().Changed("platform") {
 		framework, _ := cmd.Flags().GetString("framework")
 		platform, _ := cmd.Flags().GetString("platform")
@@ -97,9 +112,17 @@ func newProjectCommand() *cobra.Command {
 			return err
 		}
 		return withStore(cmd, func(db *store.Store) error {
-			value, err := db.CreateProject(cmd.Context(), localAdmin, input)
+			filename, _ := cmd.Flags().GetString("config")
+			cfg, e := config.LoadServer(config.ServerLoadOptions{Filename: filename, Explicit: cmd.Flags().Changed("config")})
+			if e != nil {
+				return e
+			}
+			value, hook, err := control.New(db, cfg).CreateProject(cmd.Context(), localAdmin, input)
 			if err != nil {
 				return err
+			}
+			if hook != nil {
+				return managementOutput(cmd, control.ProjectConfigured{ProjectView: control.ProjectSummary(value), Webhook: hook}, nil, nil)
 			}
 			return localProjectOutput(cmd, value)
 		})
@@ -115,7 +138,25 @@ func newProjectCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		if settings.Hook != nil && settings.Hook.Enabled && settings.Hook.Secret == "" {
+			json, _ := cmd.Flags().GetBool("json")
+			if !json {
+				return errors.New("一次密钥响应需要json输出")
+			}
+		}
 		return withStore(cmd, func(db *store.Store) error {
+			if settings.Hook != nil || settings.Triggers != nil {
+				filename, _ := cmd.Flags().GetString("config")
+				cfg, e := config.LoadServer(config.ServerLoadOptions{Filename: filename, Explicit: cmd.Flags().Changed("config")})
+				if e != nil {
+					return e
+				}
+				v, e := control.New(db, cfg).ConfigureWebhook(cmd.Context(), localAdmin, args[0], settings, false)
+				if e != nil {
+					return e
+				}
+				return managementOutput(cmd, v, nil, nil)
+			}
 			value, err := db.SetProjectSettings(cmd.Context(), localAdmin, args[0], settings)
 			if err != nil {
 				return err
@@ -170,6 +211,6 @@ func newProjectCommand() *cobra.Command {
 	remove := &cobra.Command{Use: "rm <name>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return withStore(cmd, func(db *store.Store) error { return db.DeleteProject(cmd.Context(), localAdmin, args[0]) })
 	}}
-	project.AddCommand(add, set, list, move, remove)
+	project.AddCommand(add, set, list, move, remove, newLocalHookCommand())
 	return project
 }

@@ -9,11 +9,14 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"mybuilds/internal/config"
 	"mybuilds/internal/mobile"
+	"mybuilds/internal/protocol"
 )
 
 type PreviewOptions struct {
+	Changes     *protocol.ChangeFacts
 	Names       []string
 	All         bool
 	Params      map[string]string
@@ -73,6 +76,9 @@ var referenceName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Preview 完整校验所选构建后生成纯数据；Facts 是唯一的运行上下文来源。
 func Preview(document *config.Document, options PreviewOptions) (*PreviewPlan, error) {
+	if !protocol.ValidateChanges(options.Changes, options.Facts["git.sha"]) {
+		return nil, fmt.Errorf("changes: 冻结事实无效")
+	}
 	document = validationCopy(document)
 	if err := config.Validate(document); err != nil {
 		return nil, err
@@ -90,7 +96,7 @@ func Preview(document *config.Document, options PreviewOptions) (*PreviewPlan, e
 	}
 	plan := &PreviewPlan{Builds: make([]BuildPreview, 0, len(names)), SensitiveValuesHidden: true}
 	for i, name := range names {
-		b, err := previewBuild(document, name, params[i], options.Facts)
+		b, err := previewBuild(document, name, params[i], options.Facts, options.Changes)
 		if err != nil {
 			return nil, err
 		}
@@ -138,7 +144,7 @@ func validationCopy(document *config.Document) *config.Document {
 	return &d
 }
 
-func previewBuild(document *config.Document, name string, params, facts map[string]string) (BuildPreview, error) {
+func previewBuild(document *config.Document, name string, params, facts map[string]string, changes *protocol.ChangeFacts) (BuildPreview, error) {
 	build := document.Builds[name]
 	field := "builds." + name
 	context := make(map[string]string, len(facts)+1)
@@ -157,7 +163,7 @@ func previewBuild(document *config.Document, name string, params, facts map[stri
 			return BuildPreview{}, fmt.Errorf("%s.ios_signing: 系统产物目录需要签名与普通run", field)
 		}
 	}
-	state := evaluateWhen(build.When, params, facts)
+	state := WhenCondition(build.When, params, facts, changes)
 	// build.env 在每个步骤使用，step.name 引用有实际名称，不是缺失运行事实。
 	if len(build.Steps) != 0 {
 		context["step.name"] = stepName(build.Steps[0], 1)
@@ -193,7 +199,7 @@ func previewBuild(document *config.Document, name string, params, facts map[stri
 		b.Parameters = append(b.Parameters, ParameterPreview{Name: key, ValueHidden: true})
 	}
 	for i, step := range build.Steps {
-		s, err := previewStep(step, i+1, field+".steps", params, context, state)
+		s, err := previewStep(step, i+1, field+".steps", params, context, state, changes)
 		if err != nil {
 			return BuildPreview{}, err
 		}
@@ -211,7 +217,7 @@ func previewBuild(document *config.Document, name string, params, facts map[stri
 				phaseState = combine(phaseState, ConditionPreview{Condition: "pending", Reasons: []string{"收尾阶段等待构建结果"}})
 			}
 			for i, step := range phase.steps {
-				s, err := previewStep(step, i+1, field+".post."+phase.name, params, context, phaseState)
+				s, err := previewStep(step, i+1, field+".post."+phase.name, params, context, phaseState, changes)
 				if err != nil {
 					return BuildPreview{}, err
 				}
@@ -243,14 +249,14 @@ func stepName(step config.Step, index int) string {
 	return fmt.Sprintf("%s-%d", step.Kind, index)
 }
 
-func previewStep(step config.Step, index int, field string, params, context map[string]string, parent ConditionPreview) (StepPreview, error) {
+func previewStep(step config.Step, index int, field string, params, context map[string]string, parent ConditionPreview, changes *protocol.ChangeFacts) (StepPreview, error) {
 	name := stepName(step, index)
 	local := make(map[string]string, len(context)+1)
 	for key, value := range context {
 		local[key] = value
 	}
 	local["step.name"] = name
-	state := combine(parent, evaluateWhen(step.When, params, context))
+	state := combine(parent, WhenCondition(step.When, params, context, changes))
 	field = fmt.Sprintf("%s[%d]", field, index)
 	missing, err := checkEnv(step.Env, field+".env", params, local)
 	if err != nil {
@@ -297,12 +303,32 @@ func previewNotifications(notifications *config.Notifications, field string, par
 }
 
 func evaluateWhen(when *config.When, params, facts map[string]string) ConditionPreview {
+	return WhenCondition(when, params, facts, nil)
+}
+
+// WhenCondition让Server、Preview与唯一Run共享原字段AND/列表OR。
+func WhenCondition(when *config.When, params, facts map[string]string, changes *protocol.ChangeFacts) ConditionPreview {
 	state := ready()
 	if when == nil {
 		return state
 	}
 	if len(when.Changes) != 0 {
-		state.Reasons = append(state.Reasons, "changes: 手动预览忽略变更筛选")
+		if changes == nil {
+			state.Reasons = append(state.Reasons, "changes: 手动预览忽略变更筛选")
+		} else if changes.Mode == "diff" {
+			matched := false
+			for _, pattern := range when.Changes {
+				for _, file := range changes.Paths {
+					ok, _ := doublestar.Match(pattern, file)
+					matched = matched || ok
+				}
+			}
+			if !matched {
+				state = combine(state, ConditionPreview{Condition: "skipped", Reasons: []string{"变更条件不满足"}})
+			}
+		} else if changes.Mode != "full" {
+			state = combine(state, ConditionPreview{Condition: "pending", Reasons: []string{"变更事实待确定"}})
+		}
 	}
 	for _, key := range sortedKeys(when.Params) {
 		if params[key] != when.Params[key] {

@@ -235,7 +235,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return safeError(err)
 		}
 	}
-	if err := db.AutoMigrate(&groupRecord{}, &projectRecord{}, &identityRecord{}, &metadataRecord{}, &auditRecord{}, &batchRecord{}, &buildRecord{}, &stepRecord{}, &requestRecord{}, &nodeRecord{}, &nodeCredentialRecord{}, &nodeSessionRecord{}, &attemptRecord{}, &executionReceiptRecord{}, &stopConfirmationRecord{}, &logChunkRecord{}, &artifactRecord{}, &retentionPolicyRecord{}, &retentionJobRecord{}, &retentionObjectRecord{}, &evidenceReadRecord{}, &nodeResourceRecord{}, &nodeDeletionRecord{}, &nodeDeletionReceiptRecord{}, &applicationRecord{}, &publishIntentRecord{}, &applicationGuardRecord{}, &publishQueryRecord{}, &publishDecisionRecord{}, &approvalRecord{}); err != nil {
+	if err := db.AutoMigrate(&groupRecord{}, &projectRecord{}, &identityRecord{}, &metadataRecord{}, &auditRecord{}, &batchRecord{}, &buildRecord{}, &stepRecord{}, &requestRecord{}, &nodeRecord{}, &nodeCredentialRecord{}, &nodeSessionRecord{}, &attemptRecord{}, &executionReceiptRecord{}, &stopConfirmationRecord{}, &logChunkRecord{}, &artifactRecord{}, &retentionPolicyRecord{}, &retentionJobRecord{}, &retentionObjectRecord{}, &evidenceReadRecord{}, &nodeResourceRecord{}, &nodeDeletionRecord{}, &nodeDeletionReceiptRecord{}, &applicationRecord{}, &publishIntentRecord{}, &applicationGuardRecord{}, &publishQueryRecord{}, &publishDecisionRecord{}, &approvalRecord{}, &webhookPolicyRecord{}, &webhookWindowRecord{}, &webhookEventRecord{}, &webhookAliasRecord{}); err != nil {
 		return safeError(err)
 	}
 	if err := db.Exec("DROP INDEX IF EXISTS build_active_name").Error; err != nil {

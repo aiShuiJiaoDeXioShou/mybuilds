@@ -74,6 +74,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, s.evidenceReadError)
 		return
 	}
+	if len(parts) == 2 && parts[0] == "hook" {
+		s.receiveWebhook(w, r, parts[1])
+		return
+	}
 	authorization := r.Header.Values("Authorization")
 	if len(authorization) != 1 || !strings.HasPrefix(authorization[0], "Bearer ") || strings.ContainsAny(strings.TrimPrefix(authorization[0], "Bearer "), " \t\r\n") {
 		writeError(w, store.ErrUnauthorized)
@@ -117,6 +121,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	if s.publishRoutes(w, r, actor) {
 		return
 	}
+	if s.hookRoutes(w, r, actor) {
+		return
+	}
 	if s.nodeRoutes(w, r, actor) {
 		return
 	}
@@ -158,11 +165,17 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	defer ticker.Stop()
 	retentionTicker := time.NewTicker(60 * time.Second)
 	defer retentionTicker.Stop()
+	hookTicker := time.NewTicker(time.Second)
+	defer hookTicker.Stop()
+	var hookDone chan error
 	var retentionDone chan error
 	defer func() {
 		cancel()
 		if retentionDone != nil {
 			<-retentionDone
+		}
+		if hookDone != nil {
+			<-hookDone
 		}
 	}()
 	var result error
@@ -175,6 +188,20 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 			return errors.New("server_listen_failed")
 		case <-live.Done():
 			result = nil
+		case <-hookTicker.C:
+			if hookDone != nil {
+				continue
+			}
+			hookDone = make(chan error, 1)
+			finished := hookDone
+			go func() { finished <- s.closeDueWebhookWindows(live) }()
+			continue
+		case err := <-hookDone:
+			hookDone = nil
+			if !errors.Is(err, store.ErrLockLost) {
+				continue
+			}
+			result = err
 		case <-retentionTicker.C:
 			if retentionDone != nil {
 				continue

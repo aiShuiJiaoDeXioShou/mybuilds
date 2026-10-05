@@ -113,6 +113,47 @@ mybuilds --config client.yml publish query-show QUERY_ID --json
 
 从本次安全审批结果填写精确ID/revision/digest，分别批准两个build；同内容重放应幂等，不能用第一次审批批准下一次。核对原节点恢复、原SHA/编号/报告/产物不变，Google internal实际可见、ASC实际构建应用/版本/编号对应。Apple明确App Review另按[011指南](../../specs/011-app-store/quickstart.md)改配置并提交新Git版本，保持默认automatic_release=false。
 
+## 两次审批与custom联合导航
+
+这一段验证自有接收端，不需要商店账号。联合自动门仍在执行，下面是操作步骤，不是通过记录；最终结果由对应validation登记。上文生成配置每个平台只有一次审批，不能把两个平台各一次算成同一build连续两次。
+
+沿[原custom三步骤示例](../custom/README.md)创建独立可信仓库与`custom-demo`项目，原`run`生成package、`artifact`收集，不改成另一套执行器。节点仍使用已注册的`flutter-android`。按[自有HTTPS接收端指南](custom/README.md)启动服务、声明`CUSTOM_ENDPOINT`与`SSL_CERT_FILE`并登记`manual_attested`应用归属；它仅确认自有服务与应用的人工声明，不证明外部商店真实性。在该配置的artifact和custom upload之间加入两个不同名称的步骤，提交此真实Git版本：
+
+```yaml
+  - kind: approval
+    name: first-review
+    notify: false
+  - kind: approval
+    name: second-review
+    notify: false
+```
+
+显式授权触发同一default build：
+
+```bash
+mybuilds --config client.yml trigger custom-demo --allow-upload \
+  --idempotency-key custom-two-approvals-001 --json
+mybuilds --config client.yml approvals --state pending --limit 20 --offset 0 --json
+mybuilds --config client.yml build show CUSTOM_BUILD_ID --json
+mybuilds --config client.yml approve CUSTOM_BUILD_ID --approval-id FIRST_APPROVAL_ID \
+  --revision FIRST_REVISION --checkpoint-digest FIRST_CHECKPOINT_DIGEST \
+  --note '已核对第一次原产物与证据' --json
+mybuilds --config client.yml approvals --state pending --limit 20 --offset 0 --json
+```
+
+原build恢复到第二次等待后，从新的安全审批视图抄录**第二个**ID/revision/digest，再执行相同approve命令但使用第二组字段；第一组请求的重放只对应第一次决定。核对同一build、编号、SHA、原节点及包摘要不变；每次等待释放容量，同名互斥仍保留。若在等待期间重启控制端/Agent，只读核对原checkpoint，不能重新checkout、重复run或从旧审批授新执行权。
+
+```bash
+mybuilds --config client.yml publish ls --project custom-demo --json
+mybuilds --config client.yml publish show CUSTOM_INTENT_ID --json
+mybuilds --config client.yml publish query CUSTOM_INTENT_ID --json
+mybuilds --config client.yml publish query-show CUSTOM_QUERY_ID --json
+```
+
+从实际返回填写原intent/query ID。接收端的原二进制与回执须关联该意图、授权、应用、版本、产物ID/大小/SHA；一次上传后metadata-only GET不读旧包路径、不发第二次POST。回执丢失保持unknown与应用保护，查询不足不能清锁，更不能借重试构建重发。custom查询是可信用户脚本，系统不将任意用户query称为已证明的GET-only协议。
+
+下文Webhook仍使用原`flutter-demo`的android/ios范围，默认internal不触发商店。custom示例的default不能套用其命名build列表。联合核对两库中的触发幂等、审批精确决定、来源快照、窗口与原发布保护；自有服务自动门不替代外部签名/商店/provider push人工验收。
+
 ## 集中验收清单
 
 | 场景 | 应观察的结果 |

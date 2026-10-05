@@ -97,6 +97,7 @@ func (s *Store) Retry(ctx context.Context, actor Actor, in RetryInput) (BatchRes
 			return ErrConflict
 		}
 		// frozenBuild已深解码原快照；新执行只改身份事实和收窄授权范围。
+		snapshot.AutomaticWindowID = ""
 		id := uuid.NewString()
 		number := project.NextNumber
 		snapshot.Facts["build.id"] = id
@@ -117,7 +118,7 @@ func (s *Store) Retry(ctx context.Context, actor Actor, in RetryInput) (BatchRes
 		}
 		sort.Strings(keys)
 		encodedKeys, _ := encode(keys)
-		row := buildRecord{ID: id, RetryOf: &original.ID, BatchID: newBatch.ID, ProjectID: project.ID, Number: &number, Name: original.Name, Status: "queued", SnapshotJSON: encoded, ParameterKeysJSON: encodedKeys, Condition: original.Condition, ReasonsJSON: original.ReasonsJSON, InitialBudgetNS: original.InitialBudgetNS, RemainingBudgetNS: original.InitialBudgetNS, PostBudgetNS: original.PostBudgetNS, CreatedAt: now}
+		row := buildRecord{ID: id, ComparisonKey: snapshot.ComparisonKey, RetryOf: &original.ID, BatchID: newBatch.ID, ProjectID: project.ID, Number: &number, Name: original.Name, Status: "queued", SnapshotJSON: encoded, ParameterKeysJSON: encodedKeys, Condition: original.Condition, ReasonsJSON: original.ReasonsJSON, InitialBudgetNS: original.InitialBudgetNS, RemainingBudgetNS: original.InitialBudgetNS, PostBudgetNS: original.PostBudgetNS, CreatedAt: now}
 		if err = tx.Create(&row).Error; err != nil {
 			return err
 		}

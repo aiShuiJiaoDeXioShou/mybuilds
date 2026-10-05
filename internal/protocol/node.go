@@ -64,6 +64,7 @@ type ClaimRequest struct {
 	ClaimKey  string `json:"claim_key"`
 }
 type TaskSnapshot struct {
+	Changes      *ChangeFacts            `json:"changes,omitempty"`
 	Resume       *ApprovalResumeEvidence `json:"resume,omitempty"`
 	Project      string                  `json:"project"`
 	BuildName    string                  `json:"build_name"`

@@ -49,6 +49,7 @@ type preparedBuild struct {
 }
 
 type runPreparation struct {
+	changes *protocol.ChangeFacts
 	resume  *ApprovalResume
 	ctx     context.Context
 	root    string
@@ -81,6 +82,13 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 			return nil, errors.New("远程运行权已失效")
 		}
 	}
+	targetSHA := options.Facts["git.sha"]
+	if options.Remote != nil {
+		targetSHA = options.Remote.Facts["git.sha"]
+	}
+	if !protocol.ValidateChanges(options.Changes, targetSHA) {
+		return nil, errors.New("changes: 冻结事实无效")
+	}
 	document = validationCopy(document)
 	if err := config.Validate(document); err != nil {
 		return nil, err
@@ -112,7 +120,7 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 	if _, err = runDirectory(root, "."); err != nil {
 		return nil, err
 	}
-	p := runPreparation{ctx: ctx, root: root, facts: map[string]string{}, tried: map[string]bool{}, remote: remote, resume: options.Resume}
+	p := runPreparation{changes: options.Changes, ctx: ctx, root: root, facts: map[string]string{}, tried: map[string]bool{}, remote: remote, resume: options.Resume}
 	if remote != nil {
 		for _, key := range []string{"project", "build.id", "build.number", "node.name", "git.sha", "git.branch"} {
 			if value, ok := remote.options.Facts[key]; ok {
@@ -148,7 +156,7 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 	}
 	// 所有模板（包括未显示步骤、post 和公共通知）先按共享规则检查。
 	for i, name := range names {
-		if _, err = previewBuild(document, name, parameters[i], p.facts); err != nil {
+		if _, err = previewBuild(document, name, parameters[i], p.facts, p.changes); err != nil {
 			return nil, err
 		}
 	}
@@ -461,10 +469,10 @@ func (p *runPreparation) build(name string, build *config.Build, params map[stri
 }
 
 func (p *runPreparation) condition(parent ConditionPreview, when *config.When, params map[string]string) (ConditionPreview, error) {
-	state := combine(parent, evaluateWhen(when, params, p.facts))
+	state := combine(parent, WhenCondition(when, params, p.facts, p.changes))
 	if state.Condition == "pending" {
 		p.fact("git.branch")
-		state = combine(parent, evaluateWhen(when, params, p.facts))
+		state = combine(parent, WhenCondition(when, params, p.facts, p.changes))
 	}
 	if state.Condition == "pending" {
 		return state, errors.New("when: 无法可靠确定本地分支")

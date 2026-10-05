@@ -118,8 +118,8 @@
 - [x] T058 （root）同步 README.md、docs/plans/DELIVERY.md、docs/IMPLEMENTATION_HISTORY.md、specs/014-release-approval/quickstart.md 实际入口/能力/限制；自动实现门与用户人工门明确分开，不宣称真实商店/Apple全门或MVP已验收（FR-006,FR-029,FR-030；SC-008）。
 - [x] T059 （root）正式speckit-converge以 specs/014-release-approval/spec.md、specs/014-release-approval/plan.md、specs/014-release-approval/tasks.md 稳定FR/SC/AC对真实源码/证据闭环，缺口回implement再验；结果记 specs/014-release-approval/validation.md，不能靠checkbox推断完成（FR-029；SC-008）。
 - [x] T060 （root）在 specs/014-release-approval/tasks.md、specs/014-release-approval/validation.md 仅凭真实验收勾完成，检查前置交付与未知材料/012custom/020后续联合门，blocking缺口不得提交（FR-029,FR-030；SC-008）。
-- [ ] T061 （root）依AGENTS/git-commit-message检查仅相关差异，必要自动门/converge及人工指南就绪后Root一次本地提交不push；交付hash/message关联 specs/014-release-approval/validation.md，避免提交后自改文件造成dirty（FR-029；SC-008）。
-- [ ] T062 （root）交付 specs/014-release-approval/validation.md、提交hash/message/真实验收与后续012/custom/020联合门追踪，不以局部完成宣称全MVP完成（FR-029,FR-030；SC-008）。
+- [x] T061 （root）依AGENTS/git-commit-message检查仅相关差异，必要自动门/converge及人工指南就绪后Root一次本地提交不push；交付hash/message关联 specs/014-release-approval/validation.md，避免提交后自改文件造成dirty（FR-029；SC-008）。
+- [x] T062 （root）交付 specs/014-release-approval/validation.md、提交hash/message/真实验收与后续012/custom/020联合门追踪，不以局部完成宣称全MVP完成（FR-029,FR-030；SC-008）。
 
 ## Dependencies & Execution Order
 

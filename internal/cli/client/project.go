@@ -25,10 +25,11 @@ func remoteProjectFlags(cmd *cobra.Command) {
 	}
 	cmd.Flags().String("framework", "", "构建框架native/flutter")
 	cmd.Flags().String("platform", "", "android/ios或android,ios")
-	cmd.Flags().Bool("hook", false, "当前未实现")
+	cmd.Flags().Bool("hook", false, "启用独立Webhook凭据")
+	cmd.Flags().String("hook-repository-key", "", "Webhook仓库身份")
 }
 func remoteProjectInput(cmd *cobra.Command, name string) (server.ProjectRequest, error) {
-	for _, flag := range []string{"hook", "poll", "schedule"} {
+	for _, flag := range []string{"poll", "schedule"} {
 		if cmd.Flags().Changed(flag) {
 			return server.ProjectRequest{}, errors.New("项目绑定方案与自动触发尚未支持")
 		}
@@ -72,6 +73,20 @@ func remoteProjectInput(cmd *cobra.Command, name string) (server.ProjectRequest,
 		}
 		input.Settings = config.ProjectSettings{Pipeline: &config.PipelineSettings{Source: "repo", File: file}}
 	}
+	if cmd.Flags().Changed("hook") || cmd.Flags().Changed("hook-repository-key") {
+		enabled, _ := cmd.Flags().GetBool("hook")
+		key, _ := cmd.Flags().GetString("hook-repository-key")
+		if key == "" {
+			return input, errors.New("需要hook-repository-key")
+		}
+		input.Settings.Hook = &config.HookSettings{Enabled: enabled, RepositoryKey: key}
+	}
+	if input.Settings.Hook != nil && input.Settings.Hook.Enabled && input.Settings.Hook.Secret == "" {
+		json, _ := cmd.Flags().GetBool("json")
+		if !json {
+			return input, errors.New("一次密钥响应需要json输出")
+		}
+	}
 	if cmd.Flags().Changed("platform") {
 		framework, _ := cmd.Flags().GetString("framework")
 		platform, _ := cmd.Flags().GetString("platform")
@@ -96,11 +111,11 @@ func newRemoteProjectCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		var result server.ProjectView
+		var result server.ProjectConfigured
 		if err := remoteRequest(cmd, http.MethodPost, "/api/projects", input, &result, ""); err != nil {
 			return err
 		}
-		return remoteOutput(cmd, result, []string{"ID", "NAME", "GROUP", "NEXT"}, [][]string{projectRow(result)})
+		return remoteOutput(cmd, result, []string{"ID", "NAME", "GROUP", "NEXT"}, [][]string{projectRow(result.ProjectView)})
 	}}
 	remoteProjectFlags(init)
 	init.Flags().Bool("json", false, "输出JSON")
@@ -113,13 +128,19 @@ func newRemoteProjectCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		var result server.ProjectView
+		if settings.Hook != nil && settings.Hook.Enabled && settings.Hook.Secret == "" {
+			json, _ := cmd.Flags().GetBool("json")
+			if !json {
+				return errors.New("一次密钥响应需要json输出")
+			}
+		}
+		var result server.ProjectConfigured
 		if err := remoteRequest(cmd, http.MethodPatch, "/api/projects/"+url.PathEscape(args[0]), struct {
 			Settings config.ProjectSettings `json:"settings"`
 		}{settings}, &result, ""); err != nil {
 			return err
 		}
-		return remoteOutput(cmd, result, []string{"ID", "NAME", "GROUP", "NEXT"}, [][]string{projectRow(result)})
+		return remoteOutput(cmd, result, []string{"ID", "NAME", "GROUP", "NEXT"}, [][]string{projectRow(result.ProjectView)})
 	}}
 	set.Flags().String("settings", "", "本地settings文件")
 	set.Flags().Bool("json", false, "输出JSON")
@@ -167,6 +188,6 @@ func newRemoteProjectCommand() *cobra.Command {
 	remove := &cobra.Command{Use: "rm <name>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return remoteRequest(cmd, http.MethodDelete, "/api/projects/"+url.PathEscape(args[0]), nil, nil, "")
 	}}
-	project.AddCommand(newProjectAppCommand(), init, set, list, move, remove)
+	project.AddCommand(newProjectAppCommand(), init, set, list, move, remove, newProjectHookCommand())
 	return project
 }

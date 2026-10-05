@@ -99,81 +99,93 @@ func validFile(file string) bool {
 	return true
 }
 
-// ReadPipeline只读来源；每请求自有bare目录，避免共享引用与并发锁层。
-func ReadPipeline(parent context.Context, options Options) (snapshot Snapshot, err error) {
-	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
-	defer cancel()
+// repositoryRead只属于一次真实固定SHA读取；关闭只清理自己创建的目录。
+type repositoryRead struct {
+	runner               gitRunner
+	sha, workspace, base string
+	owned, baseInfo      os.FileInfo
+}
+
+func (opened *repositoryRead) Close() error {
+	if opened.runner.cleanupFailed {
+		return failure("cleanup_failed")
+	}
+	now, e := os.Lstat(opened.workspace)
+	parent, f := os.Lstat(opened.base)
+	if e != nil || f != nil || !os.SameFile(now, opened.owned) || !os.SameFile(parent, opened.baseInfo) || os.RemoveAll(opened.workspace) != nil {
+		return failure("cleanup_failed")
+	}
+	return nil
+}
+func openRepository(ctx context.Context, options Options) (opened *repositoryRead, err error) {
 	if ctx.Err() != nil {
-		return Snapshot{}, contextFailure(ctx)
+		return nil, contextFailure(ctx)
 	}
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
-		return Snapshot{}, failure("platform_unsupported")
+		return nil, failure("platform_unsupported")
 	}
 	protocol, e := sourceProtocol(options.Repository)
-	if e != nil || (options.FileMode != "" && options.FileMode != "required" && options.FileMode != "optional" && options.FileMode != "none") || !validFile(options.File) || options.Branch == "" || len(options.Branch) > 1024 || controls(options.Branch) || (options.Ref != "" && !fullOID.MatchString(options.Ref)) {
-		return Snapshot{}, failure("input_invalid")
+	if e != nil || options.Branch == "" || len(options.Branch) > 1024 || controls(options.Branch) || (options.Ref != "" && !fullOID.MatchString(options.Ref)) {
+		return nil, failure("input_invalid")
 	}
 	if options.DataDir == "" {
-		return Snapshot{}, failure("cache_failed")
+		return nil, failure("cache_failed")
 	}
 	dataDir, e := filepath.Abs(options.DataDir)
 	if e == nil {
 		dataDir, e = filepath.EvalSymlinks(dataDir)
 	}
 	if e != nil {
-		return Snapshot{}, failure("cache_failed")
+		return nil, failure("cache_failed")
 	}
 	base := filepath.Join(dataDir, "scm")
 	if os.Mkdir(base, 0700) != nil {
 		info, e := os.Lstat(base)
 		if e != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0700 {
-			return Snapshot{}, failure("cache_failed")
+			return nil, failure("cache_failed")
 		}
 	}
 	baseInfo, e := os.Lstat(base)
 	if e != nil {
-		return Snapshot{}, failure("cache_failed")
+		return nil, failure("cache_failed")
 	}
 	workspace, e := os.MkdirTemp(base, "read-")
 	if e != nil {
-		return Snapshot{}, failure("cache_failed")
+		return nil, failure("cache_failed")
 	}
 	owned, e := os.Lstat(workspace)
 	if e != nil {
-		return Snapshot{}, failure("cache_failed")
+		return nil, failure("cache_failed")
 	}
-	runner := gitRunner{dir: workspace}
+	opened = &repositoryRead{runner: gitRunner{dir: workspace}, workspace: workspace, base: base, owned: owned, baseInfo: baseInfo}
+	ownedRead := opened
+	success := false
 	defer func() {
-		if runner.cleanupFailed {
-			snapshot = Snapshot{}
-			err = failure("cleanup_failed")
-			return
-		}
-		now, firstErr := os.Lstat(workspace)
-		parentInfo, secondErr := os.Lstat(base)
-		if firstErr != nil || secondErr != nil || !os.SameFile(now, owned) || !os.SameFile(parentInfo, baseInfo) || os.RemoveAll(workspace) != nil {
-			snapshot = Snapshot{}
-			err = failure("cleanup_failed")
+		if !success {
+			if cleanup := ownedRead.Close(); cleanup != nil {
+				err = cleanup
+			}
 		}
 	}()
+	runner := &opened.runner
 	var sshEnv map[string]string
 	if protocol == "ssh" {
 		sshEnv, e = sshEnvironment(workspace, options.SecretsFile)
 		if e != nil {
-			return Snapshot{}, e
+			return nil, e
 		}
 	}
-	runner, e = prepareGitRunner(workspace, protocol, sshEnv)
+	*runner, e = prepareGitRunner(workspace, protocol, sshEnv)
 	if e != nil {
-		return Snapshot{}, e
+		return nil, e
 	}
 	refName := "refs/heads/" + options.Branch
 	if _, _, e = runner.run(ctx, 32<<10, "check-ref-format", refName); e != nil {
-		return Snapshot{}, e
+		return nil, e
 	}
 	remote, _, e := runner.run(ctx, 32<<10, "ls-remote", "--refs", "--exit-code", "--", options.Repository, refName)
 	if e != nil {
-		return Snapshot{}, e
+		return nil, e
 	}
 	format := ""
 	matched := 0
@@ -182,7 +194,7 @@ func ReadPipeline(parent context.Context, options Options) (snapshot Snapshot, e
 		if len(fields) == 2 && fields[1] == refName {
 			matched++
 			if !fullOID.MatchString(fields[0]) {
-				return Snapshot{}, failure("git_failed")
+				return nil, failure("git_failed")
 			}
 			format = "sha1"
 			if len(fields[0]) == 64 {
@@ -191,36 +203,36 @@ func ReadPipeline(parent context.Context, options Options) (snapshot Snapshot, e
 		}
 	}
 	if matched != 1 {
-		return Snapshot{}, failure("branch_missing")
+		return nil, failure("branch_missing")
 	}
 	if options.Ref != "" && ((format == "sha1" && len(options.Ref) != 40) || (format == "sha256" && len(options.Ref) != 64)) {
-		return Snapshot{}, failure("ref_invalid")
+		return nil, failure("ref_invalid")
 	}
 	_, _, e = runner.run(ctx, 32<<10, "init", "--bare", "--object-format="+format, "--template="+filepath.Join(workspace, "empty"), filepath.Join(workspace, "repo.git"))
 	if e != nil {
-		return Snapshot{}, e
+		return nil, e
 	}
 	runner.prefix = append(runner.prefix, "--git-dir="+filepath.Join(workspace, "repo.git"))
 	_, _, e = runner.run(ctx, 32<<10, "fetch", "--quiet", "--no-tags", "--no-recurse-submodules", "--no-auto-maintenance", "--no-write-fetch-head", "--", options.Repository, "+"+refName+":refs/mybuilds/branch")
 	if e != nil {
-		return Snapshot{}, e
+		return nil, e
 	}
 	headData, _, e := runner.run(ctx, 32<<10, "rev-parse", "--verify", "--end-of-options", "refs/mybuilds/branch")
 	if e != nil {
-		return Snapshot{}, e
+		return nil, e
 	}
 	head := strings.TrimSpace(string(headData))
 	if !fullOID.MatchString(head) {
-		return Snapshot{}, failure("git_failed")
+		return nil, failure("git_failed")
 	}
 	// merge-base会自动剥tag；先确认固定分支HEAD本身就是commit。
 	if options.Ref != "" {
 		headKind, _, headErr := runner.run(ctx, 32<<10, "cat-file", "-t", head)
 		if headErr != nil {
-			return Snapshot{}, headErr
+			return nil, headErr
 		}
 		if strings.TrimSpace(string(headKind)) != "commit" {
-			return Snapshot{}, failure("ref_invalid")
+			return nil, failure("ref_invalid")
 		}
 	}
 	selected := head
@@ -230,17 +242,40 @@ func ReadPipeline(parent context.Context, options Options) (snapshot Snapshot, e
 	kind, _, e := runner.run(ctx, 32<<10, "cat-file", "-t", selected)
 	if e != nil || strings.TrimSpace(string(kind)) != "commit" {
 		if ctx.Err() != nil {
-			return Snapshot{}, contextFailure(ctx)
+			return nil, contextFailure(ctx)
 		}
-		return Snapshot{}, failure("ref_invalid")
+		return nil, failure("ref_invalid")
 	}
 	_, exit, e := runner.run(ctx, 32<<10, "merge-base", "--is-ancestor", selected, head)
 	if e != nil {
 		if exit == 1 {
-			return Snapshot{}, failure("ref_unreachable")
+			return nil, failure("ref_unreachable")
 		}
-		return Snapshot{}, e
+		return nil, e
 	}
+	opened.sha = selected
+	success = true
+	return opened, nil
+}
+
+// ReadPipeline只读来源；每请求自有bare目录，避免共享引用与并发锁层。
+func ReadPipeline(parent context.Context, options Options) (snapshot Snapshot, err error) {
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+	defer cancel()
+	if (options.FileMode != "" && options.FileMode != "required" && options.FileMode != "optional" && options.FileMode != "none") || !validFile(options.File) {
+		return Snapshot{}, failure("input_invalid")
+	}
+	opened, err := openRepository(ctx, options)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	defer func() {
+		if e := opened.Close(); e != nil {
+			snapshot = Snapshot{}
+			err = e
+		}
+	}()
+	runner, selected := &opened.runner, opened.sha
 	if options.FileMode == "none" {
 		return Snapshot{SHA: selected, File: options.File}, nil
 	}
@@ -310,12 +345,15 @@ type gitRunner struct {
 }
 
 func (runner *gitRunner) run(ctx context.Context, limit int, args ...string) ([]byte, int, error) {
+	return runner.runInput(ctx, limit, nil, args...)
+}
+func (runner *gitRunner) runInput(ctx context.Context, limit int, input []byte, args ...string) ([]byte, int, error) {
 	stdout := &boundedBuffer{limit: limit}
 	stderr := &boundedBuffer{limit: 32 << 10}
 	if runner.combinedLimit {
 		stderr = stdout
 	}
-	result := process.Run(ctx, process.Command{Path: runner.path, Args: append(append([]string{}, runner.prefix...), args...), Dir: runner.dir, Env: runner.env}, stdout, stderr)
+	result := process.Run(ctx, process.Command{Path: runner.path, Args: append(append([]string{}, runner.prefix...), args...), Dir: runner.dir, Env: runner.env, Stdin: input}, stdout, stderr)
 	if result.CleanupFailed {
 		runner.cleanupFailed = true
 		return nil, result.ExitCode, failure("cleanup_failed")

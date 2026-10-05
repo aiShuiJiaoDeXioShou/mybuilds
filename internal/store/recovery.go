@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
+	"mybuilds/internal/protocol"
 )
 
 // Recover只核对已有持久证据，成功前不改变任何可调度身份；不会恢复旧动作。
@@ -117,6 +118,9 @@ func frozenBuild(db *gorm.DB, row buildRecord) (BuildSnapshot, []stepRecord, err
 	}
 	if !validName(row.Name) || !validList(snapshot.AllowedNodes, 128, validName) || snapshot.DefaultNode != "" && !slices.Contains(snapshot.AllowedNodes, snapshot.DefaultNode) {
 		return snapshot, nil, errDatabase
+	}
+	if !protocol.ValidateChanges(snapshot.Changes, batch.SHA) {
+		return BuildSnapshot{}, nil, errDatabase
 	}
 	if snapshot.Facts["project"] != project.Name || snapshot.Facts["build.name"] != row.Name || snapshot.Facts["build.id"] != row.ID || snapshot.Facts["git.sha"] != batch.SHA || snapshot.Facts["git.branch"] != batch.Branch || row.Number == nil || *row.Number <= 0 || snapshot.Facts["build.number"] != strconv.FormatInt(*row.Number, 10) {
 		return snapshot, nil, errDatabase

@@ -27,6 +27,8 @@ type TokenView struct {
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 }
 type ProjectInput struct {
+	ID                                             string
+	PreparedHook                                   *WebhookPolicy
 	Name, Group, Repository, Provider, DefaultNode string
 	Branches, AllowedNodes                         []string
 	BuildNumberStart                               int64
@@ -50,16 +52,20 @@ type EnqueueInput struct {
 	ProjectVersion                                              int64
 	Key, RequestDigest, SHA, Branch, Source, File, SourceDigest string
 	HasUpload, AllowUpload                                      bool
+	SelectedBuilds                                              []string
 	Builds                                                      []PreparedBuild
 }
 type BuildSnapshot struct {
-	Origin        *PipelineOrigin `json:"origin,omitempty"`
-	Definition    config.Build
-	Params, Facts map[string]string
-	Condition     string
-	Reasons       []string
-	AllowedNodes  []string
-	DefaultNode   string
+	Origin            *PipelineOrigin       `json:"origin,omitempty"`
+	Changes           *protocol.ChangeFacts `json:"changes,omitempty"`
+	ComparisonKey     string                `json:"comparison_key,omitempty"`
+	AutomaticWindowID string                `json:"automatic_window_id,omitempty"`
+	Definition        config.Build
+	Params, Facts     map[string]string
+	Condition         string
+	Reasons           []string
+	AllowedNodes      []string
+	DefaultNode       string
 }
 type PreparedBuild struct {
 	Name, Status, Reason string
@@ -94,8 +100,18 @@ type BuildFilter struct {
 	Project, Group, BuildName, BatchID, Status string
 	Page                                       Page
 }
+type ChangeSummary struct {
+	Mode            string `json:"mode"`
+	Reason          string `json:"reason,omitempty"`
+	BaselineBuildID string `json:"baseline_build_id,omitempty"`
+	BaselineSHA     string `json:"baseline_sha,omitempty"`
+	TargetSHA       string `json:"target_sha"`
+	PathCount       int    `json:"path_count"`
+	Digest          string `json:"digest"`
+}
 type BuildView struct {
 	PublishIDs            []string                 `json:"publish_ids,omitempty"`
+	Changes               *ChangeSummary           `json:"changes,omitempty"`
 	Origin                *PipelineOriginView      `json:"origin,omitempty"`
 	CurrentApprovalID     string                   `json:"current_approval_id,omitempty"`
 	ApprovalRevision      int64                    `json:"approval_revision,omitempty"`
@@ -205,6 +221,9 @@ type batchRecord struct {
 func (batchRecord) TableName() string { return "batches" }
 
 type buildRecord struct {
+	ComparisonKey                                            string  `gorm:"not null;default:'';index"`
+	SemanticKey                                              string  `gorm:"not null;default:'';index"`
+	AutomaticWindowID                                        string  `gorm:"not null;default:'';index"`
 	CurrentApprovalID                                        *string `gorm:"size:36;index"`
 	ResumeReason                                             string  `gorm:"not null;default:''"`
 	TerminalAt                                               *time.Time

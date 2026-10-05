@@ -10,7 +10,9 @@
 
 008 原快照重试、启动核对与终态只读核对已完成并验收，最终双库应用各36正例、此前负例及Linux普通/always中断检查通过；共享停止确认修复、真实ARM签名/中央下载/取消、全量test/race/vet及Spec Kit收敛通过。详情见[008验证](../../specs/008-build-recovery/validation.md)。
 
-整个 MVP 未完成。005 真实 Apple profile 与签名 archive/export 尚未验收，当前集成代码不提供 iOS 签名执行；Flutter、审批、发布、Webhook和保留策略等后续门不因 007 通过而放宽。当前生效 approval/upload/notifications 在执行前明确拒绝。019已接通本地与Agent报告检查、中央确认/封存/下载；双库各92应用检查点、20故障192断言、macOS/Linux与全量test/race/vet/12编译通过，Spec Kit收敛无缺口，已完成并验收，见[019验证](../../specs/019-test-reports/validation.md)。
+最终交付目标为16个MVP模块的代码与必要自动检查完成、收敛后本地提交。当前012/014/015已交付模块代码并进入最终串行集成，项目编译已通过；最终自动检查、两次审批/custom/Webhook的真实双库联合案例与审批运行中重启复核尚在执行，不能提前声明全部通过。005/009的iOS/Flutter执行代码与010/011商店适配已提供；合法Apple签名、真实商店及四外部来源push由用户集中人工验收，不声称已实际通过。013通知仍后置，不能将配置继承视为发送能力。019已接通本地与Agent报告检查、中央确认/封存/下载；双库各92应用检查点、20故障192断言、macOS/Linux与全量test/race/vet/12编译通过，Spec Kit收敛无缺口，已完成并验收，见[019验证](../../specs/019-test-reports/validation.md)。
+
+各功能代码、必要自动检查及Spec Kit收敛通过后可本地提交，人工材料待验不阻塞代码交付；源码缺口和失败检查仍须修复。最终全量集成检查集中运行一次，不反复执行未变更的历史套件。统一案例见[Flutter双平台集中验收](../../examples/mvp/acceptance.md)。
 
 ### 当前可运行入口
 
@@ -30,7 +32,7 @@
 
 中央仅公开已确认日志和校验后的制品；下载检查大小/SHA-256 后排他发布，不覆盖既有文件。Agent 离线后仍可下载中央已确认内容。日志跟随和下载具有独立预算，普通 API timeout 不截断流。serve 在线时同库本机管理拒绝，使用远程管理；第二控制端拒绝。
 
-同项目同名 build 串行，无 runner 仅使用 default_node，未匹配到授权平台/标签/容量时保持排队。drain 允许原任务续租但不领取新任务；disable/revoke/轮换撤销原执行权，不能再执行 always。取消与失联通过实际进程组回收/证据处理，不靠等待推断；停止未确认的 interrupted 保持 guard 和隔离，管理员完整 fence 的实际停止确认只解除保护，不改变原终态。显式retry创建新构建；审批或发布恢复仍属后续功能，不能用停止确认代替结果确认。
+同项目同名 build 串行，无 runner 仅使用 default_node，未匹配到授权平台/标签/容量时保持排队。drain 允许原任务续租但不领取新任务；disable/revoke/轮换撤销原执行权，不能再执行 always。取消与失联通过实际进程组回收/证据处理，不靠等待推断；停止未确认的 interrupted 保持 guard 和隔离，管理员完整 fence 的实际停止确认只解除保护，不改变原终态。显式retry创建原快照的新构建；审批在原节点用新lease续原下一步，不重放已完成动作；发布查询核对原意图，unknown不会自动重传。停止确认不能代替审批决定或发布结果确认。
 
 ## 实施步骤
 
@@ -104,7 +106,7 @@
 - [ ] Google Play 使用 fastlane supply，service account 认证，支持 internal 与显式 production
 - [ ] App Store 使用 fastlane deliver 与 API key，支持上传 IPA、显式提交审核及选择审核后自动发布；不把上传成功等同公开上架
 - [ ] custom 上传接用户命令/Fastfile，共用输入、结果文件、租约、取消、脱敏与未知结果确认
-- [ ] 授权后无可信回执默认 unknown 并保持应用锁；查询远端或由 admin 用 `resolve-upload` 确认依据，不自动重发，不能用停止确认代替
+- [ ] 授权后无可信回执默认 unknown 并保持应用锁；查询远端或由 admin 用 `publish confirm INTENT_ID --decision-file PRIVATE_JSON` 确认原意图，决定文件须为自有0600 JSON，绑定原intent/digest且有真实远端或未发送证据；查询不足仍保持unknown，不自动重发，不能用停止确认代替
 - [ ] 配置快照与上传产物绑定，审批后发布原产物，不重新构建
 - [ ] retention 清理终态构建（保留 N 个 / N 天），保护活动、待审批、停止未确认与未知上传任务，保留项目计数器/必要审计
 - [ ] MVP 项目 retention 按字段继承全局；中央删除保护已有下载，Agent 独立管理指令校验工作区/进程并幂等确认，离线保留待清理
@@ -134,8 +136,8 @@ Google Play/App Store 接入不自写完整市场协议；具体认证、默认�
 - `internal/config`：单/多 build 混写拒绝、名称选择与参数校验、未知字段 / 模板变量报错、env 字段插值、run 正文保留 `${VAR}`、引用的密钥缺失时报错、dry-run 无副作用
 - `internal/store`：**双驱动**跑同一套事务 / 构建号分配 / 去重 / 条件更新 / 分页用例；token 撤销后不得再次初始化
 - `internal/pipeline`：脚本参数与环境隔离、sh/bash、超时、工作目录越界拒绝、独立 shell；成功 / 失败 / 取消均收尾，分段日志中的密钥被脱敏，产物路径及符号链接不能越界
-- `internal/scm/hook.go`：**四种来源的签名校验**，含 GitHub HMAC 篡改 body 必须拒绝、错误 token 必须拒绝
-- `internal/server`：批量同 SHA/原子入队、统一计数不重复、同项目同名 build 串行及不同 build 并行、审批释放全局槽、重复事件只入队一次、同 SHA 不同参数可触发、轮询游标与入队同时提交
+- `internal/scm/hook.go`：**四种来源的固定认证校验**（GitHub/generic原body HMAC、GitLab/Gitee明确token模式），含 GitHub HMAC 篡改 body 必须拒绝、错误 token 必须拒绝
+- `internal/server`：批量同 SHA/原子入队、统一计数不重复、同项目同名 build 串行及不同 build 并行、审批释放全局槽、重复事件只入队一次、同 SHA 不同参数可触发；轮询游标与入队同时提交属于后续016
 - `internal/agent` / 节点协议：独立身份、双节点竞争、错误平台、租约过期、断网取消、幂等回报、日志与产物回传
 - 审批与发布：重复批准 / 取消不能覆盖终态；重启后原节点正确继续；未知上传结果不能自动重发
 - MVP 执行控制：when AND/OR、手动路径豁免、删除/重命名/公共目录、首构建与缺失基线、冻结事实重试；审批跳过不放行上传
@@ -146,15 +148,15 @@ Google Play/App Store 接入不自写完整市场协议；具体认证、默认�
 
 使用 [007 快速指南](../../specs/007-node-agents/quickstart.md) 创建自己的普通文件、0700 数据目录、数据库、端口、CA、token 与受信 Git 仓库，实际启动 Server/Client/Agent 三二进制。SQLite 与独立 PostgreSQL 数据库执行相同管理、固定 SHA、ordinary/post、20 次幂等触发、取消/guard、续租、日志/SSE、二进制制品下载、角色与第二控制端检查；记录 UTC、退出码、固定 SHA、实际 PID/PGID 和摘要。旧 journal 不重放，停止确认要求完整执行归属和实际停止依据；不得删除记录或改状态绕过保护。
 
-007 已有同套双库各 51 项实际应用结果及真实两 macOS + Linux 节点证据。以下真实构建与完整 MVP 项目仍是后续验收清单，不表示命令或能力已经交付。本地 approval 交互、审批 API/CLI、通知、Webhook、上传、retention 和 JUnit 尚未交付，不把模拟成功当成验收。
+007已有同套双库各51项实际应用结果及真实两macOS+Linux节点证据；019报告与020保留已完成实际联验，010/011代码与必要自动检查已提交。012/014/015已完成最终集成、必要自动检查与收敛，双库联合案例118项通过，结果已登记在对应validation中。以下清单保留用户集中验收范围，合法签名、真实商店与外部push结果仍待人工记录；通知013、轮询016不计本轮MVP交付。
 
-**真实构建验证**
+**集中人工案例与真实构建验证**
 
 1. 一个真 Android 工程：出 apk + aab + mapping.txt，versionCode 等于构建号，产物可下载并校验摘要
 2. 一个真 iOS 工程：archive → export → ipa + dSYM，签名有效（`codesign -dv` 校验）
 3. GitLab / GitHub / Gitee / 一个自建 Git 各连一次，push 触发成功；把某个 hook 的 secret 改错，确认被拒
-4. 轮询模式：手动在仓库推一次 commit，确认在间隔内被探测并触发
-5. 飞书官方 SDK：真实 Webhook 发消息成功，错误凭据 / 签名能报告失败，日志不泄露密钥
+4. 后续016轮询模式：手动在仓库推一次 commit，确认在间隔内被探测并触发
+5. 后续013飞书官方 SDK：真实 Webhook 发消息成功，错误凭据 / 签名能报告失败，日志不泄露密钥
 6. Android / iOS 取消与失败后无本次构建残留进程、临时 keychain；节点独立缓存且不共享构建工作区
 7. 两个真实节点执行不同项目，同项目同名 build 跨节点串行；iOS 不分配给 Linux，无合格节点明确排队
 8. 暂停原 Agent 后模拟过期回报，确认拒绝；审批后原节点离线不迁移，发布授权后失联不自动重发
@@ -178,6 +180,6 @@ Google Play/App Store 接入不自写完整市场协议；具体认证、默认�
 
 1. 一个控制端（Linux/macOS）管理多个 Agent。iOS 仅在 macOS 节点构建，Android 可在 Linux/macOS；客户端远程命令跨平台。
 2. 数据库默认 SQLite，支持 PostgreSQL；初期用 GORM `AutoMigrate` 建表，需要改名或回填时再增加显式版本迁移。
-3. 审批通知渠道按 飞书（oapi-sdk-go）/ 企业微信 / 钉钉 / 通用 webhook 实现，无内置邮件与短信；企微与钉钉机器人走 stdlib HTTP POST。
+3. 后续013通知渠道按 飞书（oapi-sdk-go）/ 企业微信 / 钉钉 / 通用 webhook 实现，无内置邮件与短信；企微与钉钉机器人走 stdlib HTTP POST。
 4. 构建号用「每项目自增整数」，首次注册允许指定兼容商店既有版本的起始值；应用版本由 YAML 参数或触发参数提供，一期忽略 tag 事件。
 5. 原生与 Flutter 模板及用户脚本进入 MVP；Google Play/App Store 与 custom upload 进入 MVP，平台与商店身份分别校验。

@@ -11,6 +11,10 @@ import (
 )
 
 type ProjectView struct {
+	HookEnabled    bool                `json:"hook_enabled"`
+	TriggerBuilds  []string            `json:"trigger_builds,omitempty"`
+	QuietPeriod    string              `json:"quiet_period,omitempty"`
+	AllowUpload    bool                `json:"allow_upload"`
 	ProfileNames   []string            `json:"profile_names"`
 	ParameterKeys  map[string][]string `json:"parameter_keys"`
 	ID             string              `json:"id"`
@@ -66,7 +70,18 @@ func ProjectSummary(p store.Project) ProjectView {
 	}
 	slices.Sort(profiles)
 	profiles = slices.Compact(profiles)
-	return ProjectView{ProfileNames: profiles, ParameterKeys: parameters, ID: p.ID, Name: p.Name, GroupID: p.GroupID, Group: p.GroupName, Provider: p.Provider, Branches: p.Branches, Nodes: p.AllowedNodes, DefaultNode: p.DefaultNode, PipelineSource: source, PipelineFile: file, NextNumber: p.NextNumber, CreatedAt: p.CreatedAt.UTC(), UpdatedAt: p.UpdatedAt.UTC()}
+	enabled := p.Settings.Hook != nil && p.Settings.Hook.Enabled
+	names := []string{}
+	quiet := "0s"
+	allow := false
+	if p.Settings.Triggers != nil {
+		names = p.Settings.Triggers.Builds
+		if p.Settings.Triggers.QuietPeriod != "" {
+			quiet = p.Settings.Triggers.QuietPeriod
+		}
+		allow = p.Settings.Triggers.AllowUpload
+	}
+	return ProjectView{ProfileNames: profiles, ParameterKeys: parameters, HookEnabled: enabled, TriggerBuilds: names, QuietPeriod: quiet, AllowUpload: allow, ID: p.ID, Name: p.Name, GroupID: p.GroupID, Group: p.GroupName, Provider: p.Provider, Branches: p.Branches, Nodes: p.AllowedNodes, DefaultNode: p.DefaultNode, PipelineSource: source, PipelineFile: file, NextNumber: p.NextNumber, CreatedAt: p.CreatedAt.UTC(), UpdatedAt: p.UpdatedAt.UTC()}
 }
 
 type ProjectRequest struct {
@@ -204,12 +219,12 @@ func (s *Server) management(w http.ResponseWriter, r *http.Request, actor store.
 					writeError(w, store.ErrInvalid)
 					return
 				}
-				project, err := s.store.CreateProject(r.Context(), actor, store.ProjectInput{Name: input.Name, Repository: input.Repository, Provider: input.Provider, Group: input.Group, Branches: input.Branches, AllowedNodes: input.Nodes, DefaultNode: input.DefaultNode, BuildNumberStart: input.BuildNumberStart, Settings: input.Settings})
+				project, hook, err := s.CreateProject(r.Context(), actor, store.ProjectInput{Name: input.Name, Repository: input.Repository, Provider: input.Provider, Group: input.Group, Branches: input.Branches, AllowedNodes: input.Nodes, DefaultNode: input.DefaultNode, BuildNumberStart: input.BuildNumberStart, Settings: input.Settings})
 				if err != nil {
 					writeError(w, err)
 					return
 				}
-				writeJSON(w, 201, ProjectSummary(project))
+				writeJSON(w, 201, ProjectConfigured{ProjectView: ProjectSummary(project), Webhook: hook})
 				return
 			}
 		case http.MethodPatch:
@@ -230,6 +245,20 @@ func (s *Server) management(w http.ResponseWriter, r *http.Request, actor store.
 				if input.Group != nil {
 					project, err = s.store.MoveProject(r.Context(), actor, name, *input.Group)
 				} else {
+					if hookSettingsPresent(*input.Settings) {
+						configured, e := s.ConfigureWebhook(r.Context(), actor, name, *input.Settings, false)
+						if e != nil {
+							writeError(w, e)
+							return
+						}
+						latest, e := s.store.GetProject(r.Context(), name)
+						if e != nil {
+							writeError(w, e)
+							return
+						}
+						writeJSON(w, 200, ProjectConfigured{ProjectView: ProjectSummary(latest), Webhook: &configured})
+						return
+					}
 					project, err = s.store.SetProjectSettings(r.Context(), actor, name, *input.Settings)
 				}
 				if err != nil {
@@ -397,4 +426,10 @@ func (s *Server) buildRoutes(w http.ResponseWriter, r *http.Request, actor store
 	}
 	writeJSON(w, 200, map[string]any{"items": items, "limit": page.Limit, "offset": page.Offset})
 	return true
+}
+
+// ProjectConfigured仅实际配置成功可一次返回自产凭据。
+type ProjectConfigured struct {
+	ProjectView
+	Webhook *WebhookConfigured `json:"webhook,omitempty"`
 }
