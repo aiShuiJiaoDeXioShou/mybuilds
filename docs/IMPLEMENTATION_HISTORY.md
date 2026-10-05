@@ -38,3 +38,5 @@ MVP 批次、真实验证与完成定义见 [执行计划](plans/MVP_EXECUTION.m
 
 
 2026-10-05实施依赖细化见MVP_EXECUTION：整功能真实验收门保持，缺Apple/商店材料时可在独立worktree准备不消费缺失前置的组件。005先规划当前基线最小移植；009按已验收004/007接口形成独立诊断/Android部分plan/tasks，iOS完整签名与双平台验收仍待005。不开放缺前置入口，不把分区实现或规划当功能交付。
+
+发布HTTP正文限额缺陷按Spec Kit bug-assess→fix→test完成：仅匹配发布路由后设置其64KiB上限，普通API保1MiB/413；原实际HTTP红→绿、发布相关回归与vet通过，见[缺陷记录](../.specify/bugs/publish-route-body-limit/test.md)。

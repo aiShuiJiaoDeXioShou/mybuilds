@@ -9,12 +9,12 @@ import (
 )
 
 func (s *Server) publishRoutes(w http.ResponseWriter, r *http.Request, actor store.Actor) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
 	binding := len(parts) >= 4 && parts[0] == "api" && parts[1] == "projects" && parts[3] == "applications"
 	if !binding && (len(parts) < 2 || parts[0] != "api" || parts[1] != "publishes" && parts[1] != "publish-queries" && parts[1] != "applications") {
 		return false
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	if actor.Role != "admin" && actor.Role != "approver" || r.Method != http.MethodGet && actor.Role != "admin" {
 		writeError(w, store.ErrForbidden)
 		return true
