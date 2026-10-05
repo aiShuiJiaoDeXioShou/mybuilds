@@ -16,13 +16,14 @@ MVP 批次、真实验证与完成定义见 [执行计划](plans/MVP_EXECUTION.m
 | 007-node-agents | 已完成并验收 | [spec](../specs/007-node-agents/spec.md)、[plan](../specs/007-node-agents/plan.md)、[tasks](../specs/007-node-agents/tasks.md)、[validation](../specs/007-node-agents/validation.md)；28FR/7SC/17AC、74任务；Store/Agent/HTTP-CLI三独立worktree冻结交接；真实三Mac/Linux节点、双库各51项、七种故障/进程停止、日志/SSE/完整快照/中央下载、Android签名101及取消103与Linuxordinary/always取消通过；全量test/race/vet和三入口12次跨平台构建通过，converge零缺口；集成提交 `85b46bf`：feat(agent): 实现多节点构建与中央证据 |
 | 008-build-recovery | 已完成并验收 | [spec](../specs/008-build-recovery/spec.md)、[tasks](../specs/008-build-recovery/tasks.md)、[validation](../specs/008-build-recovery/validation.md)、[convergence](../specs/008-build-recovery/convergence.md)；19FR/5SC/13AC、40任务，Store/Agent/HTTP-CLI分区；最终双库72应用、Linux关键路径/负例、12编译/6入口、全量normal/race/vet与零缺口收敛通过；真实ARM中央签名401/取消402强化通过；集成提交 `504dc6f`：feat(recovery): 实现重启核对与原快照重试 |
 | postgres-fixture-session | 已修复并验收 | [缺陷验证](../.specify/bugs/postgres-fixture-session/test.md)；真实全量检查发现跨库锁会话误选，夹具改为自身连接PID；目标双库、全量Store/race及自有控制端存活通过；独立提交 `b2e659a`：fix(test): 限定数据库故障夹具自身会话 |
-| 019-test-reports | 已完成并验收 | 基线008 504dc6；[spec](../specs/019-test-reports/spec.md)、[tasks](../specs/019-test-reports/tasks.md)、[validation](../specs/019-test-reports/validation.md)；18FR/6SC/12AC、46任务与正式analyze零阻塞。本地8场景、双库各92应用检查点、最终20故障192断言、macOS/Linux及全量test/race/vet/12编译通过；Spec Kit收敛无缺口；整功能提交信息 `feat(reports): 实现本次测试报告与中央证据`，实际哈希在下一集成记录补入 |
-| 009–012、014–015、020 | 规划待实施 | 后续规范在各自工作区，真实Apple签名与商店材料尚未提供；当前不声明相应能力交付 |
+| 019-test-reports | 已完成并验收 | 基线008 504dc6；[spec](../specs/019-test-reports/spec.md)、[tasks](../specs/019-test-reports/tasks.md)、[validation](../specs/019-test-reports/validation.md)；18FR/6SC/12AC、46任务与正式analyze零阻塞。本地8场景、双库各92应用检查点、最终20故障192断言、macOS/Linux及全量test/race/vet/12编译通过；Spec Kit收敛无缺口；集成提交 `fee97e8`：feat(reports): 实现本次测试报告与中央证据 |
+| 020-project-retention | 验收通过 | [spec](../specs/020-project-retention/spec.md)、[tasks](../specs/020-project-retention/tasks.md)、[validation](../specs/020-project-retention/validation.md)；前置008/019已验收，正式plan/tasks/analyze零阻塞；Store/Agent/边界三worktree与root共享串行。真实策略/继承与候选、资源登记、中央读/物理清理/管理CLI与60s后台已接通；双库Store与Mac/Linux实际文件/3×100TCP竞争通过，节点分段删除/重启/20次确认已通过Mac/Linux专项门，有界续扫修复已通过最新完整双库Store normal/race/vet；最终macOS/Linux各双库三CLI门、全量普通/必要race/vet和18编译已通过，Spec Kit收敛无缺口，整功能本地提交 |
+| 009–012、014–015 | 规划待实施 | 后续规范在各自工作区，真实Apple签名与商店材料尚未提供；当前不声明相应能力交付 |
 | 013、016–018 | 未开始，后置 | 不作为本轮 MVP 完成前提 |
 
 更新一行时补充实际 specs 链接、当前阶段、验证结论/证据位置、缺失真实条件及功能集成提交；验收未闭合不记“已完成”。提交哈希来自真实 Git 记录，规划状态不代表代码可用。
 
-019从已验收008 504dc6进入implement，A/B/C独立worktree唯一writer交付，root串行集成；原18FR/6SC/12AC保持，最终源码/二进制与双库、Linux及20故障门验收已通过，正式收敛无缺口，整功能提交为最后步骤。
+019从已验收008 504dc6进入implement，A/B/C独立worktree唯一writer交付，root串行集成；原18FR/6SC/12AC保持，最终源码/二进制与双库、Linux及20故障门验收已通过，正式收敛无缺口，整功能提交fee97e8完成，当前020正式plan/tasks/analyze已通过并进入implement，中央清理与墓碑消费者已接通并通过专项门；PostgreSQL实际文件/控制失锁/确认故障和Mac/Linux独立节点删除专项门已通过；Agent主循环与四组实际三CLI均通过，正式收敛无缺口，整功能本地提交；剩余模块转实现与统一人工验收。
 
 008提前规范在独立worktree `/tmp/mybuilds-mvp.zKtK0e/recovery008-planning` 完成19FR/5SC/13AC、质量16/16，hooks={}；仅specify，待007验收后plan，真实恢复/原快照retry门不变。009 Flutter规范在独立worktree `/tmp/mybuilds-mvp.zKtK0e/flutter009-planning` 已保存28FR/8SC/19AC、质量16/16，仅specify；当前现有Flutter3.38.6真实工具已核对，自有双平台空工程创建成功，未构建签名或验收。
 
@@ -31,3 +32,6 @@ MVP 批次、真实验证与完成定义见 [执行计划](plans/MVP_EXECUTION.m
 020保留策略规范在独立worktree `/tmp/mybuilds-mvp.zKtK0e/retention020-planning` 已完成25FR/7SC/16AC、质量16/16，仅specify；可信终态时间、跨build筛选、删除保护及Agent幂等门已明确，待008/019验收后plan/实现。
 
 共享process派生工具/原组最终停止确认修复已通过原AMD取消206、最终ARM签名中央401/取消402、Darwin及两Linux原生门，完整test/race/vet；本地提交 `dd8fb4a`（fix(process): 修正派生工具与最终停止确认）。三项关联缺陷均verified，旧204/207保护未改，原因不回填，见[缺陷验证](../.specify/bugs/detached-gradle-stop/test.md)。
+
+
+2026-10-05实施依赖细化见MVP_EXECUTION：整功能真实验收门保持，缺Apple/商店材料时可在独立worktree准备不消费缺失前置的组件。005先规划当前基线最小移植；009按已验收004/007接口形成独立诊断/Android部分plan/tasks，iOS完整签名与双平台验收仍待005。不开放缺前置入口，不把分区实现或规划当功能交付。

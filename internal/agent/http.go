@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -60,18 +61,30 @@ func newAgentHTTP(cfg config.AgentConfig) (*agentHTTP, error) {
 }
 func (client *agentHTTP) close() { client.transport.CloseIdleConnections() }
 func (client *agentHTTP) post(parent context.Context, path string, input, output any) error {
-	data, err := json.Marshal(input)
-	if err != nil || len(data) > 1<<20 {
-		return failure("invalid_request")
+	return client.request(parent, http.MethodPost, path, input, output)
+}
+func (client *agentHTTP) get(parent context.Context, path string, output any) error {
+	return client.request(parent, http.MethodGet, path, nil, output)
+}
+func (client *agentHTTP) request(parent context.Context, method, path string, input, output any) error {
+	var data []byte
+	if method == http.MethodPost {
+		var err error
+		data, err = json.Marshal(input)
+		if err != nil || len(data) > 1<<20 {
+			return failure("invalid_request")
+		}
 	}
 	ctx, cancel := context.WithTimeout(parent, client.timeout)
 	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.endpoint+path, bytes.NewReader(data))
+	request, err := http.NewRequestWithContext(ctx, method, client.endpoint+path, bytes.NewReader(data))
 	if err != nil {
 		return failure("invalid_request")
 	}
 	request.Header.Set("Authorization", "Bearer "+client.token)
-	request.Header.Set("Content-Type", "application/json")
+	if method == http.MethodPost {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	response, err := client.client.Do(request)
 	if err != nil {
 		return client.requestError(parent, err)
@@ -100,13 +113,20 @@ func (client *agentHTTP) post(parent context.Context, path string, input, output
 		return nil
 	}
 	if output == nil {
+		if (path == "/api/agent/resources" || path == "/api/agent/stop-confirmation") && (response.StatusCode != http.StatusNoContent || len(body) != 0) {
+			return failure("invalid_response")
+		}
 		if response.StatusCode != http.StatusNoContent && len(bytes.TrimSpace(body)) != 0 {
 			return failure("invalid_response")
 		}
 		return nil
 	}
-	// 只读终态回执不得用重复字段的后值覆盖解释停止证据。
-	if path == "/api/agent/terminal-receipt" {
+	deletion := path == "/api/agent/deletions" || strings.HasPrefix(path, "/api/agent/deletions?") || strings.HasPrefix(path, "/api/agent/deletions/")
+	if deletion && (response.StatusCode != http.StatusOK || len(body) > 32*1024) {
+		return failure("invalid_response")
+	}
+	// 终态和删除回执不得用重复字段后值覆盖原事实；null也不能代表空事项。
+	if path == "/api/agent/terminal-receipt" || deletion {
 		tokens := json.NewDecoder(bytes.NewReader(body))
 		count := 0
 		if journalJSONValue(tokens, 0, &count) != nil {
@@ -131,11 +151,51 @@ func (client *agentHTTP) post(parent context.Context, path string, input, output
 	if decoder.Decode(&extra) != io.EOF {
 		return failure("invalid_response")
 	}
+	if deletion && !validDeletionResponse(body, output) {
+		return failure("invalid_response")
+	}
 	return nil
+}
+
+// 仅核当前三个管理响应的精确必填字段，不为其它接口引入新的解码框架。
+func validDeletionResponse(data []byte, output any) bool {
+	fields := func(raw []byte, names ...string) bool {
+		var values map[string]json.RawMessage
+		if json.Unmarshal(raw, &values) != nil || len(values) != len(names) {
+			return false
+		}
+		for _, name := range names {
+			if _, ok := values[name]; !ok {
+				return false
+			}
+		}
+		return true
+	}
+	switch out := output.(type) {
+	case *[]protocol.NodeDeletion:
+		if out == nil || *out == nil || len(*out) > 10 {
+			return false
+		}
+		var items []json.RawMessage
+		if json.Unmarshal(data, &items) != nil || len(items) != len(*out) {
+			return false
+		}
+		for i, item := range *out {
+			if !validNodeDeletion(item) || !fields(items[i], "id", "resource_id", "build_id", "attempt_id", "ownership_digest", "has_workspace", "has_results") {
+				return false
+			}
+		}
+		return true
+	case *protocol.DeletionAuthority:
+		return out != nil && exactUUID(out.ID) && exactUUID(out.NodeID) && exactUUID(out.ResourceID) && exactUUID(out.Nonce) && safeDigest(out.OwnershipDigest) && !out.ExpiresAt.IsZero() && fields(data, "id", "node_id", "resource_id", "ownership_digest", "nonce", "expires_at")
+	case *protocol.NodeDeletionReceipt:
+		return out != nil && exactUUID(out.ID) && out.Seq > 0 && safeDigest(out.Digest) && fields(data, "id", "seq", "digest")
+	}
+	return false
 }
 func safeNodeError(code string) bool {
 	switch code {
-	case "node_unauthorized", "session_conflict", "session_expired", "lease_invalid", "lease_expired", "event_conflict", "sequence_invalid", "budget_invalid", "stop_unconfirmed", "artifact_conflict", "log_conflict", "control_lock_lost", "invalid_request", "request_too_large", "forbidden", "not_found", "unauthorized", "conflict":
+	case "node_unauthorized", "session_conflict", "session_expired", "lease_invalid", "lease_expired", "event_conflict", "sequence_invalid", "budget_invalid", "stop_unconfirmed", "artifact_conflict", "log_conflict", "control_lock_lost", "invalid_request", "request_too_large", "forbidden", "not_found", "unauthorized", "conflict", "retention_retired", "retention_protected", "retention_readers_active", "retention_ownership_unknown", "retention_receipt_conflict", "retention_object_invalid", "retention_limit", "retention_timeout", "retention_cancelled", "retention_io_error":
 		return true
 	}
 	return false
@@ -212,4 +272,12 @@ func (client *agentHTTP) requestError(parent context.Context, err error) error {
 		return failure("network_error")
 	}
 	return failure("request_failed")
+}
+
+func safeDigest(value string) bool {
+	data, e := hex.DecodeString(value)
+	return e == nil && len(data) == 32 && hex.EncodeToString(data) == value
+}
+func validNodeDeletion(item protocol.NodeDeletion) bool {
+	return exactUUID(item.ID) && exactUUID(item.ResourceID) && exactUUID(item.BuildID) && exactUUID(item.AttemptID) && safeDigest(item.OwnershipDigest) && item.HasWorkspace
 }

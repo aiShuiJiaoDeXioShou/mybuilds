@@ -42,10 +42,15 @@ func (execution *taskExecution) confirmStopped(parent context.Context) error {
 		}
 		ctx, cancel := context.WithTimeout(callParent, execution.client.timeout)
 		err := execution.client.post(ctx, "/api/agent/stop-confirmation", confirmation, nil)
-		cancel()
 		if err == nil {
+			err = completeStoppedResource(ctx, execution.client, journal, confirmation)
+			cancel()
+			if err != nil {
+				return err
+			}
 			return journal.remove()
 		}
+		cancel()
 		safe, ok := err.(*Error)
 		if parent.Err() != nil || !ok || safe.Code != "stop_unconfirmed" && safe.Code != "network_error" || !time.Now().Before(deadline) {
 			return failure("execution_unconfirmed")

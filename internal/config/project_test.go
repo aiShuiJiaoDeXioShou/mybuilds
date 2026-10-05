@@ -6,7 +6,7 @@ import (
 )
 
 func TestProjectSettingsStrictAndDefaults(t *testing.T) {
-	for _, body := range []string{"pipeline: {source: profile}\n", "pipeline: {file: ../secret}\n", "pipeline: {file: a/../b}\n", "pipeline: {file: '*.yml'}\n", "pipeline: {file: 'C:\\secret'}\n", "pipeline: {source: 7}\n", "pipeline: {params: {channel: 7}}\n", "pipeline: {params: {channel: a}, builds: {default: {params: {channel: b}}}}\n", "pipeline: {builds: {default: {profile: TOKEN_SECRET}}}\n", "retention: {builds: 20}\n", "pipeline: null\n", "pipeline: {source: repo, source: auto}\n"} {
+	for _, body := range []string{"pipeline: {source: profile}\n", "pipeline: {file: ../secret}\n", "pipeline: {file: a/../b}\n", "pipeline: {file: '*.yml'}\n", "pipeline: {file: 'C:\\secret'}\n", "pipeline: {source: 7}\n", "pipeline: {params: {channel: 7}}\n", "pipeline: {params: {channel: a}, builds: {default: {params: {channel: b}}}}\n", "pipeline: {builds: {default: {profile: TOKEN_SECRET}}}\n", "pipeline: null\n", "pipeline: {source: repo, source: auto}\n"} {
 		if _, err := ParseProjectSettings([]byte(body)); err == nil || strings.Contains(err.Error(), "TOKEN_SECRET") {
 			t.Errorf("非法settings: %q %v", body, err)
 		}

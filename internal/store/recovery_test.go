@@ -127,6 +127,11 @@ func TestRecoverExpiredLeaseRetainsEvidenceAndGuard(t *testing.T) {
 			t.Fatal(err)
 		}
 		after := recoveryRows(t, s)
+		if before[0].TerminalAt != nil {
+			t.Fatal("活动构建提前保存终态时间")
+		}
+		retentionTimeWithin(t, after[0].TerminalAt, now, time.Now().UTC())
+		before[0].TerminalAt = after[0].TerminalAt
 		before[0].Status = "interrupted"
 		before[0].StopUnconfirmed = true
 		if !reflect.DeepEqual(before, after) {
@@ -134,6 +139,9 @@ func TestRecoverExpiredLeaseRetainsEvidenceAndGuard(t *testing.T) {
 		}
 		if err := s.Recover(testContext); err != nil {
 			t.Fatal("二次恢复", err)
+		}
+		if !reflect.DeepEqual(after, recoveryRows(t, s)) {
+			t.Fatal("重复恢复刷新终态时间或原证据")
 		}
 		view, err := s.GetNode(testContext, localAdmin, "linux")
 		if err != nil || !view.Quarantined || view.Running != 1 {

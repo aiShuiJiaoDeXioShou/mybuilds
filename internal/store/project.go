@@ -200,12 +200,8 @@ func (s *Store) SetProjectSettings(ctx context.Context, actor Actor, name string
 	if !validName(name) || config.ValidateProjectSettings(settings) != nil {
 		return Project{}, ErrInvalid
 	}
-	encoded, err := encode(settings)
-	if err != nil {
-		return Project{}, err
-	}
 	var row projectRecord
-	err = s.write(ctx, func(tx *gorm.DB) error {
+	err := s.write(ctx, func(tx *gorm.DB) error {
 		if err := authorize(tx, actor, "admin"); err != nil {
 			return err
 		}
@@ -213,7 +209,18 @@ func (s *Store) SetProjectSettings(ctx context.Context, actor Actor, name string
 			return err
 		}
 		if settings.Pipeline == nil {
-			return nil
+			var previous config.ProjectSettings
+			if json.Unmarshal([]byte(row.SettingsJSON), &previous) != nil {
+				return errDatabase
+			}
+			settings.Pipeline = previous.Pipeline
+		}
+		if config.ValidateProjectSettings(settings) != nil {
+			return ErrInvalid
+		}
+		encoded, err := encode(settings)
+		if err != nil {
+			return err
 		}
 		if row.PolicyVersion == math.MaxInt64 {
 			return ErrConflict

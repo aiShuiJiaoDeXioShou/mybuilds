@@ -76,7 +76,15 @@ func buildView(db *gorm.DB, row buildRecord) (BuildView, error) {
 	if err := db.First(&batch, "id = ?", row.BatchID).Error; err != nil {
 		return BuildView{}, err
 	}
-	result := BuildView{ID: row.ID, Project: project.Name, Group: project.Group.Name, BatchID: row.BatchID, Name: row.Name, Number: row.Number, Status: row.Status, Reason: row.Reason, SHA: batch.SHA, Branch: batch.Branch, Source: batch.Source, File: batch.File, SourceDigest: batch.SourceDigest, Condition: row.Condition, InitialBudgetNS: row.InitialBudgetNS, RemainingBudgetNS: row.RemainingBudgetNS, PostBudgetNS: row.PostBudgetNS, CreatedAt: row.CreatedAt.UTC(), Steps: []StepProgress{}, Post: []StepProgress{}}
+	result := BuildView{HistoryState: row.HistoryState, TerminalAt: row.TerminalAt, CleanedAt: row.CleanedAt, ID: row.ID, Project: project.Name, Group: project.Group.Name, BatchID: row.BatchID, Name: row.Name, Number: row.Number, Status: row.Status, Reason: row.Reason, SHA: batch.SHA, Branch: batch.Branch, Source: batch.Source, File: batch.File, SourceDigest: batch.SourceDigest, Condition: row.Condition, InitialBudgetNS: row.InitialBudgetNS, RemainingBudgetNS: row.RemainingBudgetNS, PostBudgetNS: row.PostBudgetNS, CreatedAt: row.CreatedAt.UTC(), Steps: []StepProgress{}, Post: []StepProgress{}}
+	// 完整清理后仅投影仍存在的身份与结果，不再解释已删除的大JSON或报告。
+	if row.HistoryState == "cleaned" {
+		minimal := BuildView{HistoryState: row.HistoryState, TerminalAt: row.TerminalAt, CleanedAt: row.CleanedAt, ID: row.ID, Project: project.Name, Group: project.Group.Name, BatchID: row.BatchID, Name: row.Name, Number: row.Number, Status: row.Status, Reason: row.Reason, SHA: batch.SHA, CreatedAt: row.CreatedAt.UTC(), ParameterKeys: []string{}, Reasons: []string{}, Steps: []StepProgress{}, Post: []StepProgress{}}
+		if row.RetryOf != nil {
+			minimal.RetryOf = *row.RetryOf
+		}
+		return minimal, nil
+	}
 	sealed, err := sealedReports(row)
 	if err != nil {
 		return BuildView{}, err

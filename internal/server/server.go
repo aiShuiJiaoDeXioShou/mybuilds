@@ -15,11 +15,16 @@ import (
 )
 
 type Server struct {
-	store  *store.Store
-	config config.ServerConfig
+	store             *store.Store
+	config            config.ServerConfig
+	evidenceReadOwner string
+	evidenceReadError error
 }
 
-func New(st *store.Store, cfg config.ServerConfig) *Server { return &Server{store: st, config: cfg} }
+func New(st *store.Store, cfg config.ServerConfig) *Server {
+	owner, err := st.RegisterEvidenceReadOwner(context.Background())
+	return &Server{store: st, config: cfg, evidenceReadOwner: owner, evidenceReadError: err}
+}
 
 type StatusDTO struct {
 	Version      string `json:"version"`
@@ -56,6 +61,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	// 所有入口先检查运行权与真实身份，不能借未知路径绕过身份边界。
 	if err := s.store.CheckLock(r.Context()); err != nil {
 		writeError(w, err)
+		return
+	}
+	if s.evidenceReadError != nil {
+		writeError(w, s.evidenceReadError)
 		return
 	}
 	authorization := r.Header.Values("Authorization")
@@ -98,6 +107,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	if s.nodeRoutes(w, r, actor) {
 		return
 	}
+	if s.retentionRoutes(w, r, actor) {
+		return
+	}
 	if s.buildRoutes(w, r, actor) {
 		return
 	}
@@ -109,10 +121,16 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	if err := s.store.CheckLock(ctx); err != nil {
 		return err
 	}
+	if s.evidenceReadError != nil {
+		return s.evidenceReadError
+	}
 	recovery, finishRecovery := context.WithTimeout(ctx, 30*time.Second)
 	err := s.store.Recover(recovery)
 	finishRecovery()
 	if err != nil {
+		return err
+	}
+	if err := s.store.SyncGlobalRetention(ctx, s.config.Retention); err != nil {
 		return err
 	}
 	live, cancel := context.WithCancel(ctx)
@@ -122,6 +140,15 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	go func() { done <- service.ListenAndServe() }()
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
+	retentionTicker := time.NewTicker(60 * time.Second)
+	defer retentionTicker.Stop()
+	var retentionDone chan error
+	defer func() {
+		cancel()
+		if retentionDone != nil {
+			<-retentionDone
+		}
+	}()
 	var result error
 	for {
 		select {
@@ -132,6 +159,32 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 			return errors.New("server_listen_failed")
 		case <-live.Done():
 			result = nil
+		case <-retentionTicker.C:
+			if retentionDone != nil {
+				continue
+			}
+			retentionDone = make(chan error, 1)
+			finished := retentionDone
+			// 有界文件IO不阻塞原200ms运行权/租约核对，退出时等待本轮确已停止。
+			go func() {
+				round, stop := context.WithTimeout(live, 30*time.Second)
+				defer stop()
+				err := s.advanceCentralRetention(round, "", 100)
+				if !errors.Is(err, store.ErrLockLost) && round.Err() == nil {
+					_, finalErr := s.store.FinalizeRetention(round, "", 100)
+					if err == nil || errors.Is(finalErr, store.ErrLockLost) {
+						err = finalErr
+					}
+				}
+				finished <- err
+			}()
+			continue
+		case err := <-retentionDone:
+			retentionDone = nil
+			if !errors.Is(err, store.ErrLockLost) {
+				continue
+			}
+			result = err
 		case <-ticker.C:
 			if err := s.store.CheckLock(live); err == nil {
 				if err = s.store.ExpireLeases(live); err == nil {

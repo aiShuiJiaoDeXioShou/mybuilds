@@ -117,7 +117,7 @@ func interruptNodeExecutions(db *gorm.DB, nodeID string, credentials []string) e
 		attempts := db.Model(&attemptRecord{}).Select("id").Where("node_id = ? AND credential_id IN ?", nodeID, credentials)
 		query = query.Where("attempt_id IN (?)", attempts)
 	}
-	return query.Updates(map[string]any{"status": "interrupted", "stop_unconfirmed": true, "reason": gorm.Expr("CASE WHEN reason = '' OR reason IS NULL THEN ? ELSE reason END", "authority_lost")}).Error
+	return query.Updates(map[string]any{"status": "interrupted", "stop_unconfirmed": true, "terminal_at": gorm.Expr("COALESCE(terminal_at, ?)", time.Now().UTC()), "reason": gorm.Expr("CASE WHEN reason = '' OR reason IS NULL THEN ? ELSE reason END", "authority_lost")}).Error
 }
 func activeNodeCredentials(db *gorm.DB, nodeID string) ([]string, error) {
 	ids := []string{}

@@ -10,7 +10,6 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -278,28 +277,27 @@ func (s *Server) artifactReadRoute(w http.ResponseWriter, r *http.Request, actor
 		writeError(w, store.ErrNotFound)
 		return true
 	}
-	s.downloadArtifact(w, r, stored)
+	s.downloadArtifact(w, r, actor, stored)
 	return true
 }
-func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request, stored store.ArtifactStored) {
+func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request, actor store.Actor, stored store.ArtifactStored) {
 	if !canonicalUUID(stored.StorageID) || stored.View.Size < 0 || stored.View.Size > 1<<30 {
 		writeError(w, errEvidence)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
-	root, e := s.artifactFiles()
+	held, e := s.openRetentionEvidence(ctx, actor, "artifact", stored.View.ID)
 	if e != nil {
-		writeError(w, e)
+		writeError(w, evidenceReadFailure(e))
 		return
 	}
-	defer root.Close()
-	f, e := root.OpenFile(stored.StorageID, os.O_RDONLY|evidenceOpenFlags(), 0)
-	if e != nil {
-		writeError(w, errEvidence)
+	defer held.Close()
+	if held.Read.BuildID != stored.View.BuildID || held.Read.StorageID != stored.StorageID || held.Read.Size != stored.View.Size || held.Read.SHA256 != stored.View.SHA256 {
+		writeError(w, store.ErrRetentionOwnershipUnknown)
 		return
 	}
-	defer f.Close()
+	f := held.File
 	info, e := f.Stat()
 	if e != nil || !evidenceInfo(info, false) || info.Size() != stored.View.Size {
 		writeError(w, errEvidence)

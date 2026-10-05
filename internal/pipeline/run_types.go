@@ -21,6 +21,7 @@ type RemoteOptions struct {
 	AuthorityContext      context.Context
 	Facts, Secrets        map[string]string
 	ResultParent          string
+	ResultCreated         func(context.Context, string) error
 	RemainingBudgetNS     *int64
 	RemainingPostBudgetNS int64
 	Progress              func(context.Context, protocol.ExecutionProgress) error

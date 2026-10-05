@@ -50,6 +50,7 @@ type LogCommitted struct {
 	Created   bool   `json:"-"`
 }
 type LogStored struct {
+	ID          string    `json:"-"`
 	BuildID     string    `json:"build_id"`
 	AttemptID   string    `json:"attempt_id"`
 	Seq         int64     `json:"seq"`
@@ -77,13 +78,14 @@ type ArtifactStored struct {
 }
 
 type nodeRecord struct {
-	ID                   string `gorm:"primaryKey;size:36"`
-	Name                 string `gorm:"not null;uniqueIndex;size:64"`
-	State                string `gorm:"not null"`
-	LabelsJSON           string `gorm:"not null"`
-	MaxCapacity          int    `gorm:"not null;check:max_capacity >= 1 AND max_capacity <= 32"`
-	SessionID            *string
-	CreatedAt, UpdatedAt time.Time
+	ID                      string `gorm:"primaryKey;size:36"`
+	Name                    string `gorm:"not null;uniqueIndex;size:64"`
+	State                   string `gorm:"not null"`
+	LabelsJSON              string `gorm:"not null"`
+	MaxCapacity             int    `gorm:"not null;check:max_capacity >= 1 AND max_capacity <= 32"`
+	SessionID               *string
+	RetentionDeletionCursor string `gorm:"not null;default:'';size:36"`
+	CreatedAt, UpdatedAt    time.Time
 }
 
 func (nodeRecord) TableName() string { return "nodes" }

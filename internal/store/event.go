@@ -420,11 +420,21 @@ func (s *Store) ApplyEvent(ctx context.Context, actor NodeActor, in protocol.Exe
 		row.RemainingBudgetNS = p.RemainingBudgetNS
 		row.RemainingPostBudgetNS = p.RemainingPostBudgetNS
 		row.LastEventSeq = in.Seq
-		if err = tx.Model(&row).Updates(map[string]any{"status": row.Status, "reason": row.Reason, "post_phase": row.PostPhase, "stop_unconfirmed": row.StopUnconfirmed, "remaining_budget_ns": row.RemainingBudgetNS, "remaining_post_budget_ns": row.RemainingPostBudgetNS, "last_event_seq": row.LastEventSeq}).Error; err != nil {
+		if p.Kind == "build_finished" && row.TerminalAt == nil {
+			now := time.Now().UTC()
+			row.TerminalAt = &now
+		}
+		if err = tx.Model(&row).Updates(map[string]any{"status": row.Status, "reason": row.Reason, "post_phase": row.PostPhase, "stop_unconfirmed": row.StopUnconfirmed, "remaining_budget_ns": row.RemainingBudgetNS, "remaining_post_budget_ns": row.RemainingPostBudgetNS, "last_event_seq": row.LastEventSeq, "terminal_at": row.TerminalAt}).Error; err != nil {
 			return err
 		}
 		if err = tx.Create(&executionReceiptRecord{ID: uuid.NewString(), BuildID: row.ID, AttemptID: in.Ref.AttemptID, Seq: in.Seq, Digest: in.Digest, Kind: p.Kind, StopKnown: p.Kind == "build_finished" && p.StopConfirmed && !p.CleanupFailed && !row.StopUnconfirmed, CreatedAt: time.Now().UTC()}).Error; err != nil {
 			return err
+		}
+		if p.Kind == "build_finished" {
+			// 同原终态事务仅记录已登记完整归属的精确回执；不补猜旧资源或停止事实。
+			if err = tx.Model(&nodeResourceRecord{}).Where("build_id = ? AND attempt_id = ? AND node_id = ? AND session_id = ? AND lease_id = ? AND epoch = ?", row.ID, in.Ref.AttemptID, in.Ref.NodeID, in.Ref.SessionID, in.Ref.LeaseID, in.Ref.Epoch).Updates(map[string]any{"terminal_seq": in.Seq, "terminal_digest": in.Digest}).Error; err != nil {
+				return err
+			}
 		}
 		ack = protocol.EventAck{Seq: in.Seq, Digest: in.Digest}
 		if p.Kind == "reports_sealed" {

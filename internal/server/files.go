@@ -16,6 +16,14 @@ import (
 
 var errEvidence = errors.New("evidence_storage_error")
 
+// 原下载和日志接口保持既有损坏文件错误；退役410沿新明确契约返回。
+func evidenceReadFailure(err error) error {
+	if errors.Is(err, store.ErrRetentionOwnershipUnknown) || errors.Is(err, store.ErrRetentionReadersActive) || errors.Is(err, store.ErrRetentionIO) {
+		return errEvidence
+	}
+	return err
+}
+
 type publishedEvidence struct {
 	id    string
 	info  os.FileInfo

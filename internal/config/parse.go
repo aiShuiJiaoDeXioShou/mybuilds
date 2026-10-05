@@ -196,8 +196,8 @@ func checkType(n *yaml.Node, t reflect.Type, field string) error {
 		return nil
 	}
 	switch t.Kind() {
-	case reflect.String, reflect.Bool, reflect.Int:
-		tag := map[reflect.Kind]string{reflect.String: "!!str", reflect.Bool: "!!bool", reflect.Int: "!!int"}[t.Kind()]
+	case reflect.String, reflect.Bool, reflect.Int, reflect.Int64:
+		tag := map[reflect.Kind]string{reflect.String: "!!str", reflect.Bool: "!!bool", reflect.Int: "!!int", reflect.Int64: "!!int"}[t.Kind()]
 		if n.Kind != yaml.ScalarNode || n.Tag != tag {
 			return nodeError(n, field, "标量类型不正确")
 		}

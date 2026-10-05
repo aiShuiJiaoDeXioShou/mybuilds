@@ -84,6 +84,12 @@ func (execution *taskExecution) progress(ctx context.Context, p protocol.Executi
 		execution.lease.cancel()
 		return err
 	}
+	if p.Kind == "build_finished" {
+		if err = recordResourceTerminal(execution.journal, event, ack); err != nil {
+			execution.lease.cancel()
+			return err
+		}
+	}
 	if err = execution.journal.ackEvent(ack); err != nil {
 		execution.lease.cancel()
 		return err
@@ -163,6 +169,19 @@ func executeTask(parent context.Context, client *agentHTTP, lock *dataLock, cfg 
 	if saveErr != nil {
 		return saveErr
 	}
+	if checkoutErr == nil {
+		// 从本次领取起计时，登记网络与fsync不能取得新的构建预算。
+		registrationCtx := lease.ctx
+		registrationCancel := func() {}
+		if grant.RemainingBudgetNS != nil {
+			registrationCtx, registrationCancel = context.WithDeadline(lease.ctx, requested.Add(time.Duration(*grant.RemainingBudgetNS)))
+		}
+		err = execution.registerWorkspace(registrationCtx, checkout.Workspace)
+		registrationCancel()
+		if err != nil {
+			return err
+		}
+	}
 	remaining := cloneBudget(grant.RemainingBudgetNS)
 	if remaining != nil {
 		*remaining -= int64(time.Since(checkoutStart))
@@ -182,7 +201,7 @@ func executeTask(parent context.Context, client *agentHTTP, lock *dataLock, cfg 
 	}
 	facts := map[string]string{"project": task.Project, "build.id": grant.Ref.BuildID, "build.number": strconv.FormatInt(task.Number, 10), "node.name": cfg.Node, "git.sha": task.SHA, "git.branch": task.Branch}
 	document := &config.Document{Version: 1, Builds: map[string]*config.Build{task.BuildName: &task.Definition}}
-	result, runErr := pipeline.Run(lease.user, document, pipeline.RunOptions{PreviewOptions: pipeline.PreviewOptions{Names: []string{task.BuildName}, Params: task.Parameters}, Workspace: checkout.Workspace, Output: io.Discard, Remote: &pipeline.RemoteOptions{AuthorityContext: lease.ctx, Facts: facts, Secrets: secrets, ResultParent: resultParent, RemainingBudgetNS: remaining, RemainingPostBudgetNS: grant.RemainingPostBudgetNS, Progress: execution.progress, Log: execution.log}})
+	result, runErr := pipeline.Run(lease.user, document, pipeline.RunOptions{PreviewOptions: pipeline.PreviewOptions{Names: []string{task.BuildName}, Params: task.Parameters}, Workspace: checkout.Workspace, Output: io.Discard, Remote: &pipeline.RemoteOptions{AuthorityContext: lease.ctx, Facts: facts, Secrets: secrets, ResultParent: resultParent, ResultCreated: execution.registerResult, RemainingBudgetNS: remaining, RemainingPostBudgetNS: grant.RemainingPostBudgetNS, Progress: execution.progress, Log: execution.log}})
 	if execution.terminal {
 		journal.mu.Lock()
 		stopped := journal.state.StopConfirmed && !journal.state.CleanupFailed

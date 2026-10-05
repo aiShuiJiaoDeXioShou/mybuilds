@@ -16,7 +16,7 @@ import (
 	"strings"
 )
 
-// 文件只能发布在私有journal/spool目录，重命名与目录fsync都完成后才允许发送。
+// 文件只能发布在已知私有目录，重命名与目录fsync都完成后才允许发送。
 func (lock *dataLock) atomicFile(name string, data []byte, previous os.FileInfo) (os.FileInfo, error) {
 	if len(data) == 0 || len(data) > 1<<20 || !ownedFileName(name) {
 		return nil, failure("persistence_error")
@@ -65,10 +65,17 @@ func (lock *dataLock) atomicFile(name string, data []byte, previous os.FileInfo)
 	return actual, nil
 }
 func ownedFileName(name string) bool {
-	return !strings.Contains(name, "\\") && path.Clean(name) == name && (path.Dir(name) == "journal" || path.Dir(name) == "spool") && path.Base(name) != "."
+	if strings.Contains(name, "\\") || path.Clean(name) != name || path.Base(name) == "." {
+		return false
+	}
+	if path.Dir(name) == "resources" || path.Dir(name) == "deletions" {
+		base := path.Base(name)
+		return strings.HasSuffix(base, ".json") && exactUUID(strings.TrimSuffix(base, ".json"))
+	}
+	return path.Dir(name) == "journal" || path.Dir(name) == "spool"
 }
 func (lock *dataLock) prepareDirectory(name string) error {
-	if name != "journal" && name != "spool" && name != "results" {
+	if name != "journal" && name != "spool" && name != "results" && name != "resources" && name != "deletions" && name != "retention" {
 		return failure("persistence_error")
 	}
 	if err := lock.root.Mkdir(name, 0700); err != nil && !os.IsExist(err) {

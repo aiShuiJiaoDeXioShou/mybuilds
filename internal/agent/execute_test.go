@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"golang.org/x/sys/unix"
 	"io"
+	"mybuilds/internal/config"
 	"mybuilds/internal/protocol"
 	"mybuilds/internal/server"
 	"mybuilds/internal/store"
@@ -44,12 +45,28 @@ func TestServeActualLostTerminalReceiptRetainsJournalThenReadonlyRestart(t *test
 func TestServeActualRenewLossConfirmsStoppedOnlyAfterExpiry(t *testing.T) {
 	serveActualTask(t, false, "renew_network_failure")
 }
+func TestServeActualResourceRegistrationAndTerminalProof(t *testing.T) {
+	serveActualTask(t, true, "resource_registration")
+}
+func TestServeResourceRegistrationFailurePreservesCheckoutWithoutRun(t *testing.T) {
+	serveActualTask(t, false, "resource_denied")
+}
 func serveActualTask(t *testing.T, artifact bool, modes ...string) {
 	mode := ""
 	if len(modes) > 0 {
 		mode = modes[0]
 	}
 	st, admin, cfg, handler := agentControl(t)
+	if mode == "resource_denied" {
+		original := handler
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/agent/resources" {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			original.ServeHTTP(w, r)
+		})
+	}
 	var dropped atomic.Bool
 	var renewAttempts atomic.Int64
 	groupGoneBeforeCentralExpiry := false
@@ -375,11 +392,57 @@ post:
 			if err != nil || string(count) != expected {
 				t.Fatal(string(count), err)
 			}
+			if mode == "resource_registration" {
+				files, e := filepath.Glob(filepath.Join(cfg.DataDir, "resources", "*.json"))
+				if e != nil || len(files) != 1 {
+					t.Fatal("真实执行须保留唯一归属证明", files, e)
+				}
+				data, e := os.ReadFile(files[0])
+				var resource resourceRecord
+				if e != nil || json.Unmarshal(data, &resource) != nil || resource.Ref.BuildID != view.ID || resource.Ref.AttemptID != view.AttemptID || resource.Workspace == nil || resource.Results == nil || resource.RegistrationPending || resource.PendingLog || resource.TerminalSeq < 1 || !safeDigest(resource.TerminalDigest) {
+					t.Fatal("真实归属必须包含双槽与完整中央终态ACK", e)
+				}
+				if e = st.SyncGlobalRetention(context.Background(), config.Retention{Builds: 100, Days: 30}); e != nil {
+					t.Fatal(e)
+				}
+				project, e := st.GetProject(context.Background(), "actual")
+				if e != nil {
+					t.Fatal(e)
+				}
+				page, e := st.EvaluateRetention(context.Background(), admin, project.ID, store.Page{})
+				if e != nil || len(page.Items) != 1 || len(page.Items[0].ProtectReasons) != 0 {
+					t.Fatal("真实Run资源与中央文件均确认后不残留虚假保护", page, e)
+				}
+			}
 
 			return
 		}
 		select {
 		case err := <-done:
+			if mode == "resource_denied" {
+				if err == nil {
+					t.Fatal("登记失败不能宣执行成功")
+				}
+				files, e := filepath.Glob(filepath.Join(cfg.DataDir, "resources", "*.json"))
+				if e != nil || len(files) != 1 {
+					t.Fatal("登记失败仍保留实际资源", files, e)
+				}
+				data, e := os.ReadFile(files[0])
+				var resource resourceRecord
+				if e != nil || json.Unmarshal(data, &resource) != nil || !resource.RegistrationPending || resource.Workspace == nil || resource.Results != nil || resource.TerminalSeq != 0 {
+					t.Fatal("失败不能假确认或执行用户动作", e)
+				}
+				for _, leaf := range []string{"count", "cleanup"} {
+					paths, e := filepath.Glob(filepath.Join(cfg.DataDir, "scm", "checkout-*", "workspace", leaf))
+					if e != nil || len(paths) != 0 {
+						t.Fatal("失败后没有用户Run/post", leaf, paths, e)
+					}
+				}
+				if inspectData(cfg.DataDir) == "" {
+					t.Fatal("未知登记失败journal不得移除")
+				}
+				return
+			}
 			if mode == "disable" && changed && err != nil {
 				paths, _ := filepath.Glob(filepath.Join(cfg.DataDir, "scm", "checkout-*", "workspace", "cleanup"))
 				if len(paths) != 0 {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/stdlib"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -29,6 +30,7 @@ type Store struct {
 	lost, closed              bool
 	transactionExpiry         *time.Time
 	transactionReportDeadline *time.Time
+	evidenceReadOwner         string
 }
 
 func Open(ctx context.Context, opt Options) (*Store, error) {
@@ -41,7 +43,7 @@ func Open(ctx context.Context, opt Options) (*Store, error) {
 	if ctx.Err() != nil {
 		return nil, errDatabase
 	}
-	s := &Store{driver: opt.Driver}
+	s := &Store{driver: opt.Driver, evidenceReadOwner: uuid.NewString()}
 	cfg := &gorm.Config{Logger: logger.Default.LogMode(logger.Silent), NowFunc: func() time.Time { return time.Now().UTC() }, DisableAutomaticPing: true}
 	var err error
 	if opt.Driver == "sqlite" {
@@ -173,7 +175,16 @@ func (s *Store) checkLock(ctx context.Context) error {
 
 // ponytail: 单控制端写事务串行；需要吞吐扩展时再评估更细的事务竞争。
 func (s *Store) write(ctx context.Context, fn func(*gorm.DB) error) error {
-	s.mu.Lock()
+	// 排队也沿调用方原期限；不能先无限等mutex再检查已取消的context。
+	for !s.mu.TryLock() {
+		wait := time.NewTimer(time.Millisecond)
+		select {
+		case <-ctx.Done():
+			wait.Stop()
+			return errDatabase
+		case <-wait.C:
+		}
+	}
 	defer s.mu.Unlock()
 	s.transactionExpiry = nil
 	s.transactionReportDeadline = nil
@@ -200,8 +211,9 @@ func (s *Store) write(ctx context.Context, fn func(*gorm.DB) error) error {
 		}
 		return nil
 	})
-	if err != nil && s.driver == "postgres" {
-		checkCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	if err != nil && s.driver == "postgres" && ctx.Err() == nil {
+		// SQL失败后的独占复核不能借新期限延长原请求。
+		checkCtx, cancel := context.WithTimeout(ctx, time.Second)
 		defer cancel()
 		if s.checkLock(checkCtx) == ErrLockLost {
 			return ErrLockLost
@@ -223,13 +235,16 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return safeError(err)
 		}
 	}
-	if err := db.AutoMigrate(&groupRecord{}, &projectRecord{}, &identityRecord{}, &metadataRecord{}, &auditRecord{}, &batchRecord{}, &buildRecord{}, &stepRecord{}, &requestRecord{}, &nodeRecord{}, &nodeCredentialRecord{}, &nodeSessionRecord{}, &attemptRecord{}, &executionReceiptRecord{}, &stopConfirmationRecord{}, &logChunkRecord{}, &artifactRecord{}); err != nil {
+	if err := db.AutoMigrate(&groupRecord{}, &projectRecord{}, &identityRecord{}, &metadataRecord{}, &auditRecord{}, &batchRecord{}, &buildRecord{}, &stepRecord{}, &requestRecord{}, &nodeRecord{}, &nodeCredentialRecord{}, &nodeSessionRecord{}, &attemptRecord{}, &executionReceiptRecord{}, &stopConfirmationRecord{}, &logChunkRecord{}, &artifactRecord{}, &retentionPolicyRecord{}, &retentionJobRecord{}, &retentionObjectRecord{}, &evidenceReadRecord{}, &nodeResourceRecord{}, &nodeDeletionRecord{}, &nodeDeletionReceiptRecord{}); err != nil {
 		return safeError(err)
 	}
 	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS build_active_name ON builds(project_id,name) WHERE status = 'running' OR stop_unconfirmed = true").Error; err != nil {
 		return safeError(err)
 	}
 	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := backfillTerminalTimes(tx); err != nil {
+			return err
+		}
 		group := groupRecord{ID: "default", Name: "default"}
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&group).Error; err != nil {
 			return err
@@ -265,4 +280,28 @@ func normalizeSQLite(path string) (string, error) {
 		abs = filepath.Join(parent, filepath.Base(abs))
 	}
 	return abs, nil
+}
+
+// 仅从已有精确终态事实回填；未知中断不借更新时间或租约过期猜测。
+func backfillTerminalTimes(tx *gorm.DB) error {
+	receipt := `SELECT r.created_at FROM execution_receipts r JOIN attempts a ON a.id = r.attempt_id
+ WHERE r.build_id = builds.id AND r.attempt_id = builds.attempt_id
+ AND r.seq = builds.last_event_seq AND r.seq > 0 AND r.kind = 'build_finished'
+ AND a.build_id = builds.id AND a.node_id = builds.node_id AND a.session_id = builds.session_id
+ AND a.lease_id = builds.lease_id AND a.epoch = builds.lease_epoch`
+	if err := tx.Exec(`UPDATE builds SET terminal_at = (` + receipt + `)
+ WHERE terminal_at IS NULL AND status IN ('succeeded','failed','cancelled','skipped','interrupted')
+ AND EXISTS (` + receipt + `)`).Error; err != nil {
+		return err
+	}
+	if err := tx.Exec(`UPDATE builds SET terminal_at = created_at
+ WHERE terminal_at IS NULL AND status = 'skipped' AND attempt_id IS NULL
+ AND NOT EXISTS (SELECT 1 FROM attempts a WHERE a.build_id = builds.id)`).Error; err != nil {
+		return err
+	}
+	cancel := `SELECT MIN(a.created_at) FROM audits a
+ WHERE a.action = 'build_cancel' AND a.object_id = builds.id AND a."to" = 'cancelled'`
+	return tx.Exec(`UPDATE builds SET terminal_at = (` + cancel + `)
+ WHERE terminal_at IS NULL AND status = 'cancelled' AND attempt_id IS NULL
+ AND NOT EXISTS (SELECT 1 FROM attempts a WHERE a.build_id = builds.id)`).Error
 }

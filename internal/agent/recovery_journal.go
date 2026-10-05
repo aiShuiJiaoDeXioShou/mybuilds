@@ -144,6 +144,19 @@ func recoverTerminalJournals(ctx context.Context, client *agentHTTP, lock *dataL
 	for _, name := range names {
 		journal, err := readTerminalJournal(lock, name)
 		if err != nil {
+			stopped, stopErr := readStoppedResourceJournal(lock, name)
+			if stopErr == nil {
+				if stopErr = restoreStoppedResource(ctx, client, stopped); stopErr == nil {
+					current, readErr := readStoppedResourceJournal(lock, name)
+					if readErr != nil || !os.SameFile(stopped.info, current.info) || stopped.recoveryDigest != current.recoveryDigest {
+						return failure("data_invalid")
+					}
+					if stopErr = stopped.remove(); stopErr != nil {
+						return stopErr
+					}
+					continue
+				}
+			}
 			blocked = true
 			continue
 		}
@@ -159,6 +172,14 @@ func recoverTerminalJournals(ctx context.Context, client *agentHTTP, lock *dataL
 		}
 		// 网络等待期间即便同inode被改写，也不能删除已经变化的自有证据。
 		current, err := readTerminalJournal(lock, name)
+		if err != nil || !os.SameFile(journal.info, current.info) || journal.recoveryDigest != current.recoveryDigest {
+			return failure("data_invalid")
+		}
+		if err = restoreResourceTerminal(ctx, client, journal, receipt, nodeName); err != nil {
+			blocked = true
+			continue
+		}
+		current, err = readTerminalJournal(lock, name)
 		if err != nil || !os.SameFile(journal.info, current.info) || journal.recoveryDigest != current.recoveryDigest {
 			return failure("data_invalid")
 		}

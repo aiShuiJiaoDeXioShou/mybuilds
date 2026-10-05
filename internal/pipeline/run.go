@@ -597,6 +597,10 @@ func executeStep(ctx context.Context, root, build string, step preparedStep, lim
 			return result
 		}
 		actionStart := time.Now()
+		if err := r.ensureResult(root, logger); err != nil {
+			result.Status, result.Reason = "failed", "directory_error"
+			return result
+		}
 		intent := stepProgress("intent", step)
 		if r.emit(intent) != nil {
 			result.Status, result.Reason = "failed", "persistence_error"
@@ -610,10 +614,6 @@ func executeStep(ctx context.Context, root, build string, step preparedStep, lim
 		limit = r.limit(step)
 		if limit < 0 {
 			result.Status, result.Reason = "failed", "timeout"
-			return result
-		}
-		if err := r.ensureResult(root, logger); err != nil {
-			result.Status, result.Reason = "failed", "directory_error"
 			return result
 		}
 		merged, cancel := r.merge(ctx)

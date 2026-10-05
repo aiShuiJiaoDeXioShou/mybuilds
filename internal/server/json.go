@@ -30,6 +30,31 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 func writeError(w http.ResponseWriter, err error) {
 	status, code, message := 500, "internal_error", "服务处理失败"
 	switch {
+	case errors.Is(err, store.ErrRetentionRetired):
+		status, code, message = 410, "retention_retired", "构建证据已退役"
+	case errors.Is(err, store.ErrRetentionProtected), errors.Is(err, store.ErrRetentionReadersActive), errors.Is(err, store.ErrRetentionOwnershipUnknown), errors.Is(err, store.ErrRetentionReceiptConflict):
+		status, message = 409, "清理状态或归属无法确认"
+		for _, known := range []error{store.ErrRetentionProtected, store.ErrRetentionReadersActive, store.ErrRetentionOwnershipUnknown, store.ErrRetentionReceiptConflict} {
+			if errors.Is(err, known) {
+				code = known.Error()
+				break
+			}
+		}
+	case errors.Is(err, store.ErrRetentionObjectInvalid), errors.Is(err, store.ErrRetentionLimit):
+		status, message = 400, "清理请求无效"
+		if errors.Is(err, store.ErrRetentionObjectInvalid) {
+			code = "retention_object_invalid"
+		} else {
+			code = "retention_limit"
+		}
+	case errors.Is(err, store.ErrRetentionIO):
+		status, code, message = 409, "retention_io_error", "清理文件操作未确认"
+	case errors.Is(err, store.ErrRetentionInvalid):
+		status, code, message = 400, "retention_invalid", "保留策略无效"
+	case errors.Is(err, store.ErrRetentionTimeout):
+		status, code, message = 504, "retention_timeout", "保留策略操作超时"
+	case errors.Is(err, store.ErrRetentionCancelled):
+		status, code, message = 409, "retention_cancelled", "保留策略操作已取消"
 	case errors.Is(err, store.ErrInvalid):
 		status, code, message = 400, "invalid_request", "请求无效"
 	case errors.Is(err, errPipeline):

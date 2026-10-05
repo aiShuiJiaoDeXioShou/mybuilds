@@ -27,15 +27,23 @@ func (s *Store) Cancel(ctx context.Context, actor Actor, buildID string) (BuildV
 		switch build.Status {
 		case "queued":
 			build.Status = "cancelled"
+			if build.TerminalAt == nil {
+				now := time.Now().UTC()
+				build.TerminalAt = &now
+			}
 			build.Reason = "cancelled"
 			build.CancelRequested = true
 		case "running":
 			build.CancelRequested = true
 		case "cancelled":
+			// 重复请求不是新的终态转换；不能制造可供旧迁移回填的取消审计。
+			var err error
+			view, err = buildView(tx, build)
+			return err
 		default:
 			return ErrConflict
 		}
-		if err := tx.Model(&build).Updates(map[string]any{"status": build.Status, "reason": build.Reason, "cancel_requested": build.CancelRequested}).Error; err != nil {
+		if err := tx.Model(&build).Updates(map[string]any{"status": build.Status, "reason": build.Reason, "cancel_requested": build.CancelRequested, "terminal_at": build.TerminalAt}).Error; err != nil {
 			return err
 		}
 		if err := audit(tx, actor, "build_cancel", buildID, "", build.Status); err != nil {
@@ -61,7 +69,7 @@ func (s *Store) ExpireLeases(ctx context.Context) error {
 			if reason == "" {
 				reason = "lease_expired"
 			}
-			if err := tx.Model(&build).Where("status = ? AND lease_expires_at <= ?", "running", time.Now().UTC()).Updates(map[string]any{"status": "interrupted", "reason": reason, "stop_unconfirmed": true}).Error; err != nil {
+			if err := tx.Model(&build).Where("status = ? AND lease_expires_at <= ?", "running", time.Now().UTC()).Updates(map[string]any{"status": "interrupted", "reason": reason, "stop_unconfirmed": true, "terminal_at": gorm.Expr("COALESCE(terminal_at, ?)", time.Now().UTC())}).Error; err != nil {
 				return err
 			}
 		}

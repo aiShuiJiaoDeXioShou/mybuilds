@@ -25,21 +25,24 @@ type LogPage struct {
 	NextOffset int64                `json:"next_offset"`
 }
 
-func (s *Server) readLogChunk(row store.LogStored) ([]protocol.LogRecord, error) {
+func (s *Server) readLogChunk(ctx context.Context, actor store.Actor, row store.LogStored) (records []protocol.LogRecord, err error) {
 	id, e := uuid.Parse(row.StorageID)
 	if e != nil || id.String() != row.StorageID || row.Size < 1 || row.Size > 64*1024 {
 		return nil, errEvidence
 	}
-	root, e := s.logFiles()
+	held, e := s.openRetentionEvidence(ctx, actor, "log", row.ID)
 	if e != nil {
-		return nil, e
+		return nil, evidenceReadFailure(e)
 	}
-	defer root.Close()
-	f, e := root.OpenFile(row.StorageID, 0|evidenceOpenFlags(), 0)
-	if e != nil {
-		return nil, errEvidence
+	defer func() {
+		if closeErr := held.Close(); closeErr != nil && err == nil {
+			records, err = nil, evidenceReadFailure(closeErr)
+		}
+	}()
+	if held.Read.BuildID != row.BuildID || held.Read.StorageID != row.StorageID || held.Read.Size != row.Size || held.Read.SHA256 != row.Digest {
+		return nil, store.ErrRetentionOwnershipUnknown
 	}
-	defer f.Close()
+	f := held.File
 	info, e := f.Stat()
 	if e != nil || !evidenceInfo(info, false) || info.Size() != row.Size {
 		return nil, errEvidence
@@ -52,7 +55,6 @@ func (s *Server) readLogChunk(row store.LogStored) ([]protocol.LogRecord, error)
 	if hex.EncodeToString(sum[:]) != row.Digest {
 		return nil, errEvidence
 	}
-	var records []protocol.LogRecord
 	if json.Unmarshal(data, &records) != nil || len(records) != row.RecordCount {
 		return nil, errEvidence
 	}
@@ -146,7 +148,7 @@ func (s *Server) logRoute(w http.ResponseWriter, r *http.Request, actor store.Ac
 	}
 	result := LogPage{Records: []protocol.LogRecord{}, NextSeq: after, NextOffset: baseOffset}
 	for _, row := range rows {
-		records, e := s.readLogChunk(row)
+		records, e := s.readLogChunk(r.Context(), actor, row)
 		if e != nil {
 			writeError(w, e)
 			return true
@@ -171,7 +173,7 @@ func (s *Server) followLog(w http.ResponseWriter, r *http.Request, actor store.A
 	// 首批在发流头前核实，坏文件仍以固定JSON失败。
 	chunks := make([]LogPage, 0, len(rows))
 	for _, row := range rows {
-		records, e := s.readLogChunk(row)
+		records, e := s.readLogChunk(r.Context(), actor, row)
 		if e != nil {
 			writeError(w, e)
 			return
@@ -244,7 +246,7 @@ func (s *Server) followLog(w http.ResponseWriter, r *http.Request, actor store.A
 			return
 		}
 		for _, row := range rows {
-			records, e := s.readLogChunk(row)
+			records, e := s.readLogChunk(ctx, actor, row)
 			if e != nil {
 				return
 			}

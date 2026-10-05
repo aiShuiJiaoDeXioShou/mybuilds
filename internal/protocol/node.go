@@ -266,3 +266,60 @@ type StopConfirmation struct {
 	EvidenceCode string   `json:"evidence_code"`
 	Note         string   `json:"note"`
 }
+
+// 节点资源只声明原执行归属和固定槽，不向中央发送路径或旧进程身份。
+type NodeResourceRegistration struct {
+	Ref             LeaseRef                `json:"ref"`
+	ID              string                  `json:"id"`
+	OwnershipDigest string                  `json:"ownership_digest"`
+	HasWorkspace    bool                    `json:"has_workspace"`
+	HasResults      bool                    `json:"has_results"`
+	Completion      *NodeResourceCompletion `json:"completion,omitempty"`
+}
+
+// 独立物理停止之后，节点只确认本次已回传游标及零待确认资源，不授旧执行权。
+type NodeResourceCompletion struct {
+	LastEventSeq    int64  `json:"last_event_seq"`
+	LastLogSeq      int64  `json:"last_log_seq"`
+	LastLogOffset   int64  `json:"last_log_offset"`
+	LastArtifactSeq int64  `json:"last_artifact_seq"`
+	StopCode        string `json:"stop_code"`
+}
+
+// 独立清理事项不授构建租约或用户动作执行权。
+type NodeDeletion struct {
+	ID              string `json:"id"`
+	ResourceID      string `json:"resource_id"`
+	BuildID         string `json:"build_id"`
+	AttemptID       string `json:"attempt_id"`
+	OwnershipDigest string `json:"ownership_digest"`
+	HasWorkspace    bool   `json:"has_workspace"`
+	HasResults      bool   `json:"has_results"`
+}
+
+type DeletionAuthority struct {
+	ID              string    `json:"id"`
+	NodeID          string    `json:"node_id"`
+	ResourceID      string    `json:"resource_id"`
+	OwnershipDigest string    `json:"ownership_digest"`
+	Nonce           string    `json:"nonce"`
+	ExpiresAt       time.Time `json:"expires_at"`
+}
+
+type NodeDeletionConfirmation struct {
+	ID              string `json:"id"`
+	ResourceID      string `json:"resource_id"`
+	OwnershipDigest string `json:"ownership_digest"`
+	Nonce           string `json:"nonce"`
+	Seq             int64  `json:"seq"`
+	Digest          string `json:"digest"`
+	WorkspaceState  string `json:"workspace_state"`
+	ResultsState    string `json:"results_state"`
+	Reason          string `json:"reason"`
+}
+
+type NodeDeletionReceipt struct {
+	ID     string `json:"id"`
+	Seq    int64  `json:"seq"`
+	Digest string `json:"digest"`
+}

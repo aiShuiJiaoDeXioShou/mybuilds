@@ -305,6 +305,7 @@ func (s *Store) Enqueue(ctx context.Context, input EnqueueInput) (BatchResult, e
 			row := buildRecord{ID: id, BatchID: batch.ID, ProjectID: project.ID, Number: allocated, Position: position, Name: b.Name, Status: b.Status, Reason: b.Reason, SnapshotJSON: snapshot, ParameterKeysJSON: encodedKeys, Condition: b.Snapshot.Condition, ReasonsJSON: reasons, InitialBudgetNS: b.InitialBudgetNS, RemainingBudgetNS: b.InitialBudgetNS, PostBudgetNS: b.PostBudgetNS, CreatedAt: batch.CreatedAt}
 			if b.Status == "skipped" {
 				row.Reason = "condition_skipped"
+				row.TerminalAt = &row.CreatedAt
 			}
 			if err := tx.Create(&row).Error; err != nil {
 				return err

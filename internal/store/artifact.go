@@ -166,6 +166,9 @@ func (s *Store) ListArtifacts(ctx context.Context, actor Actor, buildID string, 
 	if err = db.First(&build, "id = ?", buildID).Error; err != nil {
 		return nil, safeError(err)
 	}
+	if err = evidenceReadBuildState(build); err != nil {
+		return nil, err
+	}
 	var files []artifactRecord
 	query := db.Where("build_id = ?", buildID)
 	sealed, err := sealedReports(build)
@@ -197,6 +200,14 @@ func (s *Store) GetArtifact(ctx context.Context, actor Actor, id string) (Artifa
 	if err := authorize(db, actor, "admin", "approver"); err != nil {
 		return ArtifactStored{}, safeError(err)
 	}
+	// 原文件metadata完整清理后，保留事项中的固定对象身份仍能解释410。
+	var retired int64
+	if err := db.Model(&retentionObjectRecord{}).Joins("JOIN retention_jobs ON retention_jobs.id = retention_objects.job_id").Joins("JOIN builds ON builds.id = retention_jobs.build_id").Where("retention_objects.object_id = ? AND retention_objects.kind IN ? AND builds.history_state <> 'live'", id, []string{"artifact", "junit"}).Count(&retired).Error; err != nil {
+		return ArtifactStored{}, safeError(err)
+	}
+	if retired > 0 {
+		return ArtifactStored{}, ErrRetentionRetired
+	}
 	var file artifactRecord
 	if err := db.First(&file, "id = ?", id).Error; err != nil {
 		return ArtifactStored{}, safeError(err)
@@ -204,6 +215,9 @@ func (s *Store) GetArtifact(ctx context.Context, actor Actor, id string) (Artifa
 	var build buildRecord
 	if err := db.First(&build, "id = ?", file.BuildID).Error; err != nil {
 		return ArtifactStored{}, safeError(err)
+	}
+	if err := evidenceReadBuildState(build); err != nil {
+		return ArtifactStored{}, err
 	}
 	if file.Purpose == "junit" {
 		sealed, err := sealedReports(build)

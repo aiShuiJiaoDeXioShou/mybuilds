@@ -47,6 +47,18 @@ func (s *Store) Retry(ctx context.Context, actor Actor, in RetryInput) (BatchRes
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&project, "id = ?", original.ProjectID).Error; err != nil {
 			return err
 		}
+		if original.HistoryState != "live" {
+			// 已退役正文不能再解码；原已确认请求只读返回保留的批次关系。
+			replay, err := findRequest(tx, actor, in.Key, digest)
+			if err != nil {
+				return err
+			}
+			if replay != nil {
+				result = *replay
+				return authorize(tx, actor, "admin", "trigger")
+			}
+			return ErrRetentionRetired
+		}
 		snapshot, steps, err := frozenBuild(tx, original)
 		if err != nil {
 			return err
@@ -139,6 +151,9 @@ func (s *Store) Retry(ctx context.Context, actor Actor, in RetryInput) (BatchRes
 		}
 		if currentOriginal.StopUnconfirmed || currentOriginal.Status != original.Status {
 			return ErrConflict
+		}
+		if currentOriginal.HistoryState != "live" {
+			return ErrRetentionRetired
 		}
 		if _, err = retryAuthorization(currentProject, snapshot, batch.Branch, steps, actor, in.AllowUpload); err != nil {
 			return err

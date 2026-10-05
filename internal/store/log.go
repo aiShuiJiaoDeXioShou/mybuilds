@@ -73,13 +73,16 @@ func (s *Store) ListLogChunks(ctx context.Context, actor Actor, buildID string, 
 	if err = db.First(&build, "id = ?", buildID).Error; err != nil {
 		return nil, safeError(err)
 	}
+	if err = evidenceReadBuildState(build); err != nil {
+		return nil, err
+	}
 	var rows []logChunkRecord
 	if err = db.Where("build_id = ? AND seq > ?", buildID, afterSeq).Order("seq ASC").Limit(page.Limit).Offset(page.Offset).Find(&rows).Error; err != nil {
 		return nil, safeError(err)
 	}
 	result := make([]LogStored, 0, len(rows))
 	for _, row := range rows {
-		result = append(result, LogStored{BuildID: row.BuildID, AttemptID: row.AttemptID, Seq: row.Seq, Offset: row.Offset, Size: row.Size, Digest: row.Digest, StorageID: row.StorageID, RecordCount: row.RecordCount, CreatedAt: row.CreatedAt.UTC()})
+		result = append(result, LogStored{ID: row.ID, BuildID: row.BuildID, AttemptID: row.AttemptID, Seq: row.Seq, Offset: row.Offset, Size: row.Size, Digest: row.Digest, StorageID: row.StorageID, RecordCount: row.RecordCount, CreatedAt: row.CreatedAt.UTC()})
 	}
 	return result, nil
 }

@@ -37,7 +37,10 @@ func serverFixture(t *testing.T) (*Server, *store.Store, *httptest.Server) {
 	if err = st.Bootstrap(context.Background(), adminToken); err != nil {
 		t.Fatal(err)
 	}
-	s := New(st, config.ServerConfig{DataDir: dir, Concurrency: 3, HeartbeatInterval: 5 * time.Second, LeaseDuration: 30 * time.Second, Listen: "127.0.0.1:8787"})
+	s := New(st, config.ServerConfig{Retention: config.Retention{Builds: 100, Days: 30}, DataDir: dir, Concurrency: 3, HeartbeatInterval: 5 * time.Second, LeaseDuration: 30 * time.Second, Listen: "127.0.0.1:8787"})
+	if err = st.SyncGlobalRetention(context.Background(), s.config.Retention); err != nil {
+		t.Fatal(err)
+	}
 	h := httptest.NewServer(s.Handler())
 	t.Cleanup(h.Close)
 	return s, st, h

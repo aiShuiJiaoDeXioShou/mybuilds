@@ -31,6 +31,8 @@ MVP 目标已扩展至原生/Flutter 双平台、多节点构建、Google Play/A
 项目组已经接入：注册时可选组，未指定归入 default，支持普通组改名、空组删除和项目迁移，项目历史与编号保持。
 一个 YAML 的多个命名 build、本地参数/env 映射、when、累计超时、post 和日志时间戳已经实现；无 YAML 绑定双平台方案、自动变更筛选、Webhook 等待窗口、保留策略与发布审批仍待实现。019 JUnit 已接入本地检查、原XML快照与封存，以及Agent回传、中央详情和下载；双库名义应用各92项、最终20故障192断言及macOS/Linux实机门通过；全量test/race/vet、12编译通过，Spec Kit收敛无缺口，验收通过，整功能提交见[实施历史](docs/IMPLEMENTATION_HISTORY.md)。
 
+`020-project-retention` 已完成自动及实际联验：策略继承、候选/事项管理、读取保护、中央及原节点清理、分钟后台与持久公平续扫已接通。macOS/Linux各SQLite/PostgreSQL三程序通过离线重连、轮换、20次重放、101幂等与102继续、真实SQL故障恢复及周边文件/进程保持；全量普通、必要race/vet和六平台18CLI编译通过，见[验证记录](specs/020-project-retention/validation.md)。后续审批与发布unknown由对应模块接入同一保护函数。
+
 ## 开发与运行
 
 要求 Go **1.25 或更新版本**、Git。首次下载 Go 依赖需要网络；已使用 Cobra、YAML v3、doublestar/v4，以及管理配置的 Viper 1.21.0、数据库访问的 GORM 1.31.2 与 SQLite/PostgreSQL 双驱动。SQLite 引擎锁定 modernc.org/sqlite 1.55.0（实际 SQLite 3.53.3），包含 WAL 修补；依赖版本见 [go.mod](go.mod) 和 [go.sum](go.sum)。
@@ -427,3 +429,5 @@ $speckit-specify → $speckit-plan → $speckit-tasks → $speckit-analyze → $
 - [初始化规范](specs/000-project-bootstrap/spec.md)：本次范围与验收要求。
 
 变更入口、目录、运行方式或已实现能力时，同步更新本文。
+
+用户于2026-10-05调整交付方式：剩余模块先完成代码和必要自动验证，最后使用统一Flutter双平台案例集中人工验收；真实Apple签名、两大商店和外部Webhook成功门明确列为人工待验，不阻塞并行开发，也不冒称已通过。

@@ -152,12 +152,38 @@ func (r *remoteRun) ensureResult(workspace string, logger *runLogger) error {
 	if err != nil {
 		return err
 	}
+	r.resultDir = dir
+	if r.options.ResultCreated != nil {
+		// 实际创建立即登记，网络及持久化时间继续扣原累计预算。
+		remaining, post := r.budgets()
+		if r.postActive {
+			remaining = &post
+		}
+		ctx := r.authority
+		cancel := func() {}
+		if remaining != nil {
+			if *remaining <= 0 {
+				r.fail("persistence_error")
+				return context.DeadlineExceeded
+			}
+			ctx, cancel = context.WithTimeout(ctx, time.Duration(*remaining))
+		}
+		err = r.options.ResultCreated(ctx, dir)
+		if err == nil {
+			err = ctx.Err()
+		}
+		cancel()
+		if err != nil {
+			// 已登记或归属未确认的真实目录保留，不能自行删除恢复依据。
+			r.fail("persistence_error")
+			return errors.New("结果登记失败")
+		}
+	}
 	logger.root, err = os.OpenRoot(dir)
 	if err != nil {
-		_ = os.RemoveAll(dir)
+		r.fail("persistence_error")
 		return errors.New("结果目录不可用")
 	}
-	r.resultDir = dir
 	return nil
 }
 func resultDirectoryParent(workspace, parent string) (string, error) {

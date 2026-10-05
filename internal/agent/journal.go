@@ -18,6 +18,7 @@ type journalState struct {
 	Artifacts                             []localArtifact                `json:"artifacts,omitempty"`
 	ArtifactSteps                         []protocol.ArtifactExpectation `json:"artifact_steps,omitempty"`
 	ClaimKey                              string                         `json:"claim_key"`
+	ResourceID                            string                         `json:"resource_id,omitempty"`
 	SessionID                             string                         `json:"session_id"`
 	Ref                                   *protocol.LeaseRef             `json:"ref,omitempty"`
 	LastEventSeq                          int64                          `json:"last_event_seq"`

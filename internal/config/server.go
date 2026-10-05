@@ -22,6 +22,7 @@ type DatabaseConfig struct {
 	DSN    string `yaml:"dsn" mapstructure:"dsn" json:"-"`
 }
 type ServerConfig struct {
+	Retention         Retention      `yaml:"retention" mapstructure:"retention" json:"retention"`
 	Listen            string         `yaml:"listen" mapstructure:"listen"`
 	DataDir           string         `yaml:"data_dir" mapstructure:"data_dir"`
 	SecretsFile       string         `yaml:"secrets_file" mapstructure:"secrets_file" json:"-"`
@@ -33,6 +34,7 @@ type ServerConfig struct {
 
 // serverFile保留duration的严格YAML字符串类型，合并后再转换为time.Duration。
 type serverFile struct {
+	Retention         Retention      `yaml:"retention"`
 	Listen            string         `yaml:"listen"`
 	DataDir           string         `yaml:"data_dir"`
 	SecretsFile       string         `yaml:"secrets_file"`
@@ -63,6 +65,8 @@ func LoadServer(options ServerLoadOptions) (ServerConfig, error) {
 	}
 	values := viper.New()
 	values.SetConfigType("yaml")
+	values.SetDefault("retention.builds", int64(100))
+	values.SetDefault("retention.days", int64(30))
 	values.SetDefault("listen", "127.0.0.1:8787")
 	values.SetDefault("concurrency", 1)
 	values.SetDefault("heartbeat_interval", "5s")
@@ -111,6 +115,9 @@ func LoadServer(options ServerLoadOptions) (ServerConfig, error) {
 	}
 	if !validLeasePolicy(cfg.HeartbeatInterval, cfg.LeaseDuration) {
 		return ServerConfig{}, invalid("服务端策略", "心跳或租约不合法")
+	}
+	if err := ValidateRetention(cfg.Retention); err != nil {
+		return ServerConfig{}, err
 	}
 	host, port, err := net.SplitHostPort(cfg.Listen)
 	if err != nil || !validConfigurationHost(host) {

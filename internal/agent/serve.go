@@ -103,6 +103,7 @@ func Serve(ctx context.Context, cfg config.AgentConfig) (result error) {
 					continue
 				}
 				if e != nil {
+					client.paused.Store(true)
 					select {
 					case heartbeatErrors <- e:
 					case <-live.Done():
@@ -118,6 +119,9 @@ func Serve(ctx context.Context, cfg config.AgentConfig) (result error) {
 	var requested, claimDeadline time.Time
 	claimExpired := false
 	usage := &spoolUsage{}
+	// 清理与构建互斥；心跳仍由原goroutine维持，未知确认阻断新claim。
+	deletionReady := false
+	var deletionNext time.Time
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -141,6 +145,36 @@ func Serve(ctx context.Context, cfg config.AgentConfig) (result error) {
 		case <-ticker.C:
 			if e := lock.Check(); e != nil {
 				return e
+			}
+			if active == 0 && pending == nil && !client.paused.Load() {
+				if !time.Now().Before(deletionNext) {
+					deletionNext = time.Now().Add(5 * time.Second)
+					cleanupCtx, cancelCleanup := context.WithTimeout(live, 30*time.Second)
+					e := recoverNodeDeletionConfirmations(cleanupCtx, client, lock, grant.NodeID)
+					deletionReady = e == nil
+					if e == nil {
+						var items []protocol.NodeDeletion
+						e = client.get(cleanupCtx, "/api/agent/deletions?limit=1", &items)
+						if e == nil && len(items) != 0 {
+							// 每次只领取实际会处理的一项，由中央持久位置保证公平。
+							e = advanceNodeDeletion(cleanupCtx, client, lock, grant.NodeID, items[0])
+							// ACK不确定时先补原确认，不能直接进入构建。
+							if temporaryNetwork(e) {
+								deletionReady = false
+							}
+						}
+					}
+					cancelCleanup()
+					if ctx.Err() != nil {
+						return nil
+					}
+					if e != nil && (!deletionReady && !temporaryNetwork(e) || !nodeDeletionCanWait(e)) {
+						return e
+					}
+				}
+				if !deletionReady {
+					continue
+				}
 			}
 			if pending == nil {
 				if active >= cfg.Capacity || client.paused.Load() {
@@ -221,6 +255,22 @@ func Serve(ctx context.Context, cfg config.AgentConfig) (result error) {
 			}()
 		}
 	}
+}
+
+// 单事项保护/物理失败保留证据等待下一轮；身份、协议及控制权失败退出。
+func nodeDeletionCanWait(err error) bool {
+	if err == nil || temporaryNetwork(err) {
+		return true
+	}
+	safe, ok := err.(*Error)
+	if !ok {
+		return false
+	}
+	switch safe.Code {
+	case "retention_protected", "retention_readers_active", "retention_ownership_unknown", "retention_timeout", "retention_io_error", "identity_mismatch", "invalid_object", "permission_denied", "authority_expired", "operation_timeout", "resource_unconfirmed", "persistence_error":
+		return true
+	}
+	return false
 }
 
 func checkSessionGrant(cfg config.AgentConfig, sessionID, nodeID string, grant protocol.SessionGrant) error {

@@ -94,6 +94,9 @@ type BuildFilter struct {
 	Page                                       Page
 }
 type BuildView struct {
+	HistoryState          string                   `json:"history_state,omitempty"`
+	TerminalAt            *time.Time               `json:"terminal_at,omitempty"`
+	CleanedAt             *time.Time               `json:"cleaned_at,omitempty"`
 	Reports               *protocol.ReportEvidence `json:"reports,omitempty"`
 	ReportSealDigest      string                   `json:"report_seal_digest,omitempty"`
 	RetryOf               string                   `json:"retry_of,omitempty"`
@@ -148,8 +151,11 @@ type projectRecord struct {
 	Group                                 groupRecord `gorm:"foreignKey:GroupID;constraint:OnDelete:RESTRICT"`
 	Repository, Provider, DefaultNode     string
 	BranchesJSON, NodesJSON, SettingsJSON string
-	NextNumber                            int64 `gorm:"not null;check:next_number > 0"`
-	PolicyVersion                         int64 `gorm:"not null;check:policy_version > 0"`
+	NextNumber                            int64  `gorm:"not null;check:next_number > 0"`
+	PolicyVersion                         int64  `gorm:"not null;check:policy_version > 0"`
+	RetentionCandidateCursor              string `gorm:"not null;default:'';size:36"`
+	RetentionObjectCursor                 string `gorm:"not null;default:'';size:36"`
+	RetentionFinalizeCursor               string `gorm:"not null;default:'';size:36"`
 	CreatedAt, UpdatedAt                  time.Time
 }
 
@@ -166,8 +172,9 @@ type identityRecord struct {
 func (identityRecord) TableName() string { return "identities" }
 
 type metadataRecord struct {
-	ID                  int  `gorm:"primaryKey;autoIncrement:false"`
-	IdentityInitialized bool `gorm:"not null"`
+	ID                  int    `gorm:"primaryKey;autoIncrement:false"`
+	IdentityInitialized bool   `gorm:"not null"`
+	EvidenceReadOwner   string `gorm:"not null;default:'';size:36"`
 }
 
 func (metadataRecord) TableName() string { return "control_metadata" }
@@ -191,6 +198,9 @@ type batchRecord struct {
 func (batchRecord) TableName() string { return "batches" }
 
 type buildRecord struct {
+	TerminalAt                                               *time.Time
+	HistoryState                                             string `gorm:"not null;default:live"`
+	CleanedAt                                                *time.Time
 	ReportRevision                                           int64         `gorm:"not null;default:0"`
 	ReportFinal                                              bool          `gorm:"not null;default:false"`
 	ReportsJSON                                              string        `gorm:"not null;default:''"`
