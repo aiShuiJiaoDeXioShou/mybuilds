@@ -1,6 +1,6 @@
 # 触发链路、目录与 CLI / HTTP 接口
 
-006 已实现命令范围与最小示例见 [README](../../README.md#控制端与远程排队)；本文件仍描述完整目标接口，Agent、恢复、方案、发布、审批和 Webhook 需对应功能验收后使用。
+006 已实现命令范围与最小示例见 [使用指南](../USAGE.md#控制端与远程排队)；本文件仍描述完整目标接口，Agent、恢复、方案、发布、审批和 Webhook 需对应功能验收后使用。
 
 本文件保留原 [PLAN.md](PLAN.md) 的完整专题章节；业务功能按 [实施路线](SPECKIT_ROADMAP.md) 推进，当前状态见 [实施历史](../IMPLEMENTATION_HISTORY.md)。
 

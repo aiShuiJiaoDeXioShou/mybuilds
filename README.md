@@ -1,605 +1,190 @@
 # mybuilds
 
-面向原生 Android/iOS 与 Flutter 工程的构建发布工具，用 Go 实现。
-提供客户端 `mybuilds`、控制端 `mybuilds-server` 与构建节点 `mybuilds-agent` 三种 CLI。
-一个控制端管理多个构建节点，按平台、标签和容量分配任务；客户端也支持本地调试流水线。
+面向原生 Android、iOS 和 Flutter 的命令行构建发布工具。
 
-本文是整个项目的概览入口。产品与技术决策见 [产品计划](docs/plans/PLAN.md)，功能顺序见 [实施路线](docs/plans/SPECKIT_ROADMAP.md)。
+在仓库中定义流水线，通过客户端发起构建，由控制端将任务分配给具备对应工具链的节点。一个仓库可以包含多个命名 build，例如 Android、iOS 或不同应用变体；也可以在本地运行流水线进行调试。
 
-## 导航
+## 目录
 
-- [当前状态](#当前状态)
-- [开发与运行](#开发与运行)
-- [MVP 验收](#mvp-验收)
-- [控制端与远程排队](#控制端与远程排队)
-- [独立节点、日志与制品](#独立节点日志与制品)
-- [目录结构](#目录结构)
-- [多节点目标](#多节点目标)
-- [技术方向](#技术方向)
-- [验证与版本注入](#验证与版本注入)
-- [审批与 Webhook](#审批与webhook)
-- [使用 Spec Kit 开发](#使用-spec-kit-开发)
+- [功能](#功能)
+- [平台与限制](#平台与限制)
+- [安装](#安装)
+- [快速开始](#快速开始)
+- [移动项目接入](#移动项目接入)
+- [配置](#配置)
+- [常用命令](#常用命令)
+- [文档与示例](#文档与示例)
+- [项目结构](#项目结构)
+- [参与开发](#参与开发)
+- [许可证](#许可证)
 
-## 当前状态
+## 功能
 
-MVP有16个功能模块，目前16个已经完成代码与必要自动检查并本地提交；Apple/Flutter合法签名和真实商店发布由用户集中人工验收。实现顺序、精确提交与验证记录见[实施历史](docs/IMPLEMENTATION_HISTORY.md)，不把代码交付等同于全部人工验收通过。
+- **移动端构建**：提供 Android、iOS、Flutter 可编辑模板，支持仓库 shell 脚本和自定义模板。
+- **多节点调度**：按平台、标签、容量和项目授权分配任务，固定 Git 提交执行，支持取消及原快照重试。
+- **流水线控制**：多 build、命名参数、`when` 条件、超时、`post` 收尾和发布审批。
+- **发布与扩展**：通过锁定的 fastlane 工具支持 Google Play、App Store，也支持自定义发布脚本。
+- **自动触发**：接收 GitHub、GitLab、Gitee 和 generic Webhook，支持重复投递去重、固定等待窗口与变更路径筛选。
+- **构建记录**：中央日志、制品下载、SHA-256 核对、JUnit 测试报告、项目组和保留清理策略。
+- **配置复用**：优先使用仓库配置，文件缺失时可回退到项目绑定的构建方案，也可强制使用方案。
 
-| 能力 | 状态与验证入口 |
+mybuilds 包含三个程序：
+
+| 程序 | 职责 |
 |---|---|
-| 001–003 配置预览、shell执行、产物快照 | 已完成；单YAML多build、scoped参数、when、累计超时、post与脱敏日志 |
-| 004 Android | 已完成实际APK/AAB签名与版本验证；[指南](specs/004-android-build/quickstart.md) |
-| 005 iOS、009 Flutter | 代码与自动检查完成；临时签名资源、可编辑双平台模板与框架调度；[iOS指南](specs/005-ios-build/quickstart.md)、[Flutter工程](examples/flutter/README.md)；合法IPA等由用户人工验收 |
-| 006–008 控制端、节点、恢复 | 已完成双库与macOS/Linux实际程序验收；项目组、多节点授权/调度、原SHA入队、日志/下载、恢复与显式retry |
-| 019 测试报告、020 保留 | 已完成实际联验；JUnit原XML解析/封存与下载、受保护的中央及原节点清理；[报告记录](specs/019-test-reports/validation.md)、[清理记录](specs/020-project-retention/validation.md) |
-| 010/011 Google Play/App Store | 代码与必要自动检查完成；共同发布授权、工具、应用保护、精确GET核对与CLI；[Google记录](specs/010-google-play/validation.md)、[Apple记录](specs/011-app-store/validation.md)；真实商店人工待验 |
-| 012 可复用方案/custom | 代码与必要自动检查完成；repo/auto/profile完整来源选择、四内置方案、命名参数与原快照重试、用户argv发布和metadata查询；[指南](specs/012-custom-workflows/quickstart.md)、[脚本案例](examples/custom/README.md) |
-| 014 审批 | 代码与必要自动检查完成；精确CLI决定、释放容量与原节点续执行、本地TTY；[指南](specs/014-release-approval/quickstart.md) |
-| 015 Webhook | 代码与必要自动检查完成；四来源有限认证、固定窗口去重与原SHA changes筛选；[指南](specs/015-webhook-trigger/quickstart.md) |
+| `mybuilds` | 初始化与预览流水线、本地执行、远程触发、查询、下载和审批 |
+| `mybuilds-server` | 管理项目、身份、队列、审批、数据库与中央构建记录 |
+| `mybuilds-agent` | 在节点上诊断工具、领取任务、执行构建并回传日志与制品 |
 
-[Flutter集中验收案例](examples/mvp/acceptance.md)从实际CLI模板生成一个仓库的Android/iOS配置、控制端和两个节点设置，串联测试、下载、审批与商店分发。生成/dry-run和实际Flutter测试已通过；双库三CLI联合案例覆盖两次审批、custom实际HTTPS上传、原文件下载和只读核对，验证见[案例记录](examples/mvp/validation.md)。合法签名与真实商店人工待验。通知013、轮询/cron016、额外渠道017与部署打磨018属于后续功能。
+控制端使用 SQLite 或 PostgreSQL，一个控制端可以管理多个 Agent。单次 build 固定在一个节点执行；同项目同名 build 串行，不同 build 可以按容量并行。
 
-## 开发与运行
+## 平台与限制
 
-要求 Go **1.25 或更新版本**、Git。首次下载 Go 依赖需要网络；已使用 Cobra、YAML v3、doublestar/v4，以及管理配置的 Viper 1.21.0、数据库访问的 GORM 1.31.2 与 SQLite/PostgreSQL 双驱动。SQLite 引擎锁定 modernc.org/sqlite 1.55.0（实际 SQLite 3.53.3），包含 WAL 修补；依赖版本见 [go.mod](go.mod) 和 [go.sum](go.sum)。
-帮助、版本、init 和 dry-run 无需移动工具链。Android doctor 要求 Java 17+、已有 Android SDK 和工程内 Gradle wrapper；完整构建以工程实际要求为准，不自动安装 SDK。新增签名行为测试需要 JDK/keytool。
-iOS签名要求macOS15+、现代Xcode/iOS SDK以及Darwin+cgo构建；不自动下载或管理签名材料。非macOS/无cgo仍能init和dry-run，实际签名明确未支持。
-本地执行和控制端支持 macOS/Linux；本地脚本需要 sh 或所选 bash，Git 快照需要 Git。Windows 客户端可纯 Go 编译和调用远程 API，本地执行与本机控制端明确未支持。
+| 环境 | 支持范围 |
+|---|---|
+| macOS | 客户端、本地执行、控制端及 Agent；具备工具链时可构建 Android/iOS/Flutter |
+| Linux | 客户端、本地执行、控制端及 Agent；具备工具链时可构建 Android/Flutter Android |
+| Windows | 客户端远程 API、配置生成与预览；本地执行、控制端和 Agent 运行暂不支持 |
 
-在项目根目录运行：
+帮助、版本、配置生成与 dry-run 不需要移动工具链。实际构建需自行准备工程依赖：Android 使用 Java 17+、Android SDK 和项目 Gradle wrapper；Flutter 需要 Flutter SDK；iOS 签名需要 macOS 15+、Xcode/iOS SDK、合法签名材料，以及在 macOS 上启用 cgo 编译的程序。
+
+商店分发还需 Ruby/Bundler、项目锁定的 fastlane 工具及对应渠道凭据，Google Play 另需指定版本的 bundletool。具体要求见[构建与发布指南](docs/USAGE.md)。iOS 签名及真实商店发布需要在你的应用和账号环境中验证，步骤见[验收指南](docs/ACCEPTANCE.md)。
+
+节点直接在宿主机执行仓库脚本，请使用可信仓库和独立构建账户。跨主机部署使用验证证书的 HTTPS 入口；控制端可通过反向代理提供 HTTPS，客户端和 Agent 不支持跳过证书校验。
+
+当前版本采用 CLI，尚未提供 Web 界面、机器人通知发送和轮询/cron 触发。
+
+## 安装
+
+要求 Go **1.25 或更新版本**和 Git。从已有项目源码目录构建三个程序；以下命令以 macOS/Linux 为例：
 
 ```bash
 go mod download
-go run ./cmd/mybuilds --help
-go run ./cmd/mybuilds version
-go run ./cmd/mybuilds-server --help
-go run ./cmd/mybuilds-server version
-# 独立构建节点入口
-go run ./cmd/mybuilds-agent --help
-go run ./cmd/mybuilds-agent version
-go run ./cmd/mybuilds-agent doctor --json
-go run ./cmd/mybuilds run --file examples/pipeline-preview.yml --all --dry-run
-```
-
-三个版本命令默认输出相同：
-
-```text
-dev (commit: unknown, built: unknown)
-```
-
-构建本机二进制：
-
-```bash
 mkdir -p bin
 go build -o bin/mybuilds ./cmd/mybuilds
 go build -o bin/mybuilds-server ./cmd/mybuilds-server
 go build -o bin/mybuilds-agent ./cmd/mybuilds-agent
-./bin/mybuilds --help
-./bin/mybuilds-server version
-```
 
-`bin/` 不进入 Git。未指定远端仓库，Go 模块名暂为 `mybuilds`。
-无参数运行显示帮助；未知子命令或 `version` 多余参数返回非零退出码。
-
-在目标仓库运行 `mybuilds init` 创建最小 `mybuilds.yml`，已有目标拒绝覆盖；`init --template ./ci/template.yml` 使用经校验的本地模板。
-`mybuilds init --platform android` 默认使用 native 框架，等价于 `--framework native --platform android`，生成一个 `builds.android`。模板默认 app/release，构建 APK/AAB/mapping；工程须显式读取 `APP_VERSION/BUILD_NUMBER` 和签名环境变量，release 须开启 R8。参数默认 1.0.0/1，覆盖使用 `--param version=1.2.3 --param build_number=42`；任务与路径均可编辑。
-`mybuilds doctor --platform android --json --working-dir <工程目录>` 检查实际 Java、SDK 包和 wrapper。签名检查须显式提供 `--keystore`、`--key-alias`、`--store-password-env`、`--key-password-env`，两个密码仅从指定环境变量读取；未声明签名为 skipped，任一 failed 返回非零。doctor 默认 android；007 支持 `doctor --node NODE` 和 `doctor --server`；节点诊断读取最近实际报告，节点离线明确失败。首次 wrapper 检查可能下载工程锁定的 Gradle 到缓存，普通 run 不会自动调用 doctor。
-`run --dry-run` 只输出脱敏 JSON，不执行脚本、Git 或网络请求，也不读取密钥。多 build 必须用 `--build android,ios` 或 `--all`，参数用重复的 `--param key=value`；`--step` 仅限单 build。
-去掉 `--dry-run` 执行本地脚本：日志写 stderr，脱敏结果 JSON 写 stdout，失败/取消返回非零。配置路径不改变当前工作目录，多个 build 顺序执行；`--step` 只运行选中普通步骤，不自动执行前序依赖。
-先校验整批再启动脚本；本地审批要求真实终端明确确认，远程审批释放容量后只在原节点续执行；通知仍明确未支持，`enabled: false`可关闭。本地生效upload在任何脚本前拒绝，商店分发使用远程控制端授权和节点实际工具。
-artifact 支持相对根目录递归 glob（`**`）；每个模式须匹配普通文件，按步骤保存独立快照、大小和 SHA-256。结果 JSON 的 `result_dir` 定位临时结果根，`log_path` 定位 UTC 脱敏步骤日志，失败后仍保留完整证据。普通与 post 的快照分开；结果数据不进入源码工作树。预览、预检查失败、全部跳过不创建结果目录。
-可运行的本地例子见 [local-run.yml](examples/local-run.yml) 和 [local-artifacts.yml](examples/local-artifacts.yml)，在临时目录以已构建二进制的绝对路径和 `--file` 指向该例子运行。
-
-JUnit 本地示例见 [local-reports.yml](examples/local-reports.yml)：在独立临时工作目录运行 `mybuilds run --file <示例绝对路径> --build junit`。示例会生成失败报告并返回非零，结果只统计同路径最后一次普通执行生成的5个case；failure/always仍运行，post改写原文件不改变封存结果。实际配置使用 `reports.junit.paths: [results/*.xml]`，`required` 默认true；false只允许缺失，非法XML或测试失败仍失败。开始前的旧XML不计入，报告耗时计入普通构建预算。
-结果JSON包含报告计数、有限诊断、安全相对路径和原XML的大小/SHA-256；独立快照和manifest位于结果目录。未配置报告或全部跳过不生成报告结果。远程构建也使用同一检查流程，最终XML完整上传并经服务端重新解析后才封存。`build show`显示已封存计数、来源和摘要，`artifact ls`列出junit用途，`artifact download`下载中央确认的原字节，节点离线仍可用；admin/approver可读，trigger/node身份不可读取用户报告。019最终故障验收已通过，见[验证记录](specs/019-test-reports/validation.md)。
-报告路径模板支持参数及project、build.name/build.id/build.number、node.name、git.sha/git.branch；本地运行须有相应事实，缺失在执行前报错。workspace、step.name属于私有步骤上下文，不能用于报告路径。
-原生iOS使用`mybuilds init --framework native --platform ios`（当前目录，已有配置不覆盖）；五个必填参数为xcode_project、scheme、bundle_id、version、build_number，export_method默认debugging。IOS_P12_FILE/IOS_PROFILE_FILE/IOS_P12_PASSWORD仅通过ios_signing完整环境引用声明，预览不读取这些值。实际执行用单一app/profile、临时keychain、排他profile副本与工作树外的DerivedData/archive/export目录；普通步骤及用户post结束后系统独立Close，清理不确定保留原原因并闭锁，不修改用户default/search list。可编辑模板见[native-ios.yml](examples/native-ios.yml)，完整预览、实际命令和人工IPA/dSYM核验见[005指南](specs/005-ios-build/quickstart.md)。
-
-Android 工程接入、临时测试签名和构建命令见 [Android 示例](examples/android/README.md)；完整包核验见 [004 验收指南](specs/004-android-build/quickstart.md)。
-
-## MVP 验收
-
-从下面的本地检查开始，再按[Flutter 双平台集中验收指南](examples/mvp/acceptance.md)启动控制端和两个节点。建议先完成 `internal` 构建、测试与下载，再运行 `store` 审批与分发。已执行的自动检查见[案例验证记录](examples/mvp/validation.md)和[118 项联合检查摘要](examples/mvp/evidence.json)；真实签名、商店及外部 Git 平台投递需要另行记录结果。
-
-### 1. 本地检查：无需移动工具链和商店账号
-
-先在项目根目录按上一节构建三个二进制，然后执行：
-
-```bash
 export MYBUILDS_ROOT="$PWD"
 export PATH="$MYBUILDS_ROOT/bin:$PATH"
-mybuilds version
-mybuilds-server version
-mybuilds-agent version
-mybuilds run --file "$MYBUILDS_ROOT/examples/pipeline-preview.yml" --all --dry-run
-
-local_case_dir="$(mktemp -d)"
-(
-  cd "$local_case_dir"
-  mybuilds run --file "$MYBUILDS_ROOT/examples/local-artifacts.yml" > result.json
-)
+mybuilds --help
+mybuilds-server --help
+mybuilds-agent --help
 ```
 
-**通过标准：**三入口正常响应，dry-run 输出脱敏计划；本地执行退出码为 0，`result.json` 包含日志、产物快照和 `result_dir`。普通步骤的两个文件快照保持 `original-*` 内容，post 快照保存改写后的 `post-*` 内容，两者分别有大小和 SHA-256。这一步验证执行与快照，不验证移动端构建或远程调度。
+`bin/` 不进入 Git。默认源码构建的版本输出为 `dev (commit: unknown, built: unknown)`；版本注入方法见[开发指南](docs/DEVELOPMENT.md#验证与版本注入)。
 
-### 2. 生成 Flutter 双平台案例
+## 快速开始
 
-继续在 mybuilds 项目根目录执行。目标案例目录必须尚不存在，生成器会拒绝覆盖：
+先体验本地流水线，无需启动控制端或准备商店账号。在完成安装的同一终端执行：
 
 ```bash
-case_parent="$(mktemp -d)"
-export CASE_DIR="$case_parent/flutter-mvp"
-python3 examples/mvp/prepare.py "$MYBUILDS_ROOT/bin/mybuilds" "$CASE_DIR"
-cd "$CASE_DIR/repo"
-mybuilds run --file ./mybuilds.yml --all --dry-run \
-  --param android:application_id=dev.mybuilds.mvp_flutter --param android:flavor=production \
-  --param ios:xcode_project=ios/Runner.xcworkspace --param ios:scheme=Runner \
-  --param ios:bundle_id=dev.mybuilds.mvpFlutter --param ios:export_method=app-store-connect
+demo_dir="$(mktemp -d)"
+cd "$demo_dir"
+mybuilds init
+mybuilds run --dry-run
+mybuilds run
 ```
 
-生成的文件各司其职：
+`init` 创建最小 `mybuilds.yml`，已有文件时拒绝覆盖。dry-run 输出脱敏计划，不执行脚本、不读取密钥；实际 run 执行默认 `hello` 步骤，提示你编辑构建配置。
 
-| 文件或目录 | 用途 |
+实际执行的日志写入 stderr，结果 JSON 写入 stdout；结果中的 `result_dir` 指向本次日志和快照目录。配置文件路径不改变脚本工作目录，本地结果存放在工作树之外。
+
+体验参数、条件与收尾可在同一临时目录运行仓库中的示例：
+
+```bash
+mybuilds run --file "$MYBUILDS_ROOT/examples/local-run.yml" \
+  --param message=hello --param release=no
+```
+
+完整服务端初始化、项目登记和节点启动步骤见[使用指南](docs/USAGE.md#控制端与远程排队)。
+
+## 移动项目接入
+
+在已有移动工程中生成配置；执行前确认该目录尚无 `mybuilds.yml`。按项目类型选择其中一条命令：
+
+```bash
+# 原生 Android
+mybuilds init --framework native --platform android
+
+# 原生 iOS
+mybuilds init --framework native --platform ios
+
+# Flutter：一个配置包含 Android、iOS 两个 build
+mybuilds init --framework flutter --platform android,ios
+```
+
+这些命令只生成流水线，不创建移动工程或安装 SDK。编辑生成的配置，填写应用标识、工程参数与签名环境引用，并按工程实际要求调整脚本。多 build 运行时使用 `--build android,ios` 或 `--all`；参数可用 `--param version=1.0.0` 共享，也可用 `--param android:flavor=production` 只覆盖某个 build。
+
+内置模板、本地 `--template` 文件和服务端可复用构建方案的接入方式见[使用指南](docs/USAGE.md#本地配置与执行)及[方案指南](specs/012-custom-workflows/quickstart.md)。可直接参考[Android 工程](examples/android/README.md)和[Flutter 双平台工程](examples/flutter/README.md)。
+
+## 配置
+
+| 配置 | 用途与路径规则 |
 |---|---|
-| `repo/mybuilds.yml` | 同一个 Flutter 仓库中的 `android`、`ios` 两个命名 build；包含真实测试、JUnit、收尾、审批与上传步骤 |
-| `settings.yml` | 项目选择仓库配置，绑定应用标识和各 build 参数；不是另一份流水线 |
-| `profile-settings.yml` | 切换到可复用内置构建方案的独立验收设置 |
-| `server.yml`、`client.yml` | 控制端和客户端配置；本例为同机回环 HTTP、SQLite、全局并发 2 |
-| `agent-android.yml`、`agent-ios.yml` | 两个独立节点的身份、数据目录、秘密文件和工具路径 |
+| 仓库 `mybuilds.yml` | 定义构建参数、环境引用、步骤、条件、报告、审批与上传 |
+| 项目 `settings.yml` | 登记项目时通过 `--settings` 读取，选择仓库文件或构建方案、各 build 参数和项目策略 |
+| `client.yml` | 控制端地址、用户 token、请求超时与可选 CA；默认 `~/.mybuilds/client.yml` |
+| `server.yml` | 监听地址、数据库、并发、数据目录及默认策略；默认 `~/.mybuilds/server.yml` |
+| `agent.yml` | 节点名称、独立 token、数据目录、工具和秘密文件；默认 `~/.mybuilds/agent.yml` |
 
-这里的参数与生成的 settings 示例一致，接入你自己的应用时同步替换。本地 run 不读取项目 settings，所以需显式传入必填参数；远程 trigger 使用登记后的 settings。**通过标准：**只用一个仓库 YAML 就能预览两个 build，默认 `channel=internal` 时审批和上传步骤跳过。生成/dry-run 不读取签名材料，也不执行测试或构建。
+`--settings ./settings.yml` 由客户端按当前目录读取；其中 `pipeline.file` 是仓库相对路径。项目设置支持 `repo`、`auto`、`profile`：repo 要求仓库文件，auto 仅在该文件确实缺失时回退到绑定方案，profile 使用完整方案且不与仓库配置合并。非法配置不会触发回退。
 
-### 3. 启动控制端和两个节点
+客户端、控制端和 Agent 用 `--config` 指定管理配置。相对服务端/Agent 路径基于各自配置文件目录。token 和秘密文件使用自有 `0600` 普通文件，token 也可使用完整 `${ENV_NAME}` 引用；每个节点保持独立数据目录。
 
-首次验收建议在一台 macOS 上开四个终端：控制端、Android Agent、iOS Agent、客户端。每个终端设置相同的 `MYBUILDS_ROOT`、`CASE_DIR` 绝对路径和 `PATH`，进入 `CASE_DIR` 后操作；各 Agent 的 token 与数据目录独立。
+配置继承、凭据、TLS 和环境变量的详细规则见[使用指南](docs/USAGE.md)；完整设计见[配置专题](docs/plans/CONFIGURATION.md)。
 
-先按[节点和工具准备](examples/mvp/acceptance.md#两个节点和商店工具)配置应用标识、签名与秘密文件。生成器不复制商店工具：需另外部署锁定的 fastlane 目录、安装其 Gemfile.lock 依赖，并准备明确版本的 bundletool。`internal` 也会执行 release 构建，仍需要真实签名材料；它只跳过商店步骤。
+## 常用命令
 
-控制端终端执行以下命令。首次生成的管理员 token 保存到案例私有文件，供客户端终端读取同一值：
+下面是远程命令的用法；先在 `client.yml` 配置服务地址和身份，并将 `PROJECT`、`BUILD_ID`、`ARTIFACT_ID` 替换为实际返回值。
 
-```bash
-cd "$CASE_DIR"
-umask 077
-export MYBUILDS_BOOTSTRAP_ADMIN_TOKEN="$(openssl rand -hex 32)"
-printf '%s\n' "$MYBUILDS_BOOTSTRAP_ADMIN_TOKEN" > admin-token.private.txt
-chmod 0600 admin-token.private.txt
-mybuilds-server --config server.yml migrate
-mybuilds-server --config server.yml serve
-```
-
-客户端终端执行：
-
-```bash
-cd "$CASE_DIR"
-umask 077
-export MYBUILDS_CLIENT_TOKEN="$(cat admin-token.private.txt)"
-mybuilds --config client.yml status --json
-mybuilds --config client.yml group create mobile
-mybuilds --config client.yml node create flutter-android --labels flutter,android-sdk --capacity 1 --json > android-node.private.json
-mybuilds --config client.yml node create flutter-ios --labels flutter,xcode --capacity 1 --json > ios-node.private.json
-git -C repo init --initial-branch=main
-git -C repo add .
-git -C repo commit -m 'init(case): 初始化Flutter双平台验收仓库'
-mybuilds --config client.yml project init flutter-demo --repo "$CASE_DIR/repo" \
-  --nodes flutter-android,flutter-ios --group mobile --settings ./settings.yml
-```
-
-缺少 Git 提交身份时，先在此案例仓库设置 `user.name`、`user.email`。按[两个节点启动命令](examples/mvp/acceptance.md#两个节点和商店工具)分别读取节点 token 并启动 Agent；客户端检查：
-
-```bash
-mybuilds --config client.yml node ls --json
-mybuilds --config client.yml doctor --node flutter-android --json
-mybuilds --config client.yml doctor --node flutter-ios --json
-```
-
-**通过标准：**两个节点在线，实际工具报告满足对应平台；同一项目授权两个节点，Android/iOS 按平台分配。只有项目登记和 queued 记录不算执行通过。跨主机时仓库必须可被控制端与节点共同读取，并使用验证证书的 HTTPS 入口，详见[节点部署](#独立节点日志与制品)。
-
-### 4. 构建、测试、下载与审批分发
-
-先用默认 `internal` 验收双平台构建：
-
-```bash
-mybuilds --config client.yml trigger flutter-demo --all --allow-upload \
-  --param version=1.0.0 --idempotency-key flutter-build-001 --json > internal-trigger.json
-mybuilds --config client.yml build ls --project flutter-demo --json
-# 用下表中的真实返回值替换 BUILD_ID、ARTIFACT_ID 等占位符。
-mybuilds --config client.yml build show BUILD_ID --json
-mybuilds --config client.yml logs BUILD_ID --follow --stream-timeout 15m
-mybuilds --config client.yml artifact ls BUILD_ID --json
-mybuilds --config client.yml artifact download ARTIFACT_ID --output ./downloaded-artifact
-```
-
-| 要填写的值 | 实际返回来源 |
+| 操作 | 命令 |
 |---|---|
-| `BUILD_ID` | trigger 的 `builds[]` 中对应 `build_name` 的 `id`；顶层 `batch_id` 是批次 ID |
-| `ARTIFACT_ID` | artifact ls 的 `items[].id`；按 `name` 和 `purpose` 区分包与 `junit` 原 XML |
-| `APPROVAL_ID`、`REVISION`、`CHECKPOINT_DIGEST` | approvals 数组同一项的 `id`、`revision`、`checkpoint_digest`；其 `build_id` 决定批准哪个构建 |
-| `INTENT_ID`、`QUERY_ID` | publish ls/show 的原发布意图 ID；publish query 返回的 `id` 是查询 ID |
+| 服务状态 | `mybuilds --config client.yml status --json` |
+| 项目与节点 | `mybuilds --config client.yml project ls --json`、`mybuilds --config client.yml node ls --json` |
+| 触发构建 | `mybuilds --config client.yml trigger PROJECT --build android --json` |
+| 查看构建 | `mybuilds --config client.yml build show BUILD_ID --json` |
+| 跟随日志 | `mybuilds --config client.yml logs BUILD_ID --follow --stream-timeout 15m` |
+| 查看制品 | `mybuilds --config client.yml artifact ls BUILD_ID --json` |
+| 下载制品 | `mybuilds --config client.yml artifact download ARTIFACT_ID --output ./downloaded-artifact` |
+| 查看待审批项 | `mybuilds --config client.yml approvals --state pending --json` |
 
-**通过标准：**两个 build 最终 `succeeded`，共享提交 SHA、各有独立编号与正确节点；真实测试通过，报告封存，APK/AAB/IPA 和 JUnit 原 XML 可下载。用 `shasum -a 256 ./downloaded-artifact` 核对列表中的摘要，每个文件使用不同的新输出路径。只准备 Android 材料时可先用 `--build android`，iOS 保持待验。
+所选定义包含 upload 时，即使被条件跳过，也要求管理员显式 `--allow-upload`。实际发布由控制端授权并交给 Agent 执行；本地 run 用于构建调试，不能执行生效的 upload。
 
-随后按[绑定应用与商店轮次](examples/mvp/acceptance.md#一次构建下载与审批分发)绑定你已经准备的 Google Play、App Store 应用，等待 `project app ls flutter-demo --json` 中对应绑定为 `verified`。需要重新诊断时执行 `project app doctor BINDING_ID --json`；节点 doctor 不替代应用权限验证。再运行：
+新触发可以显式指定 `--idempotency-key`；网络响应丢失后，用原 key 和相同输入恢复原请求。下载拒绝覆盖已有文件。精确审批、取消、重试、Webhook 和发布查询等命令见[使用指南](docs/USAGE.md)。
 
-```bash
-mybuilds --config client.yml trigger flutter-demo --all --allow-upload \
-  --param channel=store --param version=1.0.1 --idempotency-key flutter-store-001 --json
-mybuilds --config client.yml approvals --state pending --json
-mybuilds --config client.yml approve BUILD_ID --approval-id APPROVAL_ID --revision REVISION \
-  --checkpoint-digest CHECKPOINT_DIGEST --note '已核对本次原产物与测试' --json
-mybuilds --config client.yml publish ls --project flutter-demo --json
-mybuilds --config client.yml publish show INTENT_ID --json
-mybuilds --config client.yml publish query INTENT_ID --json
-mybuilds --config client.yml publish query-show QUERY_ID --json
-```
+## 文档与示例
 
-分别批准 Android、iOS 的精确检查点。**通过标准：**等待审批释放容量，批准后原节点继续，SHA、编号、报告和包摘要保持；Google Play internal 实际可见，App Store Connect 中应用、版本、构建号对应原 IPA。Apple 默认只上传，不提交 App Review 或自动正式发布；显式提审另按[Apple 指南](specs/011-app-store/quickstart.md)验收。
-
-定义包含 upload 时，即使它被 `when` 跳过，也要求管理员显式 `--allow-upload`。手动 trigger 不受 `when.changes` 路径筛选，同一提交可以切换 channel；重复使用同一幂等 key 和相同输入应返回原批次，不产生新编号。发起新一轮才换 key，商店构建号须满足渠道要求。
-
-### 5. 扩展、故障与验收记录
-
-下面各项按指南独立执行，不在正常商店发布过程中临时制造故障：
-
-| 验收项 | 通过标准与操作入口 |
+| 文档 | 内容 |
 |---|---|
-| 项目组迁移 | `group create migrated` 后执行 `project move flutter-demo --group migrated --json`；项目 ID、历史和计数器保持 |
-| 两次审批与 custom | 同一 build 连续两次精确批准，只上传一次，原包下载和 metadata 查询可核对；[案例](examples/mvp/acceptance.md#两次审批与custom联合导航)无需商店账号 |
-| Webhook、changes、固定窗口 | 实际提交命中路径，再用辅助脚本发送；重复投递不重复分号、窗口不延长、执行原 SHA；[案例](examples/mvp/acceptance.md#generic-webhook等待窗口015)与[外部平台指南](specs/015-webhook-trigger/quickstart.md) |
-| repo/auto/profile 与脚本 | profile 使用完整绑定方案；auto 仅在仓库文件缺失时回退，非法配置报错；[案例](examples/mvp/acceptance.md#可复用方案与custom012) |
-| 失败测试、when、超时与 post | 失败报告阻止发布，跳过步骤不执行，超时停止进程，收尾与原证据保留；[本地报告示例](examples/local-reports.yml)与[集中清单](examples/mvp/acceptance.md#集中验收清单) |
-| 拒绝、取消、重启与 retry | 拒绝不上传；已开始任务不自动迁移或重跑，停止未知保留保护；显式 retry 新编号、原快照不变；[恢复说明](#重启与原快照重试) |
-| 保留、下载与 unknown | 活动、待审批、未知发布及下载中的证据受保护，清理后不重置编号；[保留指南](specs/020-project-retention/quickstart.md) |
+| [使用指南](docs/USAGE.md) | 本地流水线、控制端、节点、配置、日志、下载、恢复与管理 |
+| [MVP 验收指南](docs/ACCEPTANCE.md) | 验收准备、分阶段步骤、通过标准、故障检查和记录模板 |
+| [Flutter 集中案例](examples/mvp/acceptance.md) | 两节点、签名与商店工具、审批、Webhook、方案及 custom 的具体操作 |
+| [已有验证记录](examples/mvp/validation.md) | 已执行检查的范围与人工待验项目 |
+| [自定义发布示例](examples/custom/README.md) | 用户发布脚本、应用绑定与结果查询 |
+| [开发指南](docs/DEVELOPMENT.md) | 代码结构、架构、测试、版本信息与 Spec Kit 工作流 |
 
-每项记录“通过 / 失败 / 待验”，附 UTC、mybuilds 版本/提交、工具版本、触发 key、仓库 SHA、build/编号/节点、报告和包摘要、审批/意图/远端 ID，以及脱敏日志位置。保存为案例目录中的 `acceptance-record.md`，秘密文件、密钥和 token 留在私有目录。只有真实构建与渠道结果齐备，才把对应人工项改为通过；失败时保留原记录和证据。
+其他可运行示例：[配置预览](examples/pipeline-preview.yml)、[制品快照](examples/local-artifacts.yml)、[JUnit 报告](examples/local-reports.yml)、[原生 iOS 模板](examples/native-ios.yml)。JUnit 示例会主动制造失败报告并返回非零，用于观察失败处理。
 
-遇到 queued，先看节点在线、标签、容量和项目授权；遇到预检查失败，按报告补齐工具/材料后再发新请求。发布 `unknown` 时先用 query 只读核对，必要时按[发布指南](specs/010-google-play/quickstart.md#核对未知与证据确认)提供精确人工确认，不把构建 retry 当成重传按钮。
+## 项目结构
 
-## 控制端与远程排队
-
-控制端读取已登记仓库的固定提交，校验参数、条件与权限，再原子创建 queued/skipped 记录。所选 build 共享提交 SHA、按项目统一分配编号；skipped 不占号。Agent 只领取授权范围内、平台/标签匹配且容量可用的任务；无合格节点保持排队。
-
-下面保留 006 的排队演示，不启动 Agent。先按上文构建客户端和控制端两个二进制；示例使用 OpenSSL 生成随机管理员 token，也可由密码管理器预先注入同名环境变量。token 通过环境传递，不写入命令参数。
-
-```bash
-project_dir="$(pwd)"
-client_bin="$project_dir/bin/mybuilds"
-server_bin="$project_dir/bin/mybuilds-server"
-work_dir="$(mktemp -d)"
-umask 077
-mkdir "$work_dir/repo"
-
-cat > "$work_dir/repo/mybuilds.yml" <<'YAML'
-version: 1
-builds:
-  android:
-    runner: {platform: android}
-    params:
-      version: {required: true}
-      channel: {default: internal}
-    steps:
-      - kind: run
-        run: printf queued_example
-YAML
-
-git -C "$work_dir/repo" init --initial-branch=main
-git -C "$work_dir/repo" add mybuilds.yml
-git -C "$work_dir/repo" -c user.name=Example -c user.email=example@example.test \
-  commit -m '演示排队配置'
-
-cat > "$work_dir/server.yml" <<'YAML'
-listen: 127.0.0.1:8787
-data_dir: data
-concurrency: 1
-database:
-  driver: sqlite
-  dsn: data/control.db
-YAML
-cat > "$work_dir/client.yml" <<'YAML'
-server: http://127.0.0.1:8787
-token: '${MYBUILDS_CLIENT_TOKEN}'
-timeout: 30s
-YAML
-cat > "$work_dir/settings.yml" <<'YAML'
-pipeline:
-  source: repo
-  file: mybuilds.yml
-  builds:
-    android:
-      params: {channel: internal}
-YAML
-chmod 0600 "$work_dir/client.yml"
-
-export MYBUILDS_BOOTSTRAP_ADMIN_TOKEN="$(openssl rand -hex 32)"
-export MYBUILDS_CLIENT_TOKEN="$MYBUILDS_BOOTSTRAP_ADMIN_TOKEN"
-"$server_bin" --config "$work_dir/server.yml" migrate
-"$server_bin" --config "$work_dir/server.yml" serve &
-server_pid=$!
-
-# 最多等待五秒；最后一次status失败时检查服务端诊断。
-for attempt in 1 2 3 4 5; do
-  if "$client_bin" --config "$work_dir/client.yml" status --json >/dev/null 2>&1; then break; fi
-  sleep 1
-done
-"$client_bin" --config "$work_dir/client.yml" status --json
-
-cd "$work_dir"
-"$client_bin" --config ./client.yml group create apps
-"$client_bin" --config ./client.yml project init mobile \
-  --repo "$work_dir/repo" --nodes android-1 --group apps --settings ./settings.yml
-"$client_bin" --config ./client.yml trigger mobile --build android \
-  --param version=1.2.0 --param android:channel=internal \
-  --idempotency-key demo-request-1 --json
-"$client_bin" --config ./client.yml build ls --project mobile --group apps --json
-
-# 用触发结果中的id替换BUILD_ID，可查看预算、条件与ordinary/post步骤进度。
-# "$client_bin" --config ./client.yml build show BUILD_ID --json
-
-kill -TERM "$server_pid"
-wait "$server_pid"
-cd "$project_dir"
-```
-
-这个演示没有登记并启动合格 Agent，结果保持 queued，示例的 `printf` 不会执行。完整节点执行见下节。`build show` 默认输出安全详情表格，`--json` 返回同一视图。参数值、脚本正文和凭据不公开，列表默认 20 条、最大 200 条，支持 limit/offset 及项目、组、build 名、批次和状态过滤。
-
-`--settings ./settings.yml` 由客户端按当前目录读取内容；`pipeline.file` 和注册时的 `--file ci/mybuilds.yml` 都是仓库相对路径，`--file` 与 `--settings` 互斥。`project set mobile --settings ./settings.yml` 替换设置；项目支持framework/platform与profile绑定；Webhook管理见015指南。poll/schedule属于后续016。
-
-触发可用 `--build android,ios` 或 `--all`。共享 `--param key=value` 应用到所有所选 build，`--param android:key=value` 只覆盖指定 build；命名值优先，同 scope 重复参数拒绝。`--version`、`--channel` 是共享参数快捷选项。客户端每次新请求生成一个随机 key，在发起网络请求前写到 stderr，成功 JSON 含 `request_key`；网络失败后用原 `--idempotency-key` 和相同参数恢复，重放返回原 SHA/编号/结果，不自动重试或换 key。
-
-管理命令如下，列表支持 `--json`：
-
-| 命令端 | 当前命令 |
+| 目录 | 内容 |
 |---|---|
-| 客户端 | group create/ls/rename/rm；project init/set/ls/move/rm/app/hook；trigger；build ls/show/cancel/confirm-stopped/retry；node；logs；artifact ls/download；approvals/approve/reject；publish；status；doctor |
-| 服务端本机 | serve/migrate；group create/ls/rename/rm；project add/set/ls/move/rm/hook；token create/ls/revoke |
+| `cmd/` | 客户端、控制端、Agent 三个程序入口 |
+| `internal/` | 配置、流水线、进程、构建、分发、服务、节点、存储与 Git 实现 |
+| `examples/` | 可运行配置、工程和辅助脚本 |
+| `docs/` | 使用、验收、开发说明与产品设计 |
+| `specs/` | 功能规范、实施计划、任务和验证记录 |
+| `.agents/skills/`、`.specify/` | 项目开发技能与 Spec Kit 配置 |
 
-serve 在线时同一数据库被独占，本机 migrate、project/group/token 管理会拒绝，使用客户端远程管理或鉴权 HTTP API。停止示例控制端后，可创建身份并查看安全列表：
+各模块职责和多节点边界见[开发指南](docs/DEVELOPMENT.md#目录结构)。
 
-```bash
-"$server_bin" --config "$work_dir/server.yml" token create --role trigger --json
-"$server_bin" --config "$work_dir/server.yml" token ls --json
-```
+## 参与开发
 
-token create 只显示一次明文，列表不显示 token；首次管理员通过 `MYBUILDS_BOOTSTRAP_ADMIN_TOKEN` 初始化，撤销全部身份后重启不会重新创建 bootstrap 身份。
+报告问题时请附程序版本、操作系统、复现命令和脱敏日志，不附 token、密码或签名私钥。
 
-角色为 admin/trigger/approver：admin 管理与读写；trigger 只读 status 并触发所选定义不含 upload 的构建；approver可读脱敏证据并明确批准或拒绝精确审批检查点。所选定义含 upload 时，即使条件为 false，也要求 admin 与显式 `--allow-upload`；节点执行仍须当前应用、报告和审批授权。
+从 `main` 创建开发分支。代码修改遵循 [AGENTS.md](AGENTS.md)；功能规范与历史见[开发指南](docs/DEVELOPMENT.md)和[实施历史](docs/IMPLEMENTATION_HISTORY.md)。文档使用中文，修改公开命令或行为时同步更新用户说明。
 
-配置默认位于 `~/.mybuilds/server.yml`、`~/.mybuilds/client.yml`。覆盖顺序为默认值 < 文件 < 明确白名单环境变量 < 显式 CLI；服务端白名单为 `MYBUILDS_LISTEN`、`MYBUILDS_DATA_DIR`、`MYBUILDS_CONCURRENCY`、`MYBUILDS_DATABASE_DRIVER`、`MYBUILDS_DATABASE_DSN`、`MYBUILDS_SECRETS_FILE`；客户端为 `MYBUILDS_SERVER_URL`、`MYBUILDS_CLIENT_TOKEN`、`MYBUILDS_CLIENT_TIMEOUT`、`MYBUILDS_CA_FILE`。相对服务端路径基于配置文件目录，data_dir 创建为或要求 0700；客户端 token 可以是 0600 文件中的字面量或完整 `${NAME}` 引用，空/弱 token 拒绝。PostgreSQL 可通过 database.driver 和私有环境中的 MYBUILDS_DATABASE_DSN 配置；切换数据库不迁移已有数据。PostgreSQL 只使用明确 DSN，拒绝非空宿主 PG 环境变量和隐式 service/passfile；显式 TLS 材料需受限普通文件，读入内存后验证，不继承宿主凭据。
+## 许可证
 
-客户端只有远程命令读取 client 配置；损坏的 client.yml 或缺 token 不影响本地 init/run/doctor/help/version。`--server-url` 覆盖远程地址，`--timeout` 只控制普通 API 请求，不改变本地 YAML 的 build/post 预算。客户端仅允许回环 HTTP 或验证证书的 HTTPS，并拒绝重定向。当前服务端提供 HTTP 监听，可放在终止 TLS 的反向代理后；跨主机客户端必须通过 HTTPS 入口连接并验证服务器证书，不能跳过校验。
-
-实际 API、配置与验收步骤见 [006 契约](specs/006-control-plane/contracts/http.md)、[配置/CLI](specs/006-control-plane/contracts/config-cli.md) 和 [验收指南](specs/006-control-plane/quickstart.md)。
-
-## 独立节点、日志与制品
-
-以下命令使用已验收的 007 功能。控制端提供 HTTP 监听；跨主机部署须先配置 HTTPS 反向代理，把流量转发到控制端。客户端和 Agent 验证证书与主机名，私有 CA 用 `ca_file` 或客户端 `--ca-file` 指定，不修改系统信任，不支持跳过 TLS 校验。代理应支持 SSE 流式转发并保留上传/下载的独立时限。
-
-管理员使用上节的私有客户端配置登记节点；节点 token 与用户 token 分开，创建/轮换只返回一次明文。不要把 token 放在 argv 或普通日志中：
-
-```bash
-umask 077
-./bin/mybuilds --config ./client.yml node create mac-android-a --labels android --capacity 1 --json > ./mac-android-a.private.json
-./bin/mybuilds --config ./client.yml node create mac-android-b --labels android --capacity 1 --json > ./mac-android-b.private.json
-./bin/mybuilds --config ./client.yml node create linux-generic --labels generic --capacity 1 --json > ./linux-generic.private.json
-./bin/mybuilds --config ./client.yml node ls --json
-```
-
-在每个节点分别保存自己的 `agent.yml` 为 0600，并从安全传输或密码管理器注入 `MYBUILDS_AGENT_TOKEN`。节点名、token 和 data_dir 不共用；控制端与 Agent 的 heartbeat/lease 策略必须一致，默认分别 5s/30s：
-
-```yaml
-server: https://builds.example.test
-node: mac-android-a
-token: '${MYBUILDS_AGENT_TOKEN}'
-capacity: 1
-data_dir: ./agent-data
-ca_file: ./control-ca.pem
-heartbeat_interval: 5s
-lease_duration: 30s
-# secrets_file: ./secrets.env
-```
-
-`server` 替换为实际 HTTPS 入口，证书 SAN 必须匹配该主机；`control-ca.pem` 替换为实际 CA 文件。相对路径基于 agent.yml 所在目录。data_dir 必须是节点用户自有的 0700 目录，首次启动可创建；secrets_file 必须是自有 0600 普通文件，只向实际声明的步骤注入对应秘密。私有 SSH 仓库分别给控制端和节点配置显式 key/known_hosts，不使用宿主未知私钥或 SSH agent。
-
-```bash
-chmod 0600 ./agent.yml
-./bin/mybuilds-agent doctor --data-dir ./agent-data --json
-./bin/mybuilds-agent --config ./agent.yml serve
-```
-
-`mybuilds-agent doctor` 只检查本机工具和记录，不加载连接配置、token，也不访问控制端。Linux 缺少 Xcode/Android 工具时报告实际失败或跳过，不能把通用 shell 能力当成 Android/iOS 能力。客户端本地 init/run/doctor/help/version 也不加载远程配置。
-
-项目必须授权目标节点。无 runner 的通用 build 只使用明确 default_node；Android runner 还要求节点的实际 Android 检查通过。同项目同名 build 跨节点串行，全局/节点容量同时限制领取，容量实际取管理员配置与节点配置的较小值。完整配置、可执行演示与三节点验收见 [007 快速指南](specs/007-node-agents/quickstart.md)。
-
-```bash
-# 用项目实际仓库路径替换 /path/to/repository，所有节点须能读取相同固定提交。
-./bin/mybuilds --config ./client.yml project init demo --repo /path/to/repository \
-  --nodes mac-android-a,mac-android-b,linux-generic --default-node linux-generic
-./bin/mybuilds --config ./client.yml trigger demo --build generic --idempotency-key demo-generic-1 --json
-
-# 从 trigger 的 builds[].id 取构建 ID；从 artifact ls 的 items[].id 取产物 ID。
-./bin/mybuilds --config ./client.yml build show "$BUILD_ID" --json
-./bin/mybuilds --config ./client.yml logs "$BUILD_ID" --json
-./bin/mybuilds --config ./client.yml logs "$BUILD_ID" --follow --stream-timeout 15m
-./bin/mybuilds --config ./client.yml artifact ls "$BUILD_ID" --json
-mkdir -m 0700 ./downloads
-./bin/mybuilds --config ./client.yml artifact download "$ARTIFACT_ID" --output ./downloads/output.bin
-./bin/mybuilds --config ./client.yml doctor --node mac-android-a --json
-./bin/mybuilds --config ./client.yml doctor --server --json
-```
-
-日志仅返回中央已确认的脱敏记录；历史 JSON 的 `next_seq` 可用于 `--after-seq` 续读，SSE 按确认 chunk 重连去重并在终态结束。普通 API `--timeout` 不替代 `--stream-timeout`；控制端 SSE 每条连接最多 15 分钟，下载独立总预算 10 分钟。下载校验大小与 SHA-256 后发布到自有私有目录，拒绝覆盖已有文件；Agent 离线后中央已确认日志/制品仍可读取。
-
-```bash
-./bin/mybuilds --config ./client.yml build cancel "$BUILD_ID" --json
-./bin/mybuilds --config ./client.yml node drain mac-android-a
-./bin/mybuilds --config ./client.yml node enable mac-android-a
-./bin/mybuilds --config ./client.yml node disable mac-android-a
-./bin/mybuilds --config ./client.yml node token rotate mac-android-a --json > ./mac-android-a.rotated.private.json
-./bin/mybuilds --config ./client.yml node token revoke mac-android-a
-```
-
-取消运行中构建先进入 cancel_requested，真实进程组回收后才确认停止；仍有有效执行权时才运行相应 post。drain 停新领取但原任务继续续租，disable/revoke/轮换立即撤销原执行权，不能再启动 always。失联/过期不迁移任务；停止未确认的 interrupted 保留互斥和节点隔离。enable 不解除此保护，旧 journal 重启不会重放用户步骤。
-
-管理员只有在实际核实原执行进程及整个进程组已停止后才能确认。用 `build show --json` 中原 `node_id/session_id/attempt_id/lease_id/lease_epoch` 填入变量，不能用节点名字或新租约代替；确认保留原终态和原因，只解除停止保护：
-
-```bash
-./bin/mybuilds --config ./client.yml build confirm-stopped "$BUILD_ID" \
-  --node-id "$NODE_ID" --session "$SESSION_ID" --attempt "$ATTEMPT_ID" \
-  --lease "$LEASE_ID" --epoch "$LEASE_EPOCH" --note '已核实原PID和整个PGID均不存在'
-```
-
-admin 管理并读取证据；approver 可读脱敏 build/log/artifact，但不管理、不触发、不取消；trigger 只能读 status 和允许的触发入口。节点 token 只用于节点协议。以上007验收仅覆盖节点执行；当前iOS、发布与审批进度见本文当前状态，Android签名不代替合法Apple签名验收。
-
-## 重启与原快照重试
-
-控制端在监听前核对持久任务，最多30秒；失败安全退出。合法queued保持原号、原SHA和原配置，有效执行保持原完整租约及预算，过期执行沿原interrupted/停止保护规则处理。短网络中断仅在原执行权限期限内继续，心跳不延长执行权；未知claim仍保留证据并阻止新进程接管。
-
-已停止的成功、失败、取消或中断构建可显式创建新构建。将原构建ID填入 `ORIGINAL_ID`，key为本次非机密请求标识：
-
-```bash
-./bin/mybuilds --config ./client.yml build retry "$ORIGINAL_ID" \
-  --idempotency-key retry-demo-1 --json
-```
-
-retry必须明确提供key，响应丢失后使用同ID、同key和同 `--allow-upload` 输入重发；客户端不自动重发。原SHA、定义、参数和when事实保持，新的编号与attempt从原定义完整预算开始，当前节点授权只收窄。不能用retry替换分支或参数，需另发trigger；活动/queued/skipped/停止未知拒绝。包含upload定义仍要求admin与明确 `--allow-upload`，实际分发进度见当前状态。列表和详情中的 `retry_of` 指向原构建，原证据保持。
-
-终态响应丢失时，Agent重启先用当前独立节点凭据只读核对精确原回执。只有本地已知停止、完整终态/归属/序号/摘要/制品清单匹配中央才清该条journal；results/spool保持。其余未知journal仍阻止新session，不按旧PID发送信号或重放动作。文件必须是自有0600普通文件，最多128条、每条1MiB；链接、替换、损坏和未确认停止均保留。轮换后先把当前token更新到私有配置；新session仍遵守原注册窗口。
-
-## 目录结构
-
-当前已经创建的目录：
-
-```text
-mybuilds/
-├── cmd/
-│   ├── mybuilds/main.go          # 客户端薄入口
-│   ├── mybuilds-server/main.go   # 服务端薄入口
-│   └── mybuilds-agent/main.go    # 007节点薄入口
-├── internal/
-│   ├── cli/
-│   │   ├── client/root.go        # 本地与远程客户端命令
-│   │   ├── server/root.go        # 服务启动与本机管理命令
-│   │   ├── agent/root.go         # 节点启动与本地诊断
-│   │   └── cli_test.go           # 双端 CLI 行为验收
-│   ├── config/                  # 流水线及管理配置
-│   ├── pipeline/                # 预览、执行、预算/收尾、日志与产物快照
-│   ├── process/                 # pipeline/doctor 共用的进程执行与取消
-│   ├── mobile/                  # Android/iOS/Flutter诊断、签名与可编辑模板
-│   ├── distribute/              # 锁定第三方商店工具与单次发布
-│   ├── server/                  # 鉴权HTTP、排队与节点路由
-│   ├── agent/                   # 节点诊断、注册与执行接线
-│   ├── protocol/                # 节点消息、租约与执行证据
-│   ├── store/                   # 双数据库、独占、事务与进度
-│   ├── scm/                     # 只读Git固定SHA与受限认证
-│   └── version/version.go       # 共享版本与构建信息
-├── examples/pipeline-preview.yml # 多 build 预览示例
-├── examples/local-run.yml       # 可执行本地 shell 示例
-├── examples/local-artifacts.yml # 快照、日志与 post 示例
-├── examples/android/           # 原生 Java 工程与参数/签名接入示例
-├── examples/flutter/           # 可编辑 Flutter 双平台工程、参数与签名接入示例
-├── examples/mvp/               # 双平台集中验收生成器、配置与指南
-├── specs/                       # 各功能规范、计划、任务与验证
-├── docs/plans/                  # 产品决策与功能实施路线
-├── .agents/skills/              # 项目内 Codex 技能
-├── .specify/                    # Spec Kit 原则、模板、脚本与集成配置
-├── .pi/prompts/                 # 保留的 Pi 提示词
-├── AGENTS.md                    # AI 执行约定
-├── README.md                    # 项目概览
-├── go.mod
-└── go.sum
-```
-
-当前模块及后续职责，尚未创建的位置随对应功能交付：
-
-| 目录 | 职责 |
-|---|---|
-| `internal/config` | 流水线、客户端及服务端配置与校验 |
-| `internal/pipeline` | 同一Run的预览、脚本、预算、post、产物、报告与发布屏障；审批暂停/原节点续执行 |
-| `cmd/mybuilds-agent`、`internal/cli/agent` | 007 已验收帮助/版本/doctor/serve、实际执行闭环与全量检查；008恢复/重试已验收 |
-| `internal/server` | 已接入控制端生命周期、鉴权 HTTP、节点调度、租约、中央日志/制品与停止保护 |
-| `internal/agent` | 007 已验收诊断/注册/心跳、任务领取/续租、同一 Run 执行与日志/产物回传；008网络及终态核对已验收 |
-| `internal/protocol` | 控制端与 Agent 共用的任务、租约及回报格式 |
-| `internal/store` | 已接入双数据库独占、业务事务、快照与步骤进度持久化 |
-| `internal/scm` | 已接入只读 Git 固定提交与 SSH 显式凭据；四种Webhook来源认证、固定SHA变更比较 |
-| `internal/mobile` | 已接入 Android/Flutter 模板、真实受限doctor和纯参数检查；iOS签名生命周期由005提供 |
-| `internal/distribute` | 锁定fastlane商店工具与具体单发动作；custom由012扩展同一授权/记录 |
-| `internal/notify` | 后续013飞书等通知渠道，尚未创建 |
-| `examples` | 可运行的配置与工程示例 |
-| `deploy`（后续） | 部署模板与操作说明，当前尚未创建 |
-
-保持单个 Go 模块；测试跟随所在包，必要数据放包内 `testdata/`。
-控制端默认数据位于 `~/.mybuilds`，SQLite 文件不与节点共享；Agent 使用独立 data_dir 保存工作区与日志缓冲，本地流水线结果写临时目录。
-
-## 多节点目标
-
-控制端部署于 Linux/macOS，负责数据库、队列、审批和中央日志/产物；Agent 主动通过 HTTPS 连接控制端。
-iOS 分配到具备 Xcode 和签名资源的 macOS 节点，Android 可分配到 Linux/macOS 节点。
-默认每节点容量和全局并发上限均为 1，可配置；同项目同名 build 跨节点串行，不同 build 可并行，单次流水线固定一个节点。
-节点失联不自动迁移已开始的构建，停止未确认时保留同名 build 互斥并隔离原节点；审批后核验原产物、报告，在原节点继续。
-中央数据库由唯一控制端独占，节点不共享 SQLite 文件；启动锁阻止误运行第二调度进程。
-同机可部署控制端和一个 Agent；一期支持多个构建节点，保留单控制端。
-
-## 技术方向
-
-CLI 使用 Cobra，流水线配置使用严格 YAML，管理配置使用严格节点检查后局部 Viper 合并。鉴权 HTTP 使用标准库，数据库使用 GORM，默认 SQLite、可选 PostgreSQL；两种驱动使用相同业务事务规则，PG 持锁 session 丢失不能自动重连继续写。
-后续013通知规划使用飞书 `oapi-sdk-go/v3`，其他机器人通知使用标准库 HTTP；当前尚未接入消息发送。
-构建产物由控制端托管下载；MVP 商店渠道为 Google Play 与 App Store，Go 封装第三方 fastlane 工具，节点需 Ruby/Bundler。
-原生/Flutter 提供可编辑的内置模板，默认只构建/收集产物，单/双平台均生成对应名称的 builds；无参数 init 生成最小 default shell 配置。
-用户可使用仓库脚本、本地模板或 custom 上传调用自己的 Fastfile；本地 run 用于构建调试，实际上传统一通过控制端与 Agent。
-远程项目支持 `repo`、`auto`、`profile` 三种来源：repo 必须读取固定提交中的指定配置；auto 仅在该文件不存在时回退到绑定方案；profile 强制使用完整绑定方案，不与仓库配置合并。非法配置不会回退。
-一个项目可含 Android/iOS 或多个应用的命名 build，批量触发固定同一 SHA，每个执行独立记录、统一分配项目构建号。
-shell 支持内联命令和仓库脚本；参数经 env 映射传递，支持步骤工作目录、超时及受限的构建上下文变量。
-项目通知配置已支持直接声明 Webhook、继承全局 defaults 与显式关闭；发送能力留待013。015用于接收 Git push 触发构建，与通知 Webhook 分开配置。
-项目组用于归属和查询，构建方案用于复用配置；改组保留项目身份、历史、构建号和独立配置。
-上传、提交审核、正式上架分别记录；Webhook 与 CLI 发布审批进入 MVP，其他内置分发渠道、机器人通知、轮询/cron 和部署打磨后置。
-MVP 功能范围为 001–012、014–015、019–020；019/020 分别交付测试报告和项目保留策略；019 是 010/011 发布功能的前置，报告在审批/上传前封存，停止未确认或未知上传数据不清理。
-编号不代表执行顺序，具体配置与验收见产品计划及实施路线。
-这些业务依赖随功能引入并锁定版本，具体边界与安全、恢复要求见 [PLAN.md](docs/plans/PLAN.md)。
-
-## 验证与版本注入
-
-```bash
-go test -p 1 ./...
-go vet ./...
-```
-
-进程安全测试会真实制造不可读的孤儿进程；全套测试用 `-p 1` 隔离跨包故障注入，不与真实应用验收同时运行。未知归属仍保留停止保护，不能为测试并行而放宽。
-
-发布构建可注入版本信息；以下命令在当前模块名下可直接执行：
-
-```bash
-go build -ldflags '-X mybuilds/internal/version.Version=0.0.1 -X mybuilds/internal/version.Commit=demo -X mybuilds/internal/version.BuildDate=2026-10-04' -o bin/mybuilds ./cmd/mybuilds
-./bin/mybuilds version
-```
-
-输出为 `0.0.1 (commit: demo, built: 2026-10-04)`。服务端使用相同参数与字段。
-完整初始化验收见 [quickstart.md](specs/000-project-bootstrap/quickstart.md)，结果见 [validation.md](specs/000-project-bootstrap/validation.md)。
-
-## 使用 Spec Kit 开发
-
-项目使用 Spec Kit 1.0.13，Codex 为默认集成。项目技能位于 `.agents/skills/`，不需要额外的 `.codex/` 目录。
-`specify` 是工具 CLI；以下 `$speckit-*` 在 Codex 聊天中调用，不是终端命令：
-
-```text
-$speckit-specify → $speckit-plan → $speckit-tasks → $speckit-analyze → $speckit-implement → $speckit-converge
-```
-
-需求有实质歧义时先 clarify；缺陷使用 bug-assess → bug-fix → bug-test。
-每个功能的规范、计划、任务与验收记录保存在 `specs/`；契约稳定且依赖满足后允许独立 worktree 并行实现，由主代理集成，每完成并验收一个功能自动本地提交一次，不自动 push。
-已有功能继续使用原规范；新增功能按路线逐项推进。
-
-- [AGENTS.md](AGENTS.md)：AI 阅读入口、开发流程与提交约定。
-- [项目原则](.specify/memory/constitution.md)：2.1.0，所有功能的稳定约束。
-- [多节点设计](docs/plans/MULTI_NODE.md)：角色职责、调度、租约与故障边界。
-- [构建与分发设计](docs/plans/BUILD_DISTRIBUTION.md)：内置模板、两大商店、第三方工具与用户扩展。
-- [配置设计](docs/plans/CONFIGURATION.md#配置文件)：server/client/agent 配置结构；命令面见 [INTERFACES.md](docs/plans/INTERFACES.md#cli-面)。
-- [实施路线](docs/plans/SPECKIT_ROADMAP.md)：功能依赖、顺序与 001 操作案例。
-- [MVP 执行计划](docs/plans/MVP_EXECUTION.md)：并行批次、worktree 分区、集成与验收标准。
-- [实施历史](docs/IMPLEMENTATION_HISTORY.md)：功能状态、规范与验证索引。
-- [初始化规范](specs/000-project-bootstrap/spec.md)：本次范围与验收要求。
-
-变更入口、目录、运行方式或已实现能力时，同步更新本文。
-
-## 审批与Webhook
-
-`approvals --project-id PROJECT_UUID --state pending --json` 读取安全检查点；`approve BUILD_ID --approval-id ID --revision N --checkpoint-digest SHA256 --json` 或 `reject`只决定该次审批。批准后原节点复核原工作区、制品和剩余预算，再续未执行步骤；等待不扣执行预算，不迁移或重跑。多审批各自决定，跳过审批不会授权上传。
-
-项目settings中的`hook`与`triggers`启用自动触发，也可用`project hook enable/show/events/windows/disable/rotate PROJECT`管理；初始化/轮换秘密仅显示一次，使用`--json`保存私有文件。真实外部入口需验证证书的HTTPS；GitHub/GitLab/Gitee/generic仅可信普通分支push触发，payload URL不成为仓库来源。固定quiet_period不随后续push延长；手动构建豁免changes，自动构建使用冻结的变化事实。四个外部托管来源的真实投递按[人工指南](specs/015-webhook-trigger/quickstart.md)验收。
+仓库目前尚未指定项目许可证，未提供仓库级 `LICENSE` 文件。第三方依赖使用各自的许可证。

@@ -47,3 +47,5 @@ MVP 批次、真实验证与完成定义见 [执行计划](plans/MVP_EXECUTION.m
 本轮001–012、014–015、019–020共16个模块代码已交付；合法Apple/Flutter签名、真实商店发布及外部投递按[集中案例](../examples/mvp/acceptance.md)人工验收。未执行矩阵保留待验标记，不将代码完成等同所有人工验收通过。
 
 2026-10-05 README验收说明更新：补本地、双平台案例、控制端/两节点、internal与store、扩展/故障五阶段及通过标准；同步案例的工具复制、多终端token、真实返回ID与应用doctor说明。三个CLI构建/help/version、本地普通/post四快照内容/大小/SHA-256、双平台dry-run通过；80处链接/锚点、33个bash代码块语法和9组实际CLI帮助核对通过。本次仅更新文档，未执行真实签名或商店发布，人工项仍待验。
+
+2026-10-05主分支与文档整理：经用户授权，main从初始化基线6c13f93快进至43fc5ab并切换主工作区；16个MVP功能提交均在main历史中。README改为用户入口，验收步骤/标准/记录模板移至docs/ACCEPTANCE.md，详细运行与开发说明分别保留于docs/USAGE.md、docs/DEVELOPMENT.md；两处规划链接已更新。实际三个CLI help/version、默认init/dry-run/run及参数/when/post示例通过，117处链接/锚点与29个bash代码块语法通过；仅整理文档，生产代码未改动，真实签名/商店待验标记保留。

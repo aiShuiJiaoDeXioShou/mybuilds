@@ -6,7 +6,7 @@
 
 ### 服务端配置 `~/.mybuilds/server.yml`（由 `mybuilds-server serve` 读取）
 
-最终集成源码支持listen、data_dir、concurrency、database、secrets_file、节点时序、020 retention及012 build_profiles/defaults通知继承，015独立Webhook策略由项目settings保存；全局保留默认100个/30天，项目按字段继承。16个MVP模块代码与必要自动检查已完成，双库联合案例118项通过，准确记录见README和实施历史。013通知发送仍后置，配置继承不等于可发送；本专题中的后续设计不能视为当前入口。可运行的最小配置见 [README](../../README.md#控制端与远程排队)。PostgreSQL 使用明确 DSN，不读取宿主 PG 环境/service/passfile；显式 TLS 材料受限普通文件读取后在内存校验。
+最终集成源码支持listen、data_dir、concurrency、database、secrets_file、节点时序、020 retention及012 build_profiles/defaults通知继承，015独立Webhook策略由项目settings保存；全局保留默认100个/30天，项目按字段继承。16个MVP模块代码与必要自动检查已完成，双库联合案例118项通过，准确记录见README和实施历史。013通知发送仍后置，配置继承不等于可发送；本专题中的后续设计不能视为当前入口。可运行的最小配置见 [使用指南](../USAGE.md#控制端与远程排队)。PostgreSQL 使用明确 DSN，不读取宿主 PG 环境/service/passfile；显式 TLS 材料受限普通文件读取后在内存校验。
 
 数据库选型见[数据库设计选择](ARCHITECTURE.md#3-数据库默认-sqlite可切-postgresql统一走-gorm)。
 
