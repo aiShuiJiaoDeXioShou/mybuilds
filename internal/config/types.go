@@ -15,6 +15,7 @@ type Document struct {
 }
 
 type Build struct {
+	IOSSigning    *IOSSigning          `yaml:"ios_signing,omitempty" json:",omitempty"`
 	Runner        *Runner              `yaml:"runner,omitempty"`
 	Params        map[string]Parameter `yaml:"params,omitempty"`
 	Env           map[string]string    `yaml:"env,omitempty"`

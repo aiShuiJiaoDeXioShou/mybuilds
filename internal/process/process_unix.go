@@ -3,6 +3,7 @@
 package process
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -34,6 +35,9 @@ func Run(ctx context.Context, command Command, stdout, stderr io.Writer) (result
 	defer cancel()
 	cmd := exec.CommandContext(runContext, command.Path, command.Args...)
 	cmd.Dir = command.Dir
+	if command.Stdin != nil {
+		cmd.Stdin = bytes.NewReader(command.Stdin)
+	}
 	// 非 nil 空切片阻止 os/exec 自动继承完整宿主环境。
 	cmd.Env = scope.environment(command.Env)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

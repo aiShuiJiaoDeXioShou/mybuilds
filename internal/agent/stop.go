@@ -10,11 +10,11 @@ import (
 func (execution *taskExecution) confirmStopped(parent context.Context) error {
 	journal := execution.journal
 	journal.mu.Lock()
-	if journal.state.Ref == nil || !journal.state.StopConfirmed || journal.state.CleanupFailed || journal.state.PendingEvent != nil && journal.state.PendingEvent.Progress.Kind == "build_finished" {
+	if journal.state.Ref == nil || !journal.state.StopConfirmed || journal.state.CleanupFailed || !iosClosedState(journal.state) || journal.state.PendingEvent != nil && journal.state.PendingEvent.Progress.Kind == "build_finished" {
 		journal.mu.Unlock()
 		return failure("execution_unconfirmed")
 	}
-	confirmation := protocol.StopConfirmation{Ref: *journal.state.Ref, EvidenceCode: "process_group_reaped", Note: "本次执行进程组已完成真实回收"}
+	confirmation := protocol.StopConfirmation{IOSResourceDigest: iosDigestState(journal.state), IOSCleanupConfirmed: journal.state.IOSSigningRequired, Ref: *journal.state.Ref, EvidenceCode: "process_group_reaped", Note: "本次执行进程组已完成真实回收"}
 	journal.state.PendingStop = &confirmation
 	err := journal.saveLocked()
 	journal.mu.Unlock()

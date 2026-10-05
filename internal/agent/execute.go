@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"io"
 	"mybuilds/internal/config"
+	"mybuilds/internal/mobile"
 	"mybuilds/internal/pipeline"
 	"mybuilds/internal/protocol"
 	"mybuilds/internal/scm"
@@ -47,6 +49,9 @@ func (execution *taskExecution) progress(ctx context.Context, p protocol.Executi
 		return err
 	}
 	if p.Kind == "build_finished" {
+		if !execution.iosClosed() || execution.journal.state.IOSSigningRequired != p.IOSCleanupConfirmed || p.IOSResourceDigest != iosDigestState(execution.journal.state) {
+			return failure("execution_unconfirmed")
+		}
 		// 真实终态会结束中央租约；先等待续租worker退出，不能由其409撤销回执读取。
 		execution.stopRenew()
 		if err := execution.lease.check(); err != nil {
@@ -139,6 +144,13 @@ func executeTask(parent context.Context, client *agentHTTP, lock *dataLock, cfg 
 	defer func() { lease.cancel(); stopRenew() }()
 	execution := &taskExecution{lease: lease, client: client, journal: journal, spool: newSpool(journal, usage), stopRenew: stopRenew}
 	task := grant.Task
+	journal.mu.Lock()
+	journal.state.IOSSigningRequired = task.Definition.IOSSigning != nil
+	err = journal.saveLocked()
+	journal.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	values, err := loadSecrets(cfg)
 	if err != nil {
 		return execution.zeroAction("precheck_error", grant.RemainingBudgetNS, grant.RemainingPostBudgetNS)
@@ -201,23 +213,37 @@ func executeTask(parent context.Context, client *agentHTTP, lock *dataLock, cfg 
 	}
 	facts := map[string]string{"project": task.Project, "build.id": grant.Ref.BuildID, "build.number": strconv.FormatInt(task.Number, 10), "node.name": cfg.Node, "git.sha": task.SHA, "git.branch": task.Branch}
 	document := &config.Document{Version: 1, Builds: map[string]*config.Build{task.BuildName: &task.Definition}}
-	result, runErr := pipeline.Run(lease.user, document, pipeline.RunOptions{PreviewOptions: pipeline.PreviewOptions{Names: []string{task.BuildName}, Params: task.Parameters}, Workspace: checkout.Workspace, Output: io.Discard, Remote: &pipeline.RemoteOptions{AuthorityContext: lease.ctx, Facts: facts, Secrets: secrets, ResultParent: resultParent, ResultCreated: execution.registerResult, RemainingBudgetNS: remaining, RemainingPostBudgetNS: grant.RemainingPostBudgetNS, Progress: execution.progress, Log: execution.log}})
+	runStart := time.Now()
+	result, runErr := pipeline.Run(lease.user, document, pipeline.RunOptions{PreviewOptions: pipeline.PreviewOptions{Names: []string{task.BuildName}, Params: task.Parameters}, Workspace: checkout.Workspace, Output: io.Discard, Remote: &pipeline.RemoteOptions{AuthorityContext: lease.ctx, Facts: facts, Secrets: secrets, ResultParent: resultParent, ResultCreated: execution.registerResult, RemainingBudgetNS: remaining, RemainingPostBudgetNS: grant.RemainingPostBudgetNS, IOSCheckpoint: execution.saveIOSOwnership, Progress: execution.progress, Log: execution.log}})
 	if execution.terminal {
 		journal.mu.Lock()
-		stopped := journal.state.StopConfirmed && !journal.state.CleanupFailed
+		stopped := journal.state.StopConfirmed && !journal.state.CleanupFailed && iosClosedState(journal.state)
 		journal.mu.Unlock()
 		if !stopped {
 			return failure("execution_unconfirmed")
 		}
 		return journal.remove()
 	}
-	if result == nil && runErr != nil && lease.check() == nil {
+	if errors.Is(runErr, mobile.ErrIOSCleanup) {
+		journal.mu.Lock()
+		journal.state.CleanupFailed = true
+		journal.state.StopConfirmed = false
+		err = journal.saveLocked()
+		journal.mu.Unlock()
+		if err != nil {
+			return err
+		}
+	}
+	if result == nil && runErr != nil && lease.check() == nil && !errors.Is(runErr, mobile.ErrIOSCleanup) {
+		if remaining != nil {
+			*remaining = max(0, *remaining-int64(time.Since(runStart)))
+		}
 		return execution.zeroAction("precheck_error", remaining, grant.RemainingPostBudgetNS)
 	}
 	return execution.confirmStopped(parent)
 }
 func (execution *taskExecution) zeroAction(reason string, remaining *int64, post int64) error {
-	p := protocol.ExecutionProgress{Kind: "build_finished", Status: "failed", Reason: reason, PostPhase: "none", StopConfirmed: true, ExitCode: -1, At: time.Now().UTC(), RemainingBudgetNS: remaining, RemainingPostBudgetNS: post, ArtifactSteps: []protocol.ArtifactExpectation{}}
+	p := protocol.ExecutionProgress{IOSCleanupConfirmed: execution.journal.state.IOSSigningRequired && execution.iosClosed(), Kind: "build_finished", Status: "failed", Reason: reason, PostPhase: "none", StopConfirmed: true, ExitCode: -1, At: time.Now().UTC(), RemainingBudgetNS: remaining, RemainingPostBudgetNS: post, ArtifactSteps: []protocol.ArtifactExpectation{}}
 	if err := execution.progress(execution.lease.ctx, p); err != nil {
 		return err
 	}

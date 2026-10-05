@@ -38,9 +38,15 @@ func validNodeReport(report protocol.NodeReport) bool {
 				return false
 			}
 		}
-		// 005没有验收，节点不能自报可用签名能力。
+		// 非macOS节点不能自报原生签名能力。
 		if tool.Name == "ios_signing" && tool.Status == "passed" {
-			return false
+			xcode := false
+			for _, other := range report.Tools {
+				xcode = xcode || other.Name == "xcode" && other.Status == "passed"
+			}
+			if report.OS != "darwin" || !xcode {
+				return false
+			}
 		}
 	}
 	return true

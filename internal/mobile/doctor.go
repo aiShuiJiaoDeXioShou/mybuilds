@@ -25,10 +25,12 @@ type DoctorCheck struct {
 type toolCommand struct {
 	Workspace, Executable string
 	Args, ExtraEnvNames   []string
+	Stdin                 []byte
 }
 
 var toolEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var errToolOutputLimit = errors.New("tool_output_limit")
+var errToolCleanup = errors.New("tool_cleanup_error")
 
 // toolOutput 只内部返回工具原文，公开诊断由平台检查严格解析后生成。
 func toolOutput(ctx context.Context, command toolCommand) (string, error) {
@@ -88,11 +90,11 @@ func toolOutput(ctx context.Context, command toolCommand) (string, error) {
 	}
 	slices.Sort(values)
 	output := &toolBuffer{}
-	result := process.Run(ctx, process.Command{Path: executable, Args: command.Args, Dir: workspace, Env: values}, output, output)
+	result := process.Run(ctx, process.Command{Path: executable, Args: command.Args, Dir: workspace, Env: values, Stdin: command.Stdin}, output, output)
 	output.mu.Lock()
 	defer output.mu.Unlock()
 	if result.CleanupFailed {
-		return "", errors.New("tool_cleanup_error")
+		return "", errToolCleanup
 	}
 	if ctx.Err() != nil {
 		return "", toolContextError(ctx)

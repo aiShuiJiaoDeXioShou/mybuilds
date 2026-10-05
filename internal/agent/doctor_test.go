@@ -5,6 +5,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"mybuilds/internal/mobile"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,12 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if len(os.Args) == 2 && os.Args[1] == "__ios-signing" {
+		if mobile.HandleIOSHelper(os.Stdin, os.Stdout) != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	if len(os.Args) == 3 && os.Args[1] == "--agent-doctor-helper" {
 		switch os.Args[2] {
 		case "overflow":
@@ -63,8 +70,12 @@ func TestDoctorDoesNotCreateDataOrReadToken(t *testing.T) {
 	if statuses["java"] == "passed" || statuses["android_aapt2"] == "passed" || statuses["android_apksigner"] == "passed" {
 		t.Fatalf("missing tools passed: %+v", report)
 	}
-	if statuses["ios_signing"] != "skipped" || reasons["ios_signing"] != "unsupported" {
-		t.Fatal(report)
+	if mobile.IOSSigningSupported() && statuses["xcode"] == "passed" {
+		if statuses["ios_signing"] != "passed" || reasons["ios_signing"] != "" {
+			t.Fatal("可用原生组件未报告", report)
+		}
+	} else if statuses["ios_signing"] != "skipped" || reasons["ios_signing"] != "unsupported" {
+		t.Fatal("未支持宿主虚报原生能力", report)
 	}
 	if statuses["node_journal"] != "skipped" || reasons["node_journal"] != "uninitialized" {
 		t.Fatal(report)

@@ -9,10 +9,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"mybuilds/internal/mobile"
 	"mybuilds/internal/protocol"
 )
 
 type journalState struct {
+	IOSSigningRequired                    bool                           `json:"ios_signing_required,omitempty"`
+	IOSResources                          *mobile.IOSResourceOwnership   `json:"ios_resources,omitempty"`
 	Reports                               *reportCheckpoint              `json:"reports,omitempty"`
 	PendingStop                           *protocol.StopConfirmation     `json:"pending_stop,omitempty"`
 	Artifacts                             []localArtifact                `json:"artifacts,omitempty"`

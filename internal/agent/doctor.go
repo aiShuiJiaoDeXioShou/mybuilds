@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"mybuilds/internal/mobile"
 	"mybuilds/internal/process"
 	"mybuilds/internal/protocol"
 )
@@ -115,7 +116,15 @@ func Doctor(parent context.Context, dataDir string) (protocol.NodeReport, error)
 	if runtime.GOOS != "darwin" {
 		report.Tools = append(report.Tools, protocol.ToolCheck{Name: "xcode", Status: "skipped", Reason: "unsupported"})
 	}
-	report.Tools = append(report.Tools, protocol.ToolCheck{Name: "ios_signing", Status: "skipped", Reason: "unsupported"})
+	signing := protocol.ToolCheck{Name: "ios_signing", Status: "skipped", Reason: "unsupported"}
+	xcodePassed := false
+	for _, tool := range report.Tools {
+		xcodePassed = xcodePassed || tool.Name == "xcode" && tool.Status == "passed"
+	}
+	if mobile.IOSSigningSupported() && unsafe == "" && xcodePassed {
+		signing.Status, signing.Reason = "passed", ""
+	}
+	report.Tools = append(report.Tools, signing)
 	if unsafe == "cleanup_error" {
 		return report, failure("cleanup_error")
 	}

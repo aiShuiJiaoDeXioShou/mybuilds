@@ -26,7 +26,7 @@
 客户端已接入 `init`、本地模板、严格配置校验与 `run --dry-run` 脱敏预览；支持单/多 build 选择、参数覆盖和条件三态。
 `001-pipeline-preview` 已实现并通过集成验证，证据见[验证记录](specs/001-pipeline-preview/validation.md)。`002-local-run` 已接入本地顺序执行、进程组取消、预算/post 和 UTC 脱敏日志，已通过验收；`003-build-artifacts` 已接入产物快照与本地结果/步骤日志并通过验收，见[验证记录](specs/003-build-artifacts/validation.md)。审批、通知和上传仍待实现。
 MVP 目标已扩展至原生/Flutter 双平台、多节点构建、Google Play/App Store 分发与用户自定义，见 [构建与分发设计](docs/plans/BUILD_DISTRIBUTION.md)。
-`004-android-build` 已完成本机 `doctor`、可编辑模板和真实工程验收：APK/AAB 版本与签名、mapping、快照摘要、离线缓存、失败和取消均通过，见[验证记录](specs/004-android-build/validation.md)。`005-ios-build` 在独立 worktree 实现，真实 Apple profile 与签名 archive/export 尚未验收；当前已集成代码不提供 iOS 签名执行。Flutter 模板仍待后续功能交付。
+`004-android-build` 已完成本机 `doctor`、可编辑模板和真实工程验收：APK/AAB 版本与签名、mapping、快照摘要、离线缓存、失败和取消均通过，见[验证记录](specs/004-android-build/validation.md)。`005-ios-build` 已实现严格签名配置、init/doctor、同一Run/Agent资源准备与独立Close、私有journal恢复及中央原生关闭guard；必要自动检查与人工指南随功能交付，真实Apple profile兼容、签名IPA/dSYM及相关成功/取消组合由用户人工验收，不把自产证书或unsigned归档视为真实签名通过。Flutter 模板仍待后续功能交付。
 `006-control-plane` 已接入严格管理配置、双数据库 Store、单控制端独占、鉴权 HTTP、只读 Git 固定提交与远程 CLI。已通过最终全量/race/vet、SQLite 与 PostgreSQL 各 37 项真实二进制验收，以及 Linux 上 37 项闭环；Spec Kit 收敛无缺口并按整功能提交，见[验证记录](specs/006-control-plane/validation.md)。006 验收范围只包含 queued/skipped，不含实际远程构建；007 已接入独立 Agent 执行，发布和审批仍待后续功能。
 项目组已经接入：注册时可选组，未指定归入 default，支持普通组改名、空组删除和项目迁移，项目历史与编号保持。
 一个 YAML 的多个命名 build、本地参数/env 映射、when、累计超时、post 和日志时间戳已经实现；无 YAML 绑定双平台方案、自动变更筛选、Webhook 等待窗口、保留策略与发布审批仍待实现。019 JUnit 已接入本地检查、原XML快照与封存，以及Agent回传、中央详情和下载；双库名义应用各92项、最终20故障192断言及macOS/Linux实机门通过；全量test/race/vet、12编译通过，Spec Kit收敛无缺口，验收通过，整功能提交见[实施历史](docs/IMPLEMENTATION_HISTORY.md)。
@@ -37,6 +37,7 @@ MVP 目标已扩展至原生/Flutter 双平台、多节点构建、Google Play/A
 
 要求 Go **1.25 或更新版本**、Git。首次下载 Go 依赖需要网络；已使用 Cobra、YAML v3、doublestar/v4，以及管理配置的 Viper 1.21.0、数据库访问的 GORM 1.31.2 与 SQLite/PostgreSQL 双驱动。SQLite 引擎锁定 modernc.org/sqlite 1.55.0（实际 SQLite 3.53.3），包含 WAL 修补；依赖版本见 [go.mod](go.mod) 和 [go.sum](go.sum)。
 帮助、版本、init 和 dry-run 无需移动工具链。Android doctor 要求 Java 17+、已有 Android SDK 和工程内 Gradle wrapper；完整构建以工程实际要求为准，不自动安装 SDK。新增签名行为测试需要 JDK/keytool。
+iOS签名要求macOS15+、现代Xcode/iOS SDK以及Darwin+cgo构建；不自动下载或管理签名材料。非macOS/无cgo仍能init和dry-run，实际签名明确未支持。
 本地执行和控制端支持 macOS/Linux；本地脚本需要 sh 或所选 bash，Git 快照需要 Git。Windows 客户端可纯 Go 编译和调用远程 API，本地执行与本机控制端明确未支持。
 
 在项目根目录运行：
@@ -86,6 +87,8 @@ artifact 支持相对根目录递归 glob（`**`）；每个模式须匹配普�
 JUnit 本地示例见 [local-reports.yml](examples/local-reports.yml)：在独立临时工作目录运行 `mybuilds run --file <示例绝对路径> --build junit`。示例会生成失败报告并返回非零，结果只统计同路径最后一次普通执行生成的5个case；failure/always仍运行，post改写原文件不改变封存结果。实际配置使用 `reports.junit.paths: [results/*.xml]`，`required` 默认true；false只允许缺失，非法XML或测试失败仍失败。开始前的旧XML不计入，报告耗时计入普通构建预算。
 结果JSON包含报告计数、有限诊断、安全相对路径和原XML的大小/SHA-256；独立快照和manifest位于结果目录。未配置报告或全部跳过不生成报告结果。远程构建也使用同一检查流程，最终XML完整上传并经服务端重新解析后才封存。`build show`显示已封存计数、来源和摘要，`artifact ls`列出junit用途，`artifact download`下载中央确认的原字节，节点离线仍可用；admin/approver可读，trigger/node身份不可读取用户报告。019最终故障验收已通过，见[验证记录](specs/019-test-reports/validation.md)。
 报告路径模板支持参数及project、build.name/build.id/build.number、node.name、git.sha/git.branch；本地运行须有相应事实，缺失在执行前报错。workspace、step.name属于私有步骤上下文，不能用于报告路径。
+原生iOS使用`mybuilds init --framework native --platform ios`（当前目录，已有配置不覆盖）；五个必填参数为xcode_project、scheme、bundle_id、version、build_number，export_method默认debugging。IOS_P12_FILE/IOS_PROFILE_FILE/IOS_P12_PASSWORD仅通过ios_signing完整环境引用声明，预览不读取这些值。实际执行用单一app/profile、临时keychain、排他profile副本与工作树外的DerivedData/archive/export目录；普通步骤及用户post结束后系统独立Close，清理不确定保留原原因并闭锁，不修改用户default/search list。可编辑模板见[native-ios.yml](examples/native-ios.yml)，完整预览、实际命令和人工IPA/dSYM核验见[005指南](specs/005-ios-build/quickstart.md)。
+
 Android 工程接入、临时测试签名和构建命令见 [Android 示例](examples/android/README.md)；完整包核验见 [004 验收指南](specs/004-android-build/quickstart.md)。
 
 ## 控制端与远程排队

@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 	node "mybuilds/internal/agent"
+	"mybuilds/internal/mobile"
 	"mybuilds/internal/version"
 )
 
@@ -28,6 +29,9 @@ func NewCommand() *cobra.Command {
 	}
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
 	cmd.AddCommand(version.NewCommand(), newDoctorCommand(), newServeCommand())
+	cmd.AddCommand(&cobra.Command{Use: "__ios-signing", Hidden: true, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		return mobile.HandleIOSHelper(cmd.InOrStdin(), cmd.OutOrStdout())
+	}})
 	return cmd
 }
 func newDoctorCommand() *cobra.Command {

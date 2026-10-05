@@ -1,0 +1,75 @@
+# 单一 app/profile 的本地手动签名模板；用户需明确提供自己的工程和签名材料。
+# 执行前设置 IOS_P12_FILE、IOS_PROFILE_FILE、IOS_P12_PASSWORD；密码不要写进配置或命令参数。
+version: 1
+builds:
+  ios:
+    runner: {platform: ios, labels: [xcode, ios-signing]}
+    timeout: 45m
+    params:
+      xcode_project: {required: true, description: 仓库内的 .xcodeproj 或 .xcworkspace 路径}
+      scheme: {required: true, description: 要归档的共享 scheme}
+      bundle_id: {required: true, description: 与明确 profile 匹配的 Bundle ID}
+      version: {required: true, description: 三段数字市场版本，例如 1.2.3}
+      build_number: {required: true, description: 一至三段数字构建号}
+      export_method:
+        default: debugging
+        choices: [debugging, release-testing, app-store-connect, enterprise]
+    ios_signing:
+      p12: "${IOS_P12_FILE}"
+      profile: "${IOS_PROFILE_FILE}"
+      password: "${IOS_P12_PASSWORD}"
+      bundle_id: "{{bundle_id}}"
+      export_method: "{{export_method}}"
+    env:
+      IOS_PROJECT: "{{xcode_project}}"
+      IOS_SCHEME: "{{scheme}}"
+      IOS_VERSION: "{{version}}"
+      IOS_BUILD_NUMBER: "{{build_number}}"
+    steps:
+      - kind: run
+        name: archive
+        shell: bash
+        run: |
+          set -eu
+          [[ "$IOS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { printf '市场版本非法\n' >&2; exit 1; }
+          [[ "$IOS_BUILD_NUMBER" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || { printf '构建号非法\n' >&2; exit 1; }
+          case "$IOS_PROJECT" in
+            *.xcodeproj) project_flag=-project ;;
+            *.xcworkspace) project_flag=-workspace ;;
+            *) printf '工程路径需为xcodeproj或xcworkspace\n' >&2; exit 1 ;;
+          esac
+          test -d "$IOS_PROJECT" || { printf '工程不存在\n' >&2; exit 1; }
+          xcodebuild "$project_flag" "$IOS_PROJECT" -scheme "$IOS_SCHEME" \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath "$MYBUILDS_IOS_BUILD_DIR/DerivedData" \
+            -archivePath "$MYBUILDS_IOS_BUILD_DIR/App.xcarchive" archive \
+            CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$MYBUILDS_IOS_TEAM_ID" \
+            CODE_SIGN_IDENTITY="$MYBUILDS_IOS_SIGNING_IDENTITY" \
+            PROVISIONING_PROFILE_SPECIFIER="$MYBUILDS_IOS_PROFILE_UUID" \
+            OTHER_CODE_SIGN_FLAGS="--keychain \"$MYBUILDS_IOS_KEYCHAIN\"" \
+            MARKETING_VERSION="$IOS_VERSION" CURRENT_PROJECT_VERSION="$IOS_BUILD_NUMBER" \
+            DEBUG_INFORMATION_FORMAT=dwarf-with-dsym
+          apps=("$MYBUILDS_IOS_BUILD_DIR/App.xcarchive/Products/Applications/"*.app)
+          [[ ${#apps[@]} -eq 1 && -d "${apps[0]}" ]] || { printf '归档需恰有一个app\n' >&2; exit 1; }
+          info="${apps[0]}/Info.plist"
+          actual_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info")
+          actual_build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info")
+          actual_bundle=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info")
+          [[ "$actual_version" == "$IOS_VERSION" && "$actual_build" == "$IOS_BUILD_NUMBER" && "$actual_bundle" == "$MYBUILDS_IOS_BUNDLE_ID" ]] || { printf '归档版本或BundleID与参数不一致\n' >&2; exit 1; }
+      - kind: run
+        name: export
+        shell: bash
+        run: |
+          set -eu
+          xcodebuild -exportArchive -archivePath "$MYBUILDS_IOS_BUILD_DIR/App.xcarchive" \
+            -exportPath "$MYBUILDS_IOS_BUILD_DIR/export" \
+            -exportOptionsPlist "$MYBUILDS_IOS_EXPORT_OPTIONS"
+          ipas=("$MYBUILDS_IOS_BUILD_DIR/export/"*.ipa)
+          [[ ${#ipas[@]} -eq 1 && -s "${ipas[0]}" ]] || { printf '导出需恰有一个IPA\n' >&2; exit 1; }
+          symbols=("$MYBUILDS_IOS_BUILD_DIR/App.xcarchive/dSYMs/"*.dSYM)
+          [[ ${#symbols[@]} -ge 1 && -d "${symbols[0]}" ]] || { printf '归档缺少dSYM\n' >&2; exit 1; }
+          cp "${ipas[0]}" "$MYBUILDS_IOS_OUTPUT_DIR/App.ipa"
+          /usr/bin/ditto -c -k --keepParent "$MYBUILDS_IOS_BUILD_DIR/App.xcarchive/dSYMs" "$MYBUILDS_IOS_OUTPUT_DIR/App.dSYM.zip"
+      - kind: artifact
+        name: ipa-and-symbols
+        paths: ["{{ios.output_dir}}/*.ipa", "{{ios.output_dir}}/*.dSYM.zip"]

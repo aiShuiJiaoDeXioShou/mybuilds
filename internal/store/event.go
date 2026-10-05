@@ -29,6 +29,12 @@ func progressDigest(p protocol.ExecutionProgress) string {
 func validProgress(p protocol.ExecutionProgress) bool {
 	_, offset := p.At.Zone()
 	reportEvent := p.Kind == "reports_checked" || p.Kind == "reports_sealed"
+	if p.IOSResourceDigest != "" && (!p.IOSCleanupConfirmed || !validHex(p.IOSResourceDigest, 64)) {
+		return false
+	}
+	if p.IOSCleanupConfirmed && p.Kind != "build_finished" {
+		return false
+	}
 	if len(p.LocalReports) != 0 || (p.Reports != nil) != reportEvent || p.ReportManifest != nil && p.Kind != "build_finished" {
 		return false
 	}
@@ -281,6 +287,13 @@ func applyTerminal(db *gorm.DB, row *buildRecord, p protocol.ExecutionProgress) 
 	if p.Phase != "" || p.Index != 0 || p.Name != "" || p.StepKind != "" || !slices.Contains([]string{"succeeded", "failed", "cancelled", "skipped"}, p.Status) || len(p.ArtifactIDs) != 0 {
 		return ErrEventConflict
 	}
+	required, err := requiresIOSCleanup(*row)
+	if err != nil {
+		return err
+	}
+	if !required && (p.IOSCleanupConfirmed || p.IOSResourceDigest != "") || required && !p.IOSCleanupConfirmed && !p.CleanupFailed {
+		return ErrEventConflict
+	}
 	steps, err := loadSteps(db, row.ID)
 	if err != nil {
 		return err
@@ -310,9 +323,14 @@ func applyTerminal(db *gorm.DB, row *buildRecord, p protocol.ExecutionProgress) 
 		if !terminalStep(step.Status) || !step.StopConfirmed && !step.CleanupFailed {
 			return ErrEventConflict
 		}
+		if required && p.IOSCleanupConfirmed && step.Phase == "ordinary" && step.Kind == "run" && step.Started && p.IOSResourceDigest == "" {
+			return ErrEventConflict
+		}
 		started = started || step.Started
 		cleanup = cleanup || step.CleanupFailed
 	}
+	nativeUnknown := required && !p.IOSCleanupConfirmed
+	cleanup = cleanup || nativeUnknown
 	if p.Started != started || p.CleanupFailed != cleanup || p.StopConfirmed == cleanup {
 		return ErrEventConflict
 	}

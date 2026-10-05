@@ -3,6 +3,7 @@ package client
 import (
 	"errors"
 	"github.com/spf13/cobra"
+	"mybuilds/internal/mobile"
 	"mybuilds/internal/version"
 )
 
@@ -21,5 +22,8 @@ func NewCommand() *cobra.Command {
 	}
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
 	cmd.AddCommand(newRetentionCommand(), version.NewCommand(), newInitCommand(), newRunCommand(), newDoctorCommand(), newRemoteGroupCommand(), newBuildCommand(), newStatusCommand(), newRemoteProjectCommand(), newTriggerCommand(), newRemoteNodeCommand(), newLogsCommand(), newArtifactCommand())
+	cmd.AddCommand(&cobra.Command{Use: "__ios-signing", Hidden: true, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		return mobile.HandleIOSHelper(cmd.InOrStdin(), cmd.OutOrStdout())
+	}})
 	return cmd
 }

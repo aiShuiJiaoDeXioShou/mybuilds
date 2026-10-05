@@ -49,7 +49,7 @@ func RenderField(value, field string, params, context map[string]string, secrets
 			rendered.WriteString(value)
 		} else {
 			switch key {
-			case "project", "build.name", "build.number", "build.id", "git.sha", "git.branch", "node.name", "workspace", "step.name":
+			case "project", "build.name", "build.number", "build.id", "git.sha", "git.branch", "node.name", "workspace", "step.name", "ios.output_dir":
 			case "build.status", "build.url":
 				if !notification {
 					return "", false, fmt.Errorf("%s: 未知模板变量", field)

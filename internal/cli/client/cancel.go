@@ -24,6 +24,7 @@ func addBuildStopCommands(build *cobra.Command) {
 	cancel.Flags().Bool("json", false, "输出JSON")
 	confirm := &cobra.Command{Use: "confirm-stopped <id>", Short: "记录管理员实际观察到的停止依据", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		in := protocol.StopConfirmation{EvidenceCode: "admin_observed_stopped"}
+		in.IOSCleanupConfirmed, _ = cmd.Flags().GetBool("ios-cleanup-confirmed")
 		in.Ref.BuildID = args[0]
 		for flag, target := range map[string]*string{"node-id": &in.Ref.NodeID, "session": &in.Ref.SessionID, "attempt": &in.Ref.AttemptID, "lease": &in.Ref.LeaseID} {
 			if !cmd.Flags().Changed(flag) {
@@ -63,5 +64,6 @@ func addBuildStopCommands(build *cobra.Command) {
 	}
 	confirm.Flags().Int64("epoch", 0, "原租约epoch")
 	confirm.Flags().String("note", "", "实际观察到的停止依据")
+	confirm.Flags().Bool("ios-cleanup-confirmed", false, "仅实际核对本次原生签名资源已关闭后声明")
 	build.AddCommand(cancel, confirm)
 }

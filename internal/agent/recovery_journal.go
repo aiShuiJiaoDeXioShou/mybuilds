@@ -38,6 +38,9 @@ func readTerminalJournal(lock *dataLock, name string) (*executionJournal, error)
 	if state.ClaimKey+".json" != name || !exactUUID(state.ClaimKey) || state.Ref == nil || !validRef(*state.Ref) || state.Ref.SessionID != state.SessionID || state.PendingEvent == nil || state.PendingStop != nil || state.PendingLog != nil || !state.StopConfirmed || state.CleanupFailed || state.LastEventSeq < 0 || state.LastLogSeq < 0 || state.LastLogOffset < 0 {
 		return nil, failure("journal_unconfirmed")
 	}
+	if !iosClosedState(state) || state.PendingEvent.Progress.IOSCleanupConfirmed != state.IOSSigningRequired || state.PendingEvent.Progress.IOSResourceDigest != iosDigestState(state) {
+		return nil, failure("journal_unconfirmed")
+	}
 	event := state.PendingEvent
 	p := event.Progress
 	if p.RemainingPostBudgetNS < 0 || p.ElapsedNS < 0 || p.Phase != "" || p.Index != 0 || p.Name != "" || p.StepKind != "" || len(p.ArtifactIDs) != 0 {

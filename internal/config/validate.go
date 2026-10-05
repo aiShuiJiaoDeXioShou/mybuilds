@@ -58,6 +58,9 @@ func validateBuild(b *Build, field string) error {
 	if b == nil {
 		return invalid(field, "构建不能为空")
 	}
+	if err := ValidateIOSSigning(b.IOSSigning, field+".ios_signing"); err != nil {
+		return err
+	}
 	if b.Runner != nil {
 		if b.Runner.Platform != "android" && b.Runner.Platform != "ios" {
 			return invalid(field+".runner.platform", "仅支持 android/ios")

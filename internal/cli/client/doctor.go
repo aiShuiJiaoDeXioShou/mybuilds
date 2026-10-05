@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -17,7 +18,7 @@ import (
 
 func newDoctorCommand() *cobra.Command {
 	var options mobile.AndroidDoctorOptions
-	var platform string
+	var platform, p12, profile, passwordEnv, bundleID, exportMethod string
 	var asJSON bool
 	var remoteServer bool
 	var remoteNode string
@@ -31,7 +32,7 @@ func newDoctorCommand() *cobra.Command {
 				if remoteServer && remoteNode != "" {
 					return errors.New("远程检查目标互斥")
 				}
-				for _, name := range []string{"platform", "working-dir", "gradle-wrapper", "keystore", "key-alias", "store-password-env", "key-password-env"} {
+				for _, name := range []string{"platform", "working-dir", "gradle-wrapper", "keystore", "key-alias", "store-password-env", "key-password-env", "p12", "profile", "password-env", "bundle-id", "export-method"} {
 					if cmd.Flags().Changed(name) {
 						return errors.New("远程检查不能混用本地工程选项")
 					}
@@ -59,12 +60,42 @@ func newDoctorCommand() *cobra.Command {
 				}
 				return nil
 			}
-			if platform != "android" {
+			if platform != "android" && platform != "ios" {
 				return errors.New("指定的平台检查尚未支持")
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			checks := mobile.AndroidDoctor(ctx, options)
+			var checks []mobile.DoctorCheck
+			if platform == "ios" {
+				for _, name := range []string{"gradle-wrapper", "keystore", "key-alias", "store-password-env", "key-password-env"} {
+					if cmd.Flags().Changed(name) {
+						return errors.New("平台选项不可混用")
+					}
+				}
+				ios := mobile.IOSDoctorOptions{Workspace: options.Workspace}
+				declared := false
+				for _, name := range []string{"p12", "profile", "password-env", "bundle-id", "export-method"} {
+					declared = declared || cmd.Flags().Changed(name)
+				}
+				if declared {
+					if p12 == "" || profile == "" || bundleID == "" || exportMethod == "" || !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(passwordEnv) {
+						return errors.New("ios_signing_options_invalid")
+					}
+					password, ok := os.LookupEnv(passwordEnv)
+					if !ok {
+						return errors.New("ios_signing_environment_unavailable")
+					}
+					ios.Signing = &mobile.IOSSigningOptions{Workspace: options.Workspace, P12File: p12, ProfileFile: profile, Password: password, BundleID: bundleID, ExportMethod: exportMethod}
+				}
+				checks = mobile.IOSDoctor(ctx, ios)
+			} else {
+				for _, name := range []string{"p12", "profile", "password-env", "bundle-id", "export-method"} {
+					if cmd.Flags().Changed(name) {
+						return errors.New("平台选项不可混用")
+					}
+				}
+				checks = mobile.AndroidDoctor(ctx, options)
+			}
 			if asJSON {
 				output := json.NewEncoder(cmd.OutOrStdout())
 				output.SetIndent("", "  ")
@@ -96,5 +127,10 @@ func newDoctorCommand() *cobra.Command {
 	cmd.Flags().StringVar(&options.KeyAlias, "key-alias", "", "显式私钥 alias")
 	cmd.Flags().StringVar(&options.StorePasswordEnv, "store-password-env", "", "keystore 密码的环境变量名")
 	cmd.Flags().StringVar(&options.KeyPasswordEnv, "key-password-env", "", "私钥密码的环境变量名")
+	cmd.Flags().StringVar(&p12, "p12", "", "明确的P12文件")
+	cmd.Flags().StringVar(&profile, "profile", "", "明确的provisioning profile文件")
+	cmd.Flags().StringVar(&passwordEnv, "password-env", "", "P12密码的环境变量名")
+	cmd.Flags().StringVar(&bundleID, "bundle-id", "", "明确的Bundle ID")
+	cmd.Flags().StringVar(&exportMethod, "export-method", "", "明确的导出方法")
 	return cmd
 }

@@ -32,6 +32,9 @@ func Serve(ctx context.Context, cfg config.AgentConfig) (result error) {
 			result = err
 		}
 	}()
+	if err = closeRecoveredIOSResources(ctx, lock); err != nil {
+		return err
+	}
 	// 当前节点只读确认精确终态；任何旧活动/未知证据仍拒绝，不按旧PID发信号。
 	if err = recoverTerminalJournals(ctx, client, lock, cfg.Node); err != nil {
 		return err

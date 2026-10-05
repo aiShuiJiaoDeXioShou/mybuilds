@@ -54,6 +54,11 @@ func taskSecrets(cfg config.AgentConfig, build config.Build, values map[string]s
 	if err := take(build.Env); err != nil {
 		return nil, err
 	}
+	if build.IOSSigning != nil {
+		if err := take(map[string]string{"p12": build.IOSSigning.P12, "profile": build.IOSSigning.Profile, "password": build.IOSSigning.Password}); err != nil {
+			return nil, err
+		}
+	}
 	steps := append([]config.Step{}, build.Steps...)
 	if build.Post != nil {
 		steps = append(steps, build.Post.Success...)

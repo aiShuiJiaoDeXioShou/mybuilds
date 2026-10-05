@@ -176,10 +176,16 @@ func candidateReason(db *gorm.DB, row buildRecord, node nodeRecord, session node
 		}
 	}
 	if runner := snapshot.Definition.Runner; runner != nil {
-		if runner.Platform != "android" {
+		requiredTools := []string{"java", "android_aapt2", "android_apksigner"}
+		if runner.Platform == "ios" {
+			if session.OS != "darwin" {
+				return "capability_mismatch", nil
+			}
+			requiredTools = []string{"xcode", "ios_signing"}
+		} else if runner.Platform != "android" {
 			return "capability_mismatch", nil
 		}
-		for _, required := range []string{"java", "android_aapt2", "android_apksigner"} {
+		for _, required := range requiredTools {
 			if !passed[required] {
 				return "capability_mismatch", nil
 			}
@@ -189,6 +195,9 @@ func candidateReason(db *gorm.DB, row buildRecord, node nodeRecord, session node
 				return "capability_mismatch", nil
 			}
 		}
+	}
+	if snapshot.Definition.IOSSigning != nil && (session.OS != "darwin" || !passed["xcode"] || !passed["ios_signing"]) {
+		return "capability_mismatch", nil
 	}
 	var nameOccupied, global, nodeOccupied int64
 	if err := db.Model(&buildRecord{}).Where("project_id = ? AND name = ? AND (status = ? OR stop_unconfirmed = ?)", row.ProjectID, row.Name, "running", true).Count(&nameOccupied).Error; err != nil {

@@ -7,6 +7,7 @@ import (
 	"path"
 	"regexp"
 	"slices"
+	"strings"
 
 	"mybuilds/internal/config"
 )
@@ -141,9 +142,20 @@ func previewBuild(document *config.Document, name string, params, facts map[stri
 	field := "builds." + name
 	context := make(map[string]string, len(facts)+1)
 	for key, value := range facts {
-		context[key] = value
+		if key != "ios.output_dir" {
+			context[key] = value
+		}
 	}
 	context["build.name"] = name
+	if iosOutputReferenced(build) {
+		hasRun := false
+		for _, step := range build.Steps {
+			hasRun = hasRun || step.Kind == "run"
+		}
+		if build.IOSSigning == nil || !hasRun {
+			return BuildPreview{}, fmt.Errorf("%s.ios_signing: 系统产物目录需要签名与普通run", field)
+		}
+	}
 	state := evaluateWhen(build.When, params, facts)
 	// build.env 在每个步骤使用，step.name 引用有实际名称，不是缺失运行事实。
 	if len(build.Steps) != 0 {
@@ -155,6 +167,13 @@ func previewBuild(document *config.Document, name string, params, facts map[stri
 		return BuildPreview{}, err
 	}
 	state = combine(state, templateCondition(missing))
+	if build.IOSSigning != nil {
+		_, missing, err := renderIOSSigning(build.IOSSigning, field+".ios_signing", params, context)
+		if err != nil {
+			return BuildPreview{}, err
+		}
+		state = combine(state, templateCondition(missing))
+	}
 	if build.Reports != nil && build.Reports.JUnit != nil {
 		for _, value := range build.Reports.JUnit.Paths {
 			missing, err := checkField(value, field+".reports.junit.paths", params, context, false, false)
@@ -356,4 +375,61 @@ func checkField(value, field string, params, context map[string]string, secrets,
 
 func sortedKeys[V any](values map[string]V) []string {
 	return slices.Sorted(maps.Keys(values))
+}
+
+// 签名只用同一个RenderField解释一次原字段；返回数据不读取材料。
+func renderIOSSigning(in *config.IOSSigning, field string, params, facts map[string]string) (config.IOSSigning, bool, error) {
+	out := *in
+	missing := false
+	for _, item := range []struct {
+		name   string
+		target *string
+	}{{"bundle_id", &out.BundleID}, {"export_method", &out.ExportMethod}} {
+		value, pending, err := config.RenderField(*item.target, field+"."+item.name, params, facts, false, false)
+		if err != nil {
+			return config.IOSSigning{}, false, err
+		}
+		missing = missing || pending
+		if !pending {
+			if strings.ContainsAny(value, "{}") {
+				return config.IOSSigning{}, false, fmt.Errorf("%s: 渲染后需要合法字面量", field)
+			}
+			*item.target = value
+		}
+	}
+	if err := config.ValidateIOSSigning(&out, field); err != nil {
+		return config.IOSSigning{}, false, err
+	}
+	return out, missing, nil
+}
+
+var iosOutputPattern = regexp.MustCompile(`\{\{\s*ios\.output_dir\s*\}\}`)
+
+func iosOutputReferenced(b *config.Build) bool {
+	values := []string{}
+	for _, v := range b.Env {
+		values = append(values, v)
+	}
+	if b.Reports != nil && b.Reports.JUnit != nil {
+		values = append(values, b.Reports.JUnit.Paths...)
+	}
+	steps := slices.Clone(b.Steps)
+	if b.Post != nil {
+		steps = append(steps, b.Post.Success...)
+		steps = append(steps, b.Post.Failure...)
+		steps = append(steps, b.Post.Always...)
+	}
+	for _, step := range steps {
+		values = append(values, step.Run, step.WorkingDir, step.File)
+		values = append(values, step.Paths...)
+		for _, v := range step.Env {
+			values = append(values, v)
+		}
+	}
+	for _, v := range values {
+		if iosOutputPattern.MatchString(v) {
+			return true
+		}
+	}
+	return false
 }

@@ -38,10 +38,14 @@ func newInitCommand() *cobra.Command {
 				if framework == "" {
 					framework = "native"
 				}
-				if framework != "native" || platform != "android" {
+				if framework != "native" || (platform != "android" && platform != "ios") {
 					return errors.New("指定的框架或平台模板尚未支持")
 				}
-				data = mobile.AndroidTemplate()
+				if platform == "ios" {
+					data = mobile.IOSTemplate()
+				} else {
+					data = mobile.AndroidTemplate()
+				}
 			}
 			if hasTemplate {
 				file, err := os.Open(template)

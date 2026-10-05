@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"maps"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"mybuilds/internal/config"
+	"mybuilds/internal/mobile"
 	"mybuilds/internal/process"
 	"mybuilds/internal/protocol"
 )
@@ -27,16 +29,19 @@ type preparedStep struct {
 	patterns    []string
 	phase       string
 	index       int
+	ios         *iosBuildResources
 }
 
 type preparedBuild struct {
 	name                     string
+	iosDeclared              bool
 	skipped                  bool
 	steps                    []preparedStep
 	success, failure, always []preparedStep
 	timeout, postTimeout     time.Duration
 	reportPatterns           []string
 	reportRequired           bool
+	iosSigning               *mobile.IOSSigningOptions
 }
 
 type runPreparation struct {
@@ -227,7 +232,7 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 		}
 		if remote.blocked() == "" && len(result.Builds) > 0 {
 			b := result.Builds[0]
-			p := protocol.ExecutionProgress{Kind: "build_finished", Status: b.Status, Reason: b.Reason, StopConfirmed: !cleanupFailed, CleanupFailed: cleanupFailed, ExitCode: 0}
+			p := protocol.ExecutionProgress{IOSResourceDigest: b.iosResourceDigest, IOSCleanupConfirmed: b.IOSCleanupConfirmed, Kind: "build_finished", Status: b.Status, Reason: b.Reason, StopConfirmed: !cleanupFailed, CleanupFailed: cleanupFailed, ExitCode: 0}
 			if b.Reports != nil && b.Reports.Sealed {
 				ids := make([]string, 0, len(b.Reports.Files))
 				for _, file := range b.Reports.Files {
@@ -246,6 +251,9 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 			}
 		}
 	}
+	if cleanupFailed {
+		failed = true
+	}
 	if failed {
 		return result, batchRunError
 	}
@@ -254,28 +262,15 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 
 // resultDirectory 先检查真实临时目录边界，避免 TMPDIR 把运行数据放入工作区。
 func resultDirectory(workspace string) (string, error) {
-	for _, temporary := range []string{os.TempDir(), "/tmp"} {
-		base, err := filepath.EvalSymlinks(temporary)
-		if err != nil {
-			continue
-		}
-		base, err = filepath.Abs(base)
-		if err != nil {
-			continue
-		}
-		relative, err := filepath.Rel(workspace, base)
-		if err != nil || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
-			continue
-		}
-		if directory, err := os.MkdirTemp(base, "mybuilds-"); err == nil {
-			return directory, nil
-		}
+	directory, err := process.TemporaryDirectory(workspace, "mybuilds-")
+	if err != nil {
+		return "", errors.New("结果目录不可用")
 	}
-	return "", errors.New("结果目录不可用")
+	return directory, nil
 }
 
 func (p *runPreparation) build(name string, build *config.Build, params map[string]string, selected string, notifications *config.Notifications) (preparedBuild, error) {
-	b := preparedBuild{name: name, steps: []preparedStep{}, postTimeout: 2 * time.Minute}
+	b := preparedBuild{iosDeclared: build.IOSSigning != nil, name: name, steps: []preparedStep{}, postTimeout: 2 * time.Minute}
 	b.timeout, _ = time.ParseDuration(build.Timeout)
 	if build.Post != nil && build.Post.Timeout != "" {
 		b.postTimeout, _ = time.ParseDuration(build.Post.Timeout)
@@ -286,11 +281,69 @@ func (p *runPreparation) build(name string, build *config.Build, params map[stri
 	}
 	b.skipped = state.Condition == "skipped"
 	if !b.skipped {
+
 		if notifications != nil && (notifications.Enabled == nil || *notifications.Enabled) {
 			return b, errors.New("notifications: 本地通知尚未支持")
 		}
 		if build.Runner != nil && build.Runner.Platform == "ios" && runtime.GOOS != "darwin" {
 			return b, errors.New("runner: iOS 需要 macOS")
+		}
+	}
+	// 系统目录仅由本次有效普通run生成，不采用调用者提供的事实。
+	if !b.skipped && build.IOSSigning != nil {
+		activeRun := false
+		for _, step := range build.Steps {
+			state, e := p.condition(state, step.When, params)
+			if e != nil {
+				return b, e
+			}
+			activeRun = activeRun || step.Kind == "run" && state.Condition != "skipped" && (selected == "" || step.Name == selected)
+		}
+		if activeRun {
+			if p.remote != nil && p.remote.options.IOSCheckpoint == nil {
+				return b, errors.New("ios_signing: 资源持久化不可用")
+			}
+			p.facts["ios.output_dir"] = ".mybuilds-ios-" + rand.Text()
+			defer delete(p.facts, "ios.output_dir")
+			local := maps.Clone(p.facts)
+			local["build.name"] = name
+			signing, missing, e := renderIOSSigning(build.IOSSigning, "build.ios_signing", params, local)
+			if e != nil || missing {
+				return b, errors.New("ios_signing: 签名参数不可用")
+			}
+			options := mobile.IOSSigningOptions{Workspace: p.root, OutputDir: p.facts["ios.output_dir"], BundleID: signing.BundleID, ExportMethod: signing.ExportMethod}
+			for _, field := range []struct {
+				value string
+				out   *string
+			}{{signing.P12, &options.P12File}, {signing.Profile, &options.ProfileFile}, {signing.Password, &options.Password}} {
+				*field.out, e = p.envValue(field.value, params, local)
+				if e != nil {
+					return b, e
+				}
+			}
+			checkCtx := p.ctx
+			stop := func() {}
+			if p.remote != nil {
+				checkCtx, stop = p.remote.merge(checkCtx)
+				remaining, _ := p.remote.budgets()
+				if remaining != nil {
+					if *remaining <= 0 {
+						stop()
+						return b, errors.New("ios_signing: 普通预算已耗尽")
+					}
+					bounded, cancel := context.WithTimeout(checkCtx, time.Duration(*remaining))
+					previousStop := stop
+					stop = func() { cancel(); previousStop() }
+					checkCtx = bounded
+				}
+			}
+			defer stop()
+			if e = mobile.ValidateIOSSigning(checkCtx, options); e != nil {
+				return b, e
+			}
+			b.iosSigning = &options
+		} else if iosOutputReferenced(build) {
+			return b, errors.New("ios_signing: 系统产物目录需要本次有效普通run")
 		}
 	}
 	anyActive, found := false, selected == ""
@@ -312,6 +365,7 @@ func (p *runPreparation) build(name string, build *config.Build, params map[stri
 	if !b.skipped && build.Reports != nil {
 		local := maps.Clone(p.facts)
 		delete(local, "workspace")
+		delete(local, "ios.output_dir")
 		local["build.name"] = name
 		// 报告是build层相对路径，只使用能在控制端核对的构建事实。
 		for _, pattern := range build.Reports.JUnit.Paths {
@@ -564,7 +618,7 @@ func runDirectory(root, relative string) (string, error) {
 }
 
 func unstartedBuild(build preparedBuild, status, reason string) BuildRun {
-	b := BuildRun{Name: build.name, Status: status, Reason: reason, Steps: []StepRun{}}
+	b := BuildRun{IOSCleanupConfirmed: build.iosDeclared, Name: build.name, Status: status, Reason: reason, Steps: []StepRun{}}
 	for _, step := range build.steps {
 		stepReason := "not_started"
 		if reason == "condition" {
@@ -627,6 +681,22 @@ func executeStep(ctx context.Context, root, build string, step preparedStep, lim
 		runContext, cancel = context.WithTimeout(ctx, limit)
 	}
 	defer cancel()
+	if step.ios != nil {
+		if err := step.ios.prepare(runContext); err != nil {
+			result.Status, result.Reason = "failed", "start_error"
+			result.CleanupFailed = errors.Is(err, mobile.ErrIOSCleanup)
+			if runContext.Err() != nil {
+				result.Reason = "timeout"
+				if ctx.Err() != nil {
+					result.Status, result.Reason = "cancelled", "cancelled"
+				}
+			}
+			return result
+		}
+		for key, value := range step.ios.resources.Environment() {
+			step.command.Env = append(step.command.Env, key+"="+value)
+		}
+	}
 	if step.step.Kind == "artifact" {
 		start := time.Now()
 		result.Status, result.Reason = "failed", "artifact_error"
@@ -741,7 +811,7 @@ func durationLimit(step config.Step, remaining time.Duration, budget bool) time.
 	return own
 }
 
-func executeBuild(ctx context.Context, root string, build preparedBuild, logger *runLogger) (BuildRun, bool) {
+func executeBuild(ctx context.Context, root string, build preparedBuild, logger *runLogger) (result BuildRun, cleanupFailed bool) {
 	if build.skipped {
 		if logger.remote != nil {
 			for _, step := range build.steps {
@@ -754,7 +824,35 @@ func executeBuild(ctx context.Context, root string, build preparedBuild, logger 
 		}
 		return b, false
 	}
-	b := BuildRun{Name: build.name, Status: "succeeded", Steps: []StepRun{}}
+	b := BuildRun{IOSCleanupConfirmed: build.iosDeclared, Name: build.name, Status: "succeeded", Steps: []StepRun{}}
+	var ios *iosBuildResources
+	if build.iosSigning != nil {
+		ios = &iosBuildResources{options: *build.iosSigning}
+		if logger.remote != nil {
+			ios.checkpoint = logger.remote.options.IOSCheckpoint
+		}
+		defer func() {
+			if ios.resources != nil {
+				closeCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+				err := ios.resources.Close(closeCtx)
+				stop()
+				if e := ios.save(); e != nil {
+					err = errors.Join(err, e)
+				}
+				if err != nil {
+					cleanupFailed = true
+					result.CleanupFailed = true
+					if result.Status == "succeeded" {
+						result.Status, result.Reason = "failed", "cleanup_error"
+					}
+				}
+			}
+			result.IOSCleanupConfirmed = ios.resources == nil || ios.resources.Ownership().Closed
+			if ios.resources != nil && result.IOSCleanupConfirmed {
+				result.iosResourceDigest, _ = mobile.IOSResourceDigest(ios.resources.Ownership())
+			}
+		}()
+	}
 	start := time.Now()
 	elapsed := time.Duration(0)
 	started, unsafe := false, false
@@ -839,9 +937,15 @@ func executeBuild(ctx context.Context, root string, build preparedBuild, logger 
 		if logger.remote != nil {
 			limit = logger.remote.limit(step)
 		}
+		if ios != nil && step.step.Kind == "run" {
+			step.ios = ios
+		}
 		s := executeStep(ctx, root, build.name, step, limit, logger)
 		elapsed += time.Since(stepStart)
 		b.Steps = append(b.Steps, s)
+		if ios != nil && ios.resources != nil && ios.resources.Ownership().Prepared {
+			b.iosTeamID = ios.resources.Environment()["MYBUILDS_IOS_TEAM_ID"]
+		}
 		started = started || s.started
 		if s.Status != "succeeded" {
 			b.Status, b.Reason = s.Status, s.Reason
@@ -892,6 +996,15 @@ func executeBuild(ctx context.Context, root string, build preparedBuild, logger 
 		b.Status, b.Reason = "failed", logger.remote.blocked()
 	}
 	if started && !unsafe && reportReady && logger.failure() == nil && (logger.remote == nil || logger.remote.blocked() == "") {
+		if ios != nil && ios.resources != nil {
+			for _, group := range [][]preparedStep{build.success, build.failure, build.always} {
+				for i := range group {
+					for key, value := range ios.resources.Environment() {
+						group[i].command.Env = append(group[i].command.Env, key+"="+value)
+					}
+				}
+			}
+		}
 		unsafe = executePost(ctx, root, build, &b, logger)
 	} else if logger.remote != nil {
 		reason := "not_selected"
@@ -904,6 +1017,7 @@ func executeBuild(ctx context.Context, root string, build preparedBuild, logger 
 		logger.remote.inactivePost(build, &b, reason)
 	}
 	b.DurationMS = time.Since(start).Milliseconds()
+	b.CleanupFailed = unsafe
 	return b, unsafe
 }
 

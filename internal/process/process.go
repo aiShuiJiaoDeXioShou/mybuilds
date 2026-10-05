@@ -7,10 +7,12 @@ import (
 
 // Command 只保存已准备的命令，不自行读取宿主环境或配置。
 type Command struct {
-	Path    string
-	Args    []string
-	Dir     string
-	Env     []string
+	Path string
+	Args []string
+	Dir  string
+	Env  []string
+	// Stdin仅为已准备的有限字节；不继承终端，也不把材料放入argv。
+	Stdin   []byte
 	OnStart func(StartInfo) error
 }
 

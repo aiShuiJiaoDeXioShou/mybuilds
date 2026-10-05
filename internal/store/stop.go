@@ -77,6 +77,9 @@ func (s *Store) ExpireLeases(ctx context.Context) error {
 	})
 }
 func validStopConfirmation(in protocol.StopConfirmation, code string) bool {
+	if in.IOSResourceDigest != "" && (!in.IOSCleanupConfirmed || !validHex(in.IOSResourceDigest, 64)) {
+		return false
+	}
 	if !validRef(in.Ref) || in.EvidenceCode != code || len(in.Note) < 1 || len(in.Note) > 1024 || !utf8.ValidString(in.Note) {
 		return false
 	}
@@ -94,6 +97,13 @@ func confirmStopped(db *gorm.DB, in protocol.StopConfirmation, actorID string) e
 	}
 	if buildRef(build) != in.Ref {
 		return ErrLeaseInvalid
+	}
+	required, err := requiresIOSCleanup(build)
+	if err != nil {
+		return err
+	}
+	if required != in.IOSCleanupConfirmed || !required && in.IOSResourceDigest != "" {
+		return ErrStopUnconfirmed
 	}
 	if build.Status != "interrupted" {
 		return ErrStopUnconfirmed
@@ -113,12 +123,12 @@ func confirmStopped(db *gorm.DB, in protocol.StopConfirmation, actorID string) e
 			}
 			return err
 		}
-		if existing.EvidenceCode != in.EvidenceCode || existing.Note != in.Note {
+		if existing.EvidenceCode != in.EvidenceCode || existing.Note != in.Note || existing.IOSCleanupConfirmed != in.IOSCleanupConfirmed || existing.IOSResourceDigest != in.IOSResourceDigest {
 			return ErrConflict
 		}
 		return nil
 	}
-	record := stopConfirmationRecord{ID: uuid.NewString(), BuildID: in.Ref.BuildID, AttemptID: in.Ref.AttemptID, NodeID: in.Ref.NodeID, SessionID: in.Ref.SessionID, LeaseID: in.Ref.LeaseID, Epoch: in.Ref.Epoch, ActorID: actorID, EvidenceCode: in.EvidenceCode, Note: in.Note, CreatedAt: time.Now().UTC()}
+	record := stopConfirmationRecord{IOSResourceDigest: in.IOSResourceDigest, IOSCleanupConfirmed: in.IOSCleanupConfirmed, ID: uuid.NewString(), BuildID: in.Ref.BuildID, AttemptID: in.Ref.AttemptID, NodeID: in.Ref.NodeID, SessionID: in.Ref.SessionID, LeaseID: in.Ref.LeaseID, Epoch: in.Ref.Epoch, ActorID: actorID, EvidenceCode: in.EvidenceCode, Note: in.Note, CreatedAt: time.Now().UTC()}
 	if err := db.Create(&record).Error; err != nil {
 		return err
 	}

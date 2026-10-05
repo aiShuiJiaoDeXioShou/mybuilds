@@ -275,7 +275,7 @@ func checkPresent(n *yaml.Node, key, field string) error {
 		if len(n.Content) == 0 {
 			return nodeError(n, field, "列表不能为空")
 		}
-	case "when", "post", "reports", "junit":
+	case "when", "post", "reports", "junit", "ios_signing":
 		if len(n.Content) == 0 {
 			return nodeError(n, field, "映射不能为空")
 		}

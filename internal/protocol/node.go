@@ -171,6 +171,8 @@ type CollectedReport struct {
 	SnapshotPath string     `json:"-"`
 }
 type ExecutionProgress struct {
+	IOSResourceDigest     string                `json:"ios_resource_digest,omitempty"`
+	IOSCleanupConfirmed   bool                  `json:"ios_cleanup_confirmed,omitempty"`
 	Kind                  string                `json:"kind"`
 	Phase                 string                `json:"phase,omitempty"`
 	Name                  string                `json:"name,omitempty"`
@@ -262,9 +264,11 @@ type ArtifactView struct {
 	ReportKey      string    `json:"report_key,omitempty"`
 }
 type StopConfirmation struct {
-	Ref          LeaseRef `json:"ref"`
-	EvidenceCode string   `json:"evidence_code"`
-	Note         string   `json:"note"`
+	IOSResourceDigest   string   `json:"ios_resource_digest,omitempty"`
+	IOSCleanupConfirmed bool     `json:"ios_cleanup_confirmed,omitempty"`
+	Ref                 LeaseRef `json:"ref"`
+	EvidenceCode        string   `json:"evidence_code"`
+	Note                string   `json:"note"`
 }
 
 // 节点资源只声明原执行归属和固定槽，不向中央发送路径或旧进程身份。

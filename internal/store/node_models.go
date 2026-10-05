@@ -150,6 +150,8 @@ type executionReceiptRecord struct {
 func (executionReceiptRecord) TableName() string { return "execution_receipts" }
 
 type stopConfirmationRecord struct {
+	IOSResourceDigest                                       string        `gorm:"size:64;not null;default:''"`
+	IOSCleanupConfirmed                                     bool          `gorm:"not null;default:false"`
 	ID                                                      string        `gorm:"primaryKey;size:36"`
 	BuildID                                                 string        `gorm:"not null;size:36"`
 	Build                                                   buildRecord   `gorm:"foreignKey:BuildID;constraint:OnDelete:RESTRICT"`

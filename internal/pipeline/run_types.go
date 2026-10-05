@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 
+	"mybuilds/internal/mobile"
 	"mybuilds/internal/process"
 	"mybuilds/internal/protocol"
 )
@@ -24,6 +25,7 @@ type RemoteOptions struct {
 	ResultCreated         func(context.Context, string) error
 	RemainingBudgetNS     *int64
 	RemainingPostBudgetNS int64
+	IOSCheckpoint         func(mobile.IOSResourceOwnership) error
 	Progress              func(context.Context, protocol.ExecutionProgress) error
 	Log                   func(context.Context, protocol.LogRecord) error
 }
@@ -34,14 +36,18 @@ type RunResult struct {
 }
 
 type BuildRun struct {
-	Reports          *protocol.ReportEvidence `json:"reports,omitempty"`
-	ReportSealDigest string                   `json:"report_seal_digest,omitempty"`
-	Name             string                   `json:"name"`
-	Status           string                   `json:"status"`
-	Reason           string                   `json:"reason,omitempty"`
-	DurationMS       int64                    `json:"duration_ms"`
-	Steps            []StepRun                `json:"steps"`
-	Post             []StepRun                `json:"post,omitempty"`
+	iosResourceDigest   string
+	iosTeamID           string
+	CleanupFailed       bool                     `json:"cleanup_failed,omitempty"`
+	IOSCleanupConfirmed bool                     `json:"ios_cleanup_confirmed,omitempty"`
+	Reports             *protocol.ReportEvidence `json:"reports,omitempty"`
+	ReportSealDigest    string                   `json:"report_seal_digest,omitempty"`
+	Name                string                   `json:"name"`
+	Status              string                   `json:"status"`
+	Reason              string                   `json:"reason,omitempty"`
+	DurationMS          int64                    `json:"duration_ms"`
+	Steps               []StepRun                `json:"steps"`
+	Post                []StepRun                `json:"post,omitempty"`
 }
 
 type StepRun struct {
