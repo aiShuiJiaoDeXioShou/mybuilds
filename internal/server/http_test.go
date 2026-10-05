@@ -156,6 +156,15 @@ func TestActualHTTPStrictJSONQueryAndGroupCRUD(t *testing.T) {
 	if code != 413 {
 		t.Fatal(code)
 	}
+	// 普通管理API仍有1MiB契约，不能被无关发布路由缩到64KiB。
+	code, body = request(t, h, "POST", "/api/groups", adminToken, strings.Repeat(" ", 65<<10)+`{"name":"padded"}`)
+	if code != 201 {
+		t.Fatalf("合法大于64KiB的普通请求被截断: %d %s", code, body)
+	}
+	code, _ = request(t, h, "DELETE", "/api/groups/padded", adminToken, "")
+	if code != 204 {
+		t.Fatal(code)
+	}
 }
 func TestActualHTTPProjectSafeViewAndPatch(t *testing.T) {
 	_, _, h := serverFixture(t)

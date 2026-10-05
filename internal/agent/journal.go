@@ -14,6 +14,8 @@ import (
 )
 
 type journalState struct {
+	Approval                              *approvalCheckpoint            `json:"approval,omitempty"`
+	ApprovalHistory                       []approvalRefTransition        `json:"approval_history,omitempty"`
 	Publishes                             []publishCheckpoint            `json:"publishes,omitempty"`
 	IOSSigningRequired                    bool                           `json:"ios_signing_required,omitempty"`
 	IOSResources                          *mobile.IOSResourceOwnership   `json:"ios_resources,omitempty"`
@@ -131,6 +133,14 @@ func (journal *executionJournal) prepareEvent(p protocol.ExecutionProgress) (pro
 	}
 	// PID/快照路径只存在私有journal；消息摘要取真正网络编码。
 	p.PID, p.PGID, p.LocalResultDir, p.LocalArtifacts, p.LocalReports = 0, 0, "", nil, nil
+	p.LocalApproval = nil
+	if p.Kind == "approval_checkpoint" {
+		digest, err := protocol.ApprovalCheckpointDigest(*journal.state.Ref, journal.state.LastEventSeq+1, p)
+		if err != nil {
+			return protocol.ExecutionEvent{}, failure("persistence_error")
+		}
+		p.Approval.CheckpointDigest = digest
+	}
 	data, err := json.Marshal(p)
 	if err != nil {
 		return protocol.ExecutionEvent{}, failure("persistence_error")
@@ -138,6 +148,13 @@ func (journal *executionJournal) prepareEvent(p protocol.ExecutionProgress) (pro
 	hash := sha256.Sum256(data)
 	event := protocol.ExecutionEvent{Ref: *journal.state.Ref, Seq: journal.state.LastEventSeq + 1, Digest: hex.EncodeToString(hash[:]), Progress: p}
 	journal.state.PendingEvent = &event
+	if p.Kind == "approval_checkpoint" {
+		if journal.state.Approval == nil {
+			return protocol.ExecutionEvent{}, failure("persistence_error")
+		}
+		copy := event
+		journal.state.Approval.Event = &copy
+	}
 	if err = journal.saveLocked(); err != nil {
 		return protocol.ExecutionEvent{}, err
 	}
@@ -151,6 +168,9 @@ func (journal *executionJournal) ackEvent(ack protocol.EventAck) error {
 		return failure("invalid_response")
 	}
 	journal.state.LastEventSeq, journal.state.LastEventDigest = ack.Seq, ack.Digest
+	if pending.Progress.Kind == "approval_checkpoint" && journal.state.Approval != nil {
+		journal.state.Approval.State = "confirmed"
+	}
 	journal.state.PendingEvent = nil
 	return journal.saveLocked()
 }
@@ -158,4 +178,9 @@ func (journal *executionJournal) remove() error {
 	journal.mu.Lock()
 	defer journal.mu.Unlock()
 	return journal.lock.removeFile("journal/"+journal.name, journal.info)
+}
+
+func journalProgressDigest(data []byte) string {
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
 }

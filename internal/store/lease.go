@@ -124,6 +124,11 @@ func grantFor(db *gorm.DB, row buildRecord, includeTask bool) (protocol.LeaseGra
 		if err != nil {
 			return protocol.LeaseGrant{}, err
 		}
+		resume, err := approvalResumeEvidence(db, row)
+		if err != nil {
+			return protocol.LeaseGrant{}, err
+		}
+		task.Resume = resume
 		grant.Task = &task
 	}
 	return grant, nil
@@ -209,7 +214,7 @@ func candidateReason(db *gorm.DB, row buildRecord, node nodeRecord, session node
 		return "capability_mismatch", nil
 	}
 	var nameOccupied, global, nodeOccupied int64
-	if err := db.Model(&buildRecord{}).Where("project_id = ? AND name = ? AND (status = ? OR stop_unconfirmed = ?)", row.ProjectID, row.Name, "running", true).Count(&nameOccupied).Error; err != nil {
+	if err := db.Model(&buildRecord{}).Where("id <> ? AND project_id = ? AND name = ? AND (status IN ? OR stop_unconfirmed = ?)", row.ID, row.ProjectID, row.Name, []string{"running", "waiting_approval", "approved"}, true).Count(&nameOccupied).Error; err != nil {
 		return "", err
 	}
 	if nameOccupied > 0 {
@@ -257,6 +262,14 @@ func (s *Store) Claim(ctx context.Context, actor NodeActor, in protocol.ClaimReq
 		}
 		if err != gorm.ErrRecordNotFound {
 			return err
+		}
+		resumed, e := s.claimApproval(tx, actor, node, session, in.ClaimKey, policy)
+		if e != nil {
+			return e
+		}
+		if resumed != nil {
+			grant = resumed
+			return nil
 		}
 		var rows []buildRecord
 		if err = tx.Where("status = ?", "queued").Order("created_at ASC, id ASC").Find(&rows).Error; err != nil {

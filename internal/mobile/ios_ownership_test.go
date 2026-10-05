@@ -119,3 +119,31 @@ func TestIOSOwnershipRejectsReplacementAndUnknownKeychain(t *testing.T) {
 		t.Fatal("测试叶清理失败")
 	}
 }
+
+// 元数据核验只操作空的自有规划目录；不把测试team值当合法Apple证书。
+func TestIOSOwnershipTeamMetadataBoundAndClosed(t *testing.T) {
+	resources, _ := iosPlannedFixture(t)
+	resources.team = "ABCDE12345"
+	own := resources.Ownership()
+	if own.TeamID != "ABCDE12345" || !ValidIOSResourceOwnership(own) {
+		t.Fatal("私有team元数据未保持")
+	}
+	if err := resources.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	closed := resources.Ownership()
+	digest, err := IOSResourceDigest(closed)
+	if err != nil || closed.TeamID != own.TeamID {
+		t.Fatal("Close丢失已验证team字段", err)
+	}
+	changed := closed
+	changed.TeamID = "ABCDE12346"
+	other, err := IOSResourceDigest(changed)
+	if err != nil || digest == other {
+		t.Fatal("原关闭摘要没有绑定team字段")
+	}
+	changed.TeamID = "bad"
+	if ValidIOSResourceOwnership(changed) {
+		t.Fatal("无效team被接受")
+	}
+}

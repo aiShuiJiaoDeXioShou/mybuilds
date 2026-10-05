@@ -150,6 +150,7 @@ func TestPreviewNoSideEffectsOrSensitiveOutput(t *testing.T) {
 	defer server.Close()
 	marker := filepath.Join(t.TempDir(), "marker")
 	t.Setenv("MYBUILD_SECRET", "ENV_SECRET_VALUE")
+	t.Setenv("CREDENTIAL_SECRET", "CREDENTIAL_SECRET_VALUE")
 	d := document(t, fmt.Sprintf(`version: 1
 params: {mode: PARAM_SECRET_VALUE}
 env: {SECRET: "${MYBUILD_SECRET}", MODE: "{{mode}}"}
@@ -161,8 +162,10 @@ steps:
     paths: ["out/{{mode}}/*.zip"]
   - kind: upload
     target: custom
+    app_identifier: com.example.preview
+    file: out/*.zip
     argv: ["touch", "%s", "ARGV_SECRET_VALUE"]
-    credentials: "${MYBUILD_SECRET} CREDENTIAL_SECRET_VALUE"
+    credentials: "${CREDENTIAL_SECRET}"
     result_file: out/result.json
 notifications:
   webhooks: [{type: feishu, url: "%s/WEBHOOK_SECRET_VALUE"}]
@@ -177,7 +180,7 @@ notifications:
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"PARAM_SECRET_VALUE", "ENV_SECRET_VALUE", "MYBUILD_SECRET", "SCRIPT_SECRET_VALUE", "ARGV_SECRET_VALUE", "CREDENTIAL_SECRET_VALUE", "WEBHOOK_SECRET_VALUE", "NOTIFY_SECRET_VALUE", "CONTEXT_SECRET_VALUE", server.URL, marker} {
+	for _, secret := range []string{"PARAM_SECRET_VALUE", "ENV_SECRET_VALUE", "MYBUILD_SECRET", "SCRIPT_SECRET_VALUE", "ARGV_SECRET_VALUE", "CREDENTIAL_SECRET_VALUE", "CREDENTIAL_SECRET", "WEBHOOK_SECRET_VALUE", "NOTIFY_SECRET_VALUE", "CONTEXT_SECRET_VALUE", server.URL, marker} {
 		if strings.Contains(string(out), secret) {
 			t.Fatalf("预览泄露 %s: %s", secret, out)
 		}
@@ -264,7 +267,7 @@ func TestPreviewConstructedModelRemainsUnchanged(t *testing.T) {
 func TestPreviewRenderedPathFieldRules(t *testing.T) {
 	for _, tc := range []struct{ step, value string }{
 		{`{kind: run, run: "true", working_dir: "{{output}}"}`, "out/*"},
-		{`{kind: upload, target: custom, argv: ["true"], result_file: "{{output}}"}`, "out/?.json"},
+		{`{kind: upload, target: custom, app_identifier: com.example.preview, file: out/*.zip, argv: ["true"], result_file: "{{output}}"}`, "out/?.json"},
 		{`{kind: upload, target: google_play, app_identifier: com.example.app, credentials: "${CREDS}", file: "{{output}}"}`, "out["},
 	} {
 		d := document(t, "version: 1\nparams: {output: out}\nsteps: ["+tc.step+"]\n")

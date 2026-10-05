@@ -33,7 +33,7 @@ func retentionProtectionWithRetries(tx *gorm.DB, row buildRecord, retryDependenc
 		return nil, err
 	}
 	guard["publish_unknown"] = held
-	if row.Status == "queued" || row.Status == "running" {
+	if row.Status == "queued" || row.Status == "running" || row.Status == "waiting_approval" || row.Status == "approved" {
 		guard["active"] = true
 	} else if !retentionTerminal(row.Status) {
 		guard["state_unknown"] = true
@@ -69,10 +69,14 @@ func retentionProtectionWithRetries(tx *gorm.DB, row buildRecord, retryDependenc
 	var terminal *executionReceiptRecord
 	independentStop := false
 	stopCode := ""
+	closedApproval, err := approvalStopped(tx, row)
+	if err != nil {
+		return nil, err
+	}
 	if row.AttemptID != nil {
 		var receipt executionReceiptRecord
 		if err := tx.First(&receipt, "build_id = ? AND attempt_id = ? AND seq = ?", row.ID, *row.AttemptID, row.LastEventSeq).Error; err == nil {
-			if receipt.Kind == "build_finished" && receipt.StopKnown && validDigest(receipt.Digest) {
+			if (receipt.Kind == "build_finished" || closedApproval && receipt.Kind == "approval_checkpoint") && receipt.StopKnown && validDigest(receipt.Digest) {
 				terminal = &receipt
 			}
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -100,7 +104,7 @@ func retentionProtectionWithRetries(tx *gorm.DB, row buildRecord, retryDependenc
 		}
 
 		var receipts struct{ Count, First, Last, Invalid int64 }
-		if err := tx.Model(&executionReceiptRecord{}).Select("COUNT(*) AS count, COALESCE(MIN(seq),0) AS first, COALESCE(MAX(seq),0) AS last, COALESCE(SUM(CASE WHEN attempt_id <> ? OR kind NOT IN ? OR length(digest) <> 64 THEN 1 ELSE 0 END),0) AS invalid", *row.AttemptID, []string{"intent", "started", "finished", "skipped", "post_selected", "build_finished", "reports_checked", "reports_sealed"}).Where("build_id = ?", row.ID).Scan(&receipts).Error; err != nil {
+		if err := tx.Model(&executionReceiptRecord{}).Select("COUNT(*) AS count, COALESCE(MIN(seq),0) AS first, COALESCE(MAX(seq),0) AS last, COALESCE(SUM(CASE WHEN attempt_id <> ? OR kind NOT IN ? OR length(digest) <> 64 THEN 1 ELSE 0 END),0) AS invalid", *row.AttemptID, []string{"intent", "started", "finished", "skipped", "post_selected", "build_finished", "reports_checked", "reports_sealed", "approval_checkpoint"}).Where("build_id = ?", row.ID).Scan(&receipts).Error; err != nil {
 			return nil, err
 		}
 		if row.LastEventSeq < 0 || receipts.Count != row.LastEventSeq || receipts.Last != row.LastEventSeq || receipts.Count > 0 && receipts.First != 1 || receipts.Invalid != 0 {
@@ -201,7 +205,7 @@ func retentionProtectionWithRetries(tx *gorm.DB, row buildRecord, retryDependenc
 			guard["artifacts_unconfirmed"] = true
 		}
 	}
-	if !retentionReportsConfirmed(row, steps, files) {
+	if !retentionReportsConfirmed(row, steps, files) && !closedApproval {
 		guard["reports_unconfirmed"] = true
 	}
 	var readers int64
@@ -256,13 +260,13 @@ func retentionReportsConfirmed(row buildRecord, steps []stepRecord, files []arti
 			byID[f.ID] = f
 		}
 	}
-	if len(byID) != len(evidence.Files) {
+	if len(byID) < len(evidence.Files) {
 		return false
 	}
 	inputs := make([]protocol.JUnitResult, 0, len(evidence.Files))
 	for _, f := range evidence.Files {
 		file, ok := byID[f.ArtifactID]
-		if !ok || file.ReportRevision != row.ReportRevision || file.ReportKey != f.Key || file.Phase != "ordinary" || file.Index != f.SourceIndex || file.Step != f.SourceStep || file.Name != path.Base(f.Path) || file.Size != f.Size || file.SHA256 != f.SHA256 {
+		if !ok || file.ReportRevision > row.ReportRevision || file.ReportKey != f.Key || file.Phase != "ordinary" || file.Index != f.SourceIndex || file.Step != f.SourceStep || file.Name != path.Base(f.Path) || file.Size != f.Size || file.SHA256 != f.SHA256 {
 			return false
 		}
 		var parsed protocol.JUnitResult

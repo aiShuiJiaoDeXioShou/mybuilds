@@ -61,7 +61,14 @@ func TestActualStopHTTPPersistentCancelAndIndependentConfirmation(t *testing.T) 
 	if code != 401 {
 		t.Fatal("用户越权节点确认", code)
 	}
-	for _, future := range []string{"approve", "upload-resolution"} {
+	// 审批路由已实现，但空body不能取得任何精确审批决定。
+	for _, action := range []string{"approve", "reject"} {
+		code, body = request(t, h, "POST", path+"/"+action, adminToken, "")
+		if code != 400 {
+			t.Fatal("审批缺少精确字段未拒绝", action, code, body)
+		}
+	}
+	for _, future := range []string{"upload-resolution"} {
 		code, _ = request(t, h, "POST", path+"/"+future, adminToken, "")
 		if code != 404 {
 			t.Fatal("未来路由被注册", future, code)

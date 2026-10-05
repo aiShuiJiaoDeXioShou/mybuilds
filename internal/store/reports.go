@@ -369,17 +369,66 @@ func validateReportPost(tx *gorm.DB, row *buildRecord, p protocol.ExecutionProgr
 	return nil
 }
 
-// reportBudgetDeadline只使用最后final检查的控制端receipt，不信节点At。
+// 非最终报告仅在下一普通步骤是真实待审批时允许原XML挂起保存。
+func approvalReportUploadReady(tx *gorm.DB, row buildRecord) (bool, error) {
+	if row.PostPhase != "" || row.ReportCheckedIndex < 1 {
+		return false, nil
+	}
+	steps, err := loadSteps(tx, row.ID)
+	if err != nil {
+		return false, err
+	}
+	next := 0
+	var target *stepRecord
+	for i := range steps {
+		step := &steps[i]
+		if step.Phase != "ordinary" {
+			if step.Intent || step.Started {
+				return false, nil
+			}
+			continue
+		}
+		if terminalStep(step.Status) {
+			if !step.StopConfirmed || step.CleanupFailed || step.Status == "failed" || step.Status == "cancelled" || step.Kind == "run" && step.Started && step.Index > row.ReportCheckedIndex {
+				return false, nil
+			}
+			continue
+		}
+		if step.Intent || step.Started || step.StopConfirmed || step.CleanupFailed {
+			return false, nil
+		}
+		if next == 0 || step.Index < next {
+			next = step.Index
+			target = step
+		}
+	}
+	return target != nil && target.Kind == "approval" && target.Status == "pending" && target.Condition == "ready", nil
+}
+
+// 预算始终使用实际报告检查的中央receipt时钟锚，不信节点At或文件上传时间。
 func reportBudgetDeadline(tx *gorm.DB, row buildRecord) (*time.Time, error) {
 	evidence, err := storedReports(row)
 	if err != nil {
 		return nil, err
 	}
-	if evidence == nil || !row.ReportFinal || evidence.Sealed || row.ReportSealDigest != "" || row.AttemptID == nil {
+	if evidence == nil || evidence.Sealed || row.ReportSealDigest != "" || row.AttemptID == nil {
 		return nil, ErrEventConflict
 	}
 	var receipt executionReceiptRecord
-	if err = tx.First(&receipt, "build_id = ? AND attempt_id = ? AND seq = ?", row.ID, *row.AttemptID, row.LastEventSeq).Error; err != nil {
+	query := tx.Where("build_id = ? AND attempt_id = ?", row.ID, *row.AttemptID)
+	if row.ReportFinal {
+		query = query.Where("seq = ?", row.LastEventSeq)
+	} else {
+		ready, e := approvalReportUploadReady(tx, row)
+		if e != nil {
+			return nil, e
+		}
+		if !ready {
+			return nil, ErrEventConflict
+		}
+		query = query.Where("kind = ? AND seq <= ?", "reports_checked", row.LastEventSeq).Order("seq DESC")
+	}
+	if err = query.First(&receipt).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, ErrEventConflict
 		}
@@ -429,7 +478,7 @@ func (s *Store) captureReportBudget(tx *gorm.DB, row buildRecord) (*int64, error
 	return &remaining, nil
 }
 
-// ReportUploadBudget只返回当前final检查的共同控制端时钟锚，不按文件刷新预算。
+// ReportUploadBudget返回最终检查或中途审批准备的共同中央时钟锚。
 func (s *Store) ReportUploadBudget(ctx context.Context, actor NodeActor, ref protocol.LeaseRef) (*int64, error) {
 	if !validRef(ref) {
 		return nil, ErrInvalid
@@ -464,8 +513,17 @@ func validateJUnitArtifact(tx *gorm.DB, row buildRecord, in ArtifactCommit) (str
 	if err != nil {
 		return "", err
 	}
-	if evidence == nil || !row.ReportFinal || evidence.Sealed || d.Purpose != "junit" || d.ReportRevision != row.ReportRevision || d.Phase != "ordinary" || in.VerifiedJUnit == nil || in.VerifiedJUnit.Diagnostics == nil || d.Size < 1 || d.Size > 8<<20 {
+	if evidence == nil || evidence.Sealed || d.Purpose != "junit" || d.ReportRevision != row.ReportRevision || d.Phase != "ordinary" || in.VerifiedJUnit == nil || in.VerifiedJUnit.Diagnostics == nil || d.Size < 1 || d.Size > 8<<20 {
 		return "", ErrArtifactConflict
+	}
+	if !row.ReportFinal {
+		ready, e := approvalReportUploadReady(tx, row)
+		if e != nil {
+			return "", e
+		}
+		if !ready {
+			return "", ErrArtifactConflict
+		}
 	}
 	var expected *protocol.ReportFile
 	for i := range evidence.Files {
@@ -519,7 +577,11 @@ func applyReportsSealed(tx *gorm.DB, row *buildRecord, p protocol.ExecutionProgr
 		return ErrEventConflict
 	}
 	files := []artifactRecord{}
-	if err = tx.Where("build_id = ? AND attempt_id = ? AND purpose = ?", row.ID, *row.AttemptID, "junit").Find(&files).Error; err != nil {
+	ids := make([]string, 0, len(previous.Files))
+	for _, f := range previous.Files {
+		ids = append(ids, f.ArtifactID)
+	}
+	if err = tx.Where("build_id = ? AND attempt_id = ? AND purpose = ? AND id IN ?", row.ID, *row.AttemptID, "junit", ids).Find(&files).Error; err != nil {
 		return err
 	}
 	if len(files) != len(previous.Files) {
@@ -532,7 +594,7 @@ func applyReportsSealed(tx *gorm.DB, row *buildRecord, p protocol.ExecutionProgr
 	inputs := make([]protocol.JUnitResult, 0, len(previous.Files))
 	for _, f := range previous.Files {
 		file, ok := byID[f.ArtifactID]
-		if !ok || file.ReportRevision != row.ReportRevision || file.ReportKey != f.Key || file.Phase != "ordinary" || file.Index != f.SourceIndex || file.Step != f.SourceStep || file.Name != path.Base(f.Path) || file.Size != f.Size || file.SHA256 != f.SHA256 {
+		if !ok || file.ReportRevision < 1 || file.ReportRevision > row.ReportRevision || file.ReportKey != f.Key || file.Phase != "ordinary" || file.Index != f.SourceIndex || file.Step != f.SourceStep || file.Name != path.Base(f.Path) || file.Size != f.Size || file.SHA256 != f.SHA256 {
 			return ErrEventConflict
 		}
 		var parsed protocol.JUnitResult
@@ -596,7 +658,7 @@ func validateReportManifest(tx *gorm.DB, row buildRecord, p protocol.ExecutionPr
 		return ErrEventConflict
 	}
 	var files []artifactRecord
-	if err = tx.Where("attempt_id = ? AND purpose = ?", *row.AttemptID, "junit").Find(&files).Error; err != nil {
+	if err = tx.Where("attempt_id = ? AND purpose = ? AND id IN ?", *row.AttemptID, "junit", m.IDs).Find(&files).Error; err != nil {
 		return err
 	}
 	if len(files) != len(evidence.Files) {

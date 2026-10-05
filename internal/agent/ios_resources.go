@@ -32,6 +32,16 @@ func (execution *taskExecution) saveIOSOwnership(ownership mobile.IOSResourceOwn
 	if !journal.state.IOSSigningRequired {
 		return failure("persistence_error")
 	}
+	if old := journal.state.IOSResources; old != nil && old.Closed && old.Token != ownership.Token {
+		digest, err := mobile.IOSResourceDigest(*old)
+		a := journal.state.Approval
+		if err != nil || a == nil || a.State != "resumed" || a.Event == nil || a.Event.Progress.Approval.IOSResourceDigest != digest || a.Local.IOSteamID != old.TeamID || ownership.Workspace != old.Workspace || ownership.Output != old.Output || ownership.Prepared || ownership.Preparing || ownership.Closed {
+			return failure("persistence_error")
+		}
+		copy := ownership
+		journal.state.IOSResources = &copy
+		return journal.saveLocked()
+	}
 	if old := journal.state.IOSResources; old != nil && (old.Token != ownership.Token || old.Output != ownership.Output || old.Temporary != ownership.Temporary || old.OutputIdentity != ownership.OutputIdentity || old.TemporaryIdentity != ownership.TemporaryIdentity || old.Closed && !ownership.Closed) {
 		return failure("persistence_error")
 	}

@@ -48,8 +48,9 @@ func reportFailureReason(err error) string {
 }
 
 type reportFingerprint struct {
-	info fs.FileInfo
-	hash string
+	saved *protocol.ReportFingerprint
+	info  fs.FileInfo
+	hash  string
 }
 type reportEntry struct {
 	fingerprint reportFingerprint
@@ -339,7 +340,7 @@ func (c *reportCollection) read(ctx context.Context, name string) ([]byte, repor
 	if err = ctx.Err(); err != nil {
 		return nil, empty, err
 	}
-	return data, reportFingerprint{opened, hex.EncodeToString(hash[:])}, nil
+	return data, reportFingerprint{info: opened, hash: hex.EncodeToString(hash[:])}, nil
 }
 func reportReadBytes(ctx context.Context, file *os.File) ([]byte, error) {
 	var out bytes.Buffer
@@ -368,7 +369,18 @@ func reportReadBytes(ctx context.Context, file *os.File) ([]byte, error) {
 	return out.Bytes(), nil
 }
 func sameReportFingerprint(a, b reportFingerprint) bool {
-	return a.hash == b.hash && sameArtifactFile(a.info, b.info)
+	if a.hash != b.hash {
+		return false
+	}
+	if a.saved != nil || b.saved != nil {
+		left, err := savedReportFingerprint(a)
+		if err != nil {
+			return false
+		}
+		right, err := savedReportFingerprint(b)
+		return err == nil && left == right
+	}
+	return sameArtifactFile(a.info, b.info)
 }
 
 func (c *reportCollection) snapshot(ctx context.Context, name string, data []byte, fp reportFingerprint, index int, step string) (reportEntry, error) {

@@ -59,7 +59,7 @@ func readTerminalJournal(lock *dataLock, name string) (*executionJournal, error)
 		return nil, failure("journal_unconfirmed")
 	}
 	for index, artifact := range state.Artifacts {
-		if !artifact.Confirmed || artifact.Declaration.Ref != *state.Ref || artifact.Declaration.Seq != int64(index+1) {
+		if !artifact.Confirmed || !approvalRefKnown(state, artifact.Declaration.Ref) || artifact.Declaration.Seq != int64(index+1) {
 			return nil, failure("journal_unconfirmed")
 		}
 	}
@@ -148,6 +148,12 @@ func recoverTerminalJournals(ctx context.Context, client *agentHTTP, lock *dataL
 	}
 	blocked := false
 	for _, name := range names {
+		if paused, err := readApprovalJournal(lock, name); err == nil {
+			if err = confirmApprovalJournal(ctx, client, paused, nodeName); err != nil {
+				blocked = true
+			}
+			continue
+		}
 		journal, err := readTerminalJournal(lock, name)
 		if err != nil {
 			stopped, stopErr := readStoppedResourceJournal(lock, name)

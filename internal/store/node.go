@@ -320,7 +320,7 @@ func (s *Store) DeleteNode(ctx context.Context, actor Actor, name string) error 
 			return err
 		}
 		var count int64
-		if err := tx.Model(&buildRecord{}).Where("node_id = ? AND (status = ? OR stop_unconfirmed = ?)", node.ID, "running", true).Count(&count).Error; err != nil {
+		if err := tx.Model(&buildRecord{}).Where("node_id = ? AND (status IN ? OR stop_unconfirmed = ?)", node.ID, []string{"running", "waiting_approval", "approved"}, true).Count(&count).Error; err != nil {
 			return err
 		}
 		if count > 0 {

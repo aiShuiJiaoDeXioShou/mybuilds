@@ -286,6 +286,9 @@ func (s *Store) AuthorizePublish(ctx context.Context, actor NodeActor, in protoc
 		if binding.CredentialRef != step.Credentials {
 			return ErrConflict
 		}
+		if err = validatePublishApprovals(tx, row, in.Index, in); err != nil {
+			return err
+		}
 		if err = publishReports(tx, row, in); err != nil {
 			return err
 		}
@@ -623,8 +626,17 @@ func (s *Store) FindNodePublish(ctx context.Context, actor NodeActor, in protoco
 		if err := tx.First(&row, "id = ?", in.Ref.BuildID).Error; err != nil {
 			return err
 		}
-		if actor.ID != in.Ref.NodeID || buildRef(row) != in.Ref {
+		if actor.ID != in.Ref.NodeID {
 			return ErrForbidden
+		}
+		if buildRef(row) != in.Ref {
+			allowed, err := approvalHistoricalRef(tx, row, in.Ref)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return ErrForbidden
+			}
 		}
 		var step stepRecord
 		if err := tx.First(&step, "build_id = ? AND phase = ? AND \"index\" = ? AND kind = ?", row.ID, "ordinary", in.Index, "upload").Error; err != nil {
@@ -641,6 +653,14 @@ func (s *Store) FindNodePublish(ctx context.Context, actor NodeActor, in protoco
 		}
 		if intent.BuildID != row.ID || intent.AttemptID != in.Ref.AttemptID || intent.StepIndex != in.Index {
 			return ErrForbidden
+		}
+		var original protocol.PublishGrant
+		if json.Unmarshal([]byte(intent.GrantJSON), &original) != nil || original.Ref != in.Ref || original.IntentID != in.IntentID {
+			return ErrForbidden
+		}
+		d, err := protocol.PublishGrantDigest(original)
+		if err != nil || d != original.AuthorizationDigest {
+			return ErrConflict
 		}
 		out.Authorized = true
 		out.Status = intent.Status

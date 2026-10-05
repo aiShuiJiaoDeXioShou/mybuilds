@@ -128,8 +128,8 @@ steps:
 func TestRunBatchPrecheckHasNoScriptSideEffects(t *testing.T) {
 	for _, invalid := range []string{
 		"steps: [{kind: artifact, paths: ['out/{../outside,good}']}]",
-		"steps: [{kind: approval}]",
-		"steps: [{kind: upload, target: custom, argv: [true], result_file: result.json}]",
+		"steps: [{kind: approval, notify: true}]",
+		"steps: [{kind: upload, target: custom, app_identifier: com.example.app, file: out/*.zip, argv: [true], result_file: result.json}]",
 		"steps: [{kind: run, run: true, working_dir: missing}]",
 		"env: {SECRET: '${MISSING_RUN_SECRET}'}\n    steps: [{kind: run, run: true}]",
 		"env: {NUMBER: '{{build.number}}'}\n    steps: [{kind: run, run: true}]",
@@ -161,10 +161,11 @@ params: {mode: debug}
 steps:
   - {kind: run, name: selected, run: "touch marker"}
   - {kind: artifact, paths: [out/*.zip], when: {params: {mode: release}}}
-  - {kind: upload, target: custom, argv: ["true"], result_file: result.json, when: {params: {mode: release}}}
+  - {kind: upload, target: custom, app_identifier: com.example.app, file: out/*.zip, argv: ["true"], result_file: result.json, when: {params: {mode: release}}}
+  - {kind: approval, notify: true, when: {params: {mode: release}}}
 `)
 	result, err := runWithCleanup(t, context.Background(), d, RunOptions{Workspace: root})
-	if err != nil || result.Builds[0].Status != "succeeded" || result.Builds[0].Steps[1].Status != "skipped" {
+	if err != nil || result.Builds[0].Status != "succeeded" || result.Builds[0].Steps[1].Status != "skipped" || result.Builds[0].Steps[3].Status != "skipped" {
 		t.Fatalf("未生效能力应可跳过: %+v %v", result, err)
 	}
 	if err := os.Remove(filepath.Join(root, "marker")); err != nil {

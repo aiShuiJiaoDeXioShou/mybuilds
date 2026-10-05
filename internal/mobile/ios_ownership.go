@@ -26,6 +26,7 @@ type IOSResourceIdentity struct {
 
 // IOSResourceOwnership 只用于私有journal，不能放入公共构建或日志输出。
 type IOSResourceOwnership struct {
+	TeamID             string               `json:"team_id,omitempty"`
 	Version            int                  `json:"version"`
 	Token              string               `json:"token"`
 	Workspace          string               `json:"workspace"`
@@ -119,8 +120,9 @@ func PlanIOSResources(ctx context.Context, options IOSSigningOptions) (resources
 func (resources *IOSResources) Ownership() IOSResourceOwnership {
 	resources.mu.Lock()
 	defer resources.mu.Unlock()
-	out := IOSResourceOwnership{Version: 1, Token: resources.token, Workspace: resources.workspace, Output: resources.output, Temporary: resources.temporary, Keychain: resources.keychain, Profile: resources.profile, Preparing: resources.preparing, Prepared: resources.prepared, Closed: resources.closed}
+	out := IOSResourceOwnership{TeamID: resources.team, Version: 1, Token: resources.token, Workspace: resources.workspace, Output: resources.output, Temporary: resources.temporary, Keychain: resources.keychain, Profile: resources.profile, Preparing: resources.preparing, Prepared: resources.prepared, Closed: resources.closed}
 	if resources.restoredOwnership != nil {
+		out.TeamID = resources.restoredOwnership.TeamID
 		out.OutputIdentity = resources.restoredOwnership.OutputIdentity
 		out.TemporaryIdentity = resources.restoredOwnership.TemporaryIdentity
 		out.KeychainIdentity = resources.restoredOwnership.KeychainIdentity
@@ -262,6 +264,9 @@ func parseIOSHash(value string) ([32]byte, error) {
 
 // ValidIOSResourceOwnership 对私有checkpoint作纯形状校验，不把字段当作文件授权。
 func ValidIOSResourceOwnership(own IOSResourceOwnership) bool {
+	if own.TeamID != "" && !iosTeamID.MatchString(own.TeamID) {
+		return false
+	}
 	if own.Version != 1 || !iosOwnershipToken.MatchString(own.Token) || own.Closed && own.Preparing || own.Prepared && own.Preparing {
 		return false
 	}

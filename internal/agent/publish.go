@@ -300,11 +300,21 @@ func (e *taskExecution) publishManifest(ctx context.Context, p *protocol.Executi
 	j.mu.Unlock()
 	for _, item := range items {
 		var state store.NodePublishState
-		lookup := protocol.PublishLookup{Ref: e.lease.ref, Index: item.Index, IntentID: item.IntentID}
+		originalRef := e.lease.ref
+		if item.Grant != nil {
+			originalRef = item.Grant.Ref
+			j.mu.Lock()
+			known := approvalRefKnown(j.state, originalRef)
+			j.mu.Unlock()
+			if !known {
+				return failure("journal_unconfirmed")
+			}
+		}
+		lookup := protocol.PublishLookup{Ref: originalRef, Index: item.Index, IntentID: item.IntentID}
 		if err := e.client.post(ctx, "/api/agent/publishes/lookup", lookup, &state); err != nil {
 			return err
 		}
-		if state.IntentID != item.IntentID || state.Ref != e.lease.ref || !state.StepClosed {
+		if state.IntentID != item.IntentID || state.Ref != originalRef || !state.StepClosed {
 			return failure("invalid_response")
 		}
 		if state.Authorized {

@@ -235,10 +235,13 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return safeError(err)
 		}
 	}
-	if err := db.AutoMigrate(&groupRecord{}, &projectRecord{}, &identityRecord{}, &metadataRecord{}, &auditRecord{}, &batchRecord{}, &buildRecord{}, &stepRecord{}, &requestRecord{}, &nodeRecord{}, &nodeCredentialRecord{}, &nodeSessionRecord{}, &attemptRecord{}, &executionReceiptRecord{}, &stopConfirmationRecord{}, &logChunkRecord{}, &artifactRecord{}, &retentionPolicyRecord{}, &retentionJobRecord{}, &retentionObjectRecord{}, &evidenceReadRecord{}, &nodeResourceRecord{}, &nodeDeletionRecord{}, &nodeDeletionReceiptRecord{}, &applicationRecord{}, &publishIntentRecord{}, &applicationGuardRecord{}, &publishQueryRecord{}, &publishDecisionRecord{}); err != nil {
+	if err := db.AutoMigrate(&groupRecord{}, &projectRecord{}, &identityRecord{}, &metadataRecord{}, &auditRecord{}, &batchRecord{}, &buildRecord{}, &stepRecord{}, &requestRecord{}, &nodeRecord{}, &nodeCredentialRecord{}, &nodeSessionRecord{}, &attemptRecord{}, &executionReceiptRecord{}, &stopConfirmationRecord{}, &logChunkRecord{}, &artifactRecord{}, &retentionPolicyRecord{}, &retentionJobRecord{}, &retentionObjectRecord{}, &evidenceReadRecord{}, &nodeResourceRecord{}, &nodeDeletionRecord{}, &nodeDeletionReceiptRecord{}, &applicationRecord{}, &publishIntentRecord{}, &applicationGuardRecord{}, &publishQueryRecord{}, &publishDecisionRecord{}, &approvalRecord{}); err != nil {
 		return safeError(err)
 	}
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS build_active_name ON builds(project_id,name) WHERE status = 'running' OR stop_unconfirmed = true").Error; err != nil {
+	if err := db.Exec("DROP INDEX IF EXISTS build_active_name").Error; err != nil {
+		return err
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS build_active_name ON builds(project_id,name) WHERE status IN ('running','waiting_approval','approved') OR stop_unconfirmed = true").Error; err != nil {
 		return safeError(err)
 	}
 	err := db.Transaction(func(tx *gorm.DB) error {

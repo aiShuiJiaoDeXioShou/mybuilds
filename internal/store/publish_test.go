@@ -81,6 +81,9 @@ func TestPublishDoctorRequiresRealProtocolEvidence(t *testing.T) {
 }
 
 func publishFixture(t *testing.T, s *Store) (NodeActor, protocol.LeaseGrant, protocol.PublishAuthorization) {
+	return publishApprovalFixture(t, s, false)
+}
+func publishApprovalFixture(t *testing.T, s *Store, skipApproval bool) (NodeActor, protocol.LeaseGrant, protocol.PublishAuthorization) {
 	t.Helper()
 	a, session, p, policy := leaseFixture(t, s)
 	binding, err := s.BindApplication(testContext, localAdmin, BindApplicationInput{ProjectID: p.ID, NodeID: a.ID, Store: "google_play", AppIdentifier: "com.example.publish", CredentialRef: "${PLAY_JSON}", UploadCertificateSHA256: strings.Repeat("a", 64), AllowedTracks: []string{"internal"}})
@@ -102,6 +105,12 @@ func publishFixture(t *testing.T, s *Store) (NodeActor, protocol.LeaseGrant, pro
 	in.Builds[0].Snapshot.Definition = config.Build{Params: map[string]config.Parameter{"version": {Default: &version}}, Steps: []config.Step{{Kind: "artifact", Name: "package", Paths: []string{"output/app.aab"}}, {Kind: "upload", Name: "publish", Target: "google_play", File: "output/app.aab", AppIdentifier: "com.example.publish", Track: "internal", Credentials: "${PLAY_JSON}"}}}
 	in.Builds[0].Snapshot.Params = map[string]string{"version": version}
 	in.Builds[0].Steps = []StepProgress{{Phase: "ordinary", Index: 1, Name: "package", Kind: "artifact", Condition: "ready", Status: "pending"}, {Phase: "ordinary", Index: 2, Name: "publish", Kind: "upload", Condition: "ready", Status: "pending"}}
+	uploadIndex := 2
+	if skipApproval {
+		in.Builds[0].Snapshot.Definition.Steps = append(in.Builds[0].Snapshot.Definition.Steps[:1], config.Step{Kind: "approval", Name: "review"}, in.Builds[0].Snapshot.Definition.Steps[1])
+		in.Builds[0].Steps = append(in.Builds[0].Steps[:1], StepProgress{Phase: "ordinary", Index: 2, Name: "review", Kind: "approval", Condition: "skipped", Status: "skipped"}, StepProgress{Phase: "ordinary", Index: 3, Name: "publish", Kind: "upload", Condition: "ready", Status: "pending"})
+		uploadIndex = 3
+	}
 	out, err := s.Enqueue(testContext, in)
 	if err != nil {
 		t.Fatal(err)
@@ -127,10 +136,19 @@ func publishFixture(t *testing.T, s *Store) (NodeActor, protocol.LeaseGrant, pro
 	if err != nil {
 		t.Fatal(err)
 	}
-	progress = stepProgress("intent", "", "ordinary", "publish", 2)
+	seq := int64(4)
+	if skipApproval {
+		skipped := stepProgress("skipped", "skipped", "ordinary", "review", 2)
+		skipped.StepKind = "approval"
+		skipped.Reason = "condition"
+		skipped.StopConfirmed = true
+		accept(t, s, a, event(g.Ref, seq, skipped))
+		seq++
+	}
+	progress = stepProgress("intent", "", "ordinary", "publish", uploadIndex)
 	progress.StepKind = "upload"
-	accept(t, s, a, event(g.Ref, 4, progress))
-	return a, *g, protocol.PublishAuthorization{IntentID: uuid.NewString(), Ref: g.Ref, Index: 2, StepName: "publish", ArtifactID: artifactID, ArtifactSize: 123, ArtifactSHA256: strings.Repeat("b", 64), ReportIDs: []string{}, VersionName: version, VersionCode: *out.Builds[0].Number, Track: "internal"}
+	accept(t, s, a, event(g.Ref, seq, progress))
+	return a, *g, protocol.PublishAuthorization{IntentID: uuid.NewString(), Ref: g.Ref, Index: uploadIndex, StepName: "publish", ArtifactID: artifactID, ArtifactSize: 123, ArtifactSHA256: strings.Repeat("b", 64), ReportIDs: []string{}, VersionName: version, VersionCode: *out.Builds[0].Number, Track: "internal"}
 }
 func TestPublishOnceUnknownAndExactDecision(t *testing.T) {
 	stores(t, func(t *testing.T, s *Store, _ Options) {
@@ -186,6 +204,19 @@ func TestPublishOnceUnknownAndExactDecision(t *testing.T) {
 		decision.Note = "改变原决定"
 		if _, err = s.ConfirmPublish(testContext, localAdmin, decision); err != ErrConflict {
 			t.Fatal("决定key冲突", err)
+		}
+	})
+}
+
+func TestPublishActualAuthorizationRejectsSkippedApproval(t *testing.T) {
+	stores(t, func(t *testing.T, s *Store, _ Options) {
+		actor, _, in := publishApprovalFixture(t, s, true)
+		if _, err := s.AuthorizePublish(testContext, actor, in); err != ErrForbidden {
+			t.Fatal("跳过审批获得真实发布grant", err)
+		}
+		var count int64
+		if err := s.db.Model(&publishIntentRecord{}).Where("build_id=?", in.Ref.BuildID).Count(&count).Error; err != nil || count != 0 {
+			t.Fatal("拒绝后留下发布intent", err)
 		}
 	})
 }

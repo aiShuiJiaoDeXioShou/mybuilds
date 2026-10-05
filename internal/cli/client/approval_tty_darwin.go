@@ -1,0 +1,7 @@
+//go:build darwin
+
+package client
+
+import "golang.org/x/sys/unix"
+
+const approvalTermiosRequest = unix.TIOCGETA

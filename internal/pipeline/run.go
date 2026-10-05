@@ -34,6 +34,9 @@ type preparedStep struct {
 }
 
 type preparedBuild struct {
+	resume                   *ApprovalResume
+	confirm                  func(context.Context, ApprovalPrompt) (bool, error)
+	hasUpload                bool
 	name                     string
 	iosDeclared              bool
 	skipped                  bool
@@ -46,6 +49,7 @@ type preparedBuild struct {
 }
 
 type runPreparation struct {
+	resume  *ApprovalResume
 	ctx     context.Context
 	root    string
 	facts   map[string]string
@@ -108,7 +112,7 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 	if _, err = runDirectory(root, "."); err != nil {
 		return nil, err
 	}
-	p := runPreparation{ctx: ctx, root: root, facts: map[string]string{}, tried: map[string]bool{}, remote: remote}
+	p := runPreparation{ctx: ctx, root: root, facts: map[string]string{}, tried: map[string]bool{}, remote: remote, resume: options.Resume}
 	if remote != nil {
 		for _, key := range []string{"project", "build.id", "build.number", "node.name", "git.sha", "git.branch"} {
 			if value, ok := remote.options.Facts[key]; ok {
@@ -161,6 +165,11 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 		if err := p.flutterTools(document.Builds[name], &build, parameters[i]); err != nil {
 			return nil, err
 		}
+		build.resume = options.Resume
+		build.confirm = options.ConfirmApproval
+		for _, s := range build.steps {
+			build.hasUpload = build.hasUpload || s.step.Kind == "upload"
+		}
 		prepared = append(prepared, build)
 	}
 	// 后面的步骤可能需要 Git；已取得的真实事实统一注入本批所有命令。
@@ -177,6 +186,9 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 	}
 	logger := newRunLogger(options.Output, p.secrets)
 	logger.remote = remote
+	if err = resumeResultRoot(options, logger); err != nil {
+		return nil, err
+	}
 	result := &RunResult{Builds: make([]BuildRun, 0, len(prepared))}
 	for _, build := range prepared {
 		if remote != nil {
@@ -216,6 +228,10 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 		cleanupFailed = unsafe
 		failed = failed || b.Status == "failed" || b.Status == "cancelled"
 		result.Builds = append(result.Builds, b)
+		if b.paused != nil {
+			result.Paused = b.paused
+			break
+		}
 	}
 	if remote != nil {
 		result.ResultDir = remote.resultDir
@@ -235,13 +251,14 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 		failed = true
 	}
 	if remote != nil {
-		if remote.blocked() != "" {
+		// 已ACK暂停已结束本次执行权；随后服务退出不覆盖这一真实checkpoint。
+		if result.Paused == nil && remote.blocked() != "" {
 			failed = true
 			if len(result.Builds) > 0 && result.Builds[0].Status == "succeeded" {
 				result.Builds[0].Status, result.Builds[0].Reason = "failed", remote.blocked()
 			}
 		}
-		if remote.blocked() == "" && len(result.Builds) > 0 {
+		if result.Paused == nil && remote.blocked() == "" && len(result.Builds) > 0 {
 			b := result.Builds[0]
 			p := protocol.ExecutionProgress{IOSResourceDigest: b.iosResourceDigest, IOSCleanupConfirmed: b.IOSCleanupConfirmed, Kind: "build_finished", Status: b.Status, Reason: b.Reason, StopConfirmed: !cleanupFailed, CleanupFailed: cleanupFailed, ExitCode: 0}
 			if b.Reports != nil && b.Reports.Sealed {
@@ -264,6 +281,9 @@ func Run(ctx context.Context, document *config.Document, options RunOptions) (*R
 	}
 	if cleanupFailed {
 		failed = true
+	}
+	if result.Paused != nil && !failed {
+		return result, ErrApprovalPaused
 	}
 	if failed {
 		return result, batchRunError
@@ -309,7 +329,10 @@ func (p *runPreparation) build(name string, build *config.Build, params map[stri
 	// 系统目录仅由本次有效普通run生成，不采用调用者提供的事实。
 	if !b.skipped && build.IOSSigning != nil {
 		activeRun := false
-		for _, step := range build.Steps {
+		for index, step := range build.Steps {
+			if p.resume != nil && index+1 < p.resume.Evidence.NextOrdinaryIndex {
+				continue
+			}
 			state, e := p.condition(state, step.When, params)
 			if e != nil {
 				return b, e
@@ -367,12 +390,24 @@ func (p *runPreparation) build(name string, build *config.Build, params map[stri
 				return b, e
 			}
 			b.iosSigning = &options
+		} else if p.resume != nil {
+			p.facts["ios.output_dir"] = ".mybuilds-ios-" + p.remote.options.Facts["build.id"]
+			defer delete(p.facts, "ios.output_dir")
 		} else if iosOutputReferenced(build) {
 			return b, errors.New("ios_signing: 系统产物目录需要本次有效普通run")
 		}
 	}
 	anyActive, found := false, selected == ""
+	if p.resume != nil {
+		for _, prior := range p.resume.Evidence.Steps {
+			anyActive = anyActive || prior.Phase == "ordinary" && prior.Index > 0 && prior.Index < p.resume.Evidence.NextOrdinaryIndex && prior.Started
+		}
+	}
 	for index, step := range build.Steps {
+		if p.resume != nil && index+1 < p.resume.Evidence.NextOrdinaryIndex {
+			b.steps = append(b.steps, preparedStep{step: step, phase: "ordinary", index: index + 1})
+			continue
+		}
 		prepared, err := p.step(name, step, build.Env, params, state)
 		if err != nil {
 			return b, err
@@ -582,6 +617,12 @@ func (p *runPreparation) step(buildName string, step config.Step, buildEnv map[s
 				env[key] = value
 			}
 			prepared.command.Env = environmentList(env)
+		}
+		return prepared, nil
+	}
+	if step.Kind == "approval" {
+		if step.Notify != nil && *step.Notify {
+			return prepared, errors.New("unsupported")
 		}
 		return prepared, nil
 	}
@@ -915,12 +956,56 @@ func executeBuild(ctx context.Context, root string, build preparedBuild, logger 
 	var reportSet *reportCollection
 	var reportWorkspace *os.Root
 	reportReady := true
+	if build.resume != nil {
+		if err := verifyApprovalArtifacts(ctx, logger.root, build.resume.Local.Steps); err != nil {
+			b.Status, b.Reason = "failed", "approval_checkpoint_invalid"
+			return b, true
+		}
+		restored, err := restoreApprovalSteps(build.resume, build)
+		if err != nil {
+			b.Status, b.Reason = "failed", "approval_checkpoint_invalid"
+			return b, true
+		}
+		b.Steps = restored
+		b.iosTeamID = build.resume.Local.IOSteamID
+		b.iosResourceDigest = build.resume.Evidence.IOSResourceDigest
+		for _, s := range restored {
+			started = started || s.started
+		}
+		b.Reports = build.resume.Evidence.Reports
+		if build.resume.Evidence.ReportManifest != nil {
+			b.ReportSealDigest = build.resume.Evidence.ReportManifest.SealDigest
+		}
+		if build.resume.Local.Collection != nil {
+			reportWorkspace, err = os.OpenRoot(root)
+			if err == nil {
+				secrets := []string{}
+				for _, value := range logger.secrets {
+					secrets = append(secrets, string(value))
+				}
+				bounded, cancel, e := reportContext(ctx, reportRemaining(build, elapsed, logger.remote), logger.remote, 10*time.Second)
+				if e == nil {
+					reportSet, err = restoreReportCollection(bounded, reportWorkspace, logger.root, build.reportPatterns, secrets, build.reportRequired, build.resume.Local.Collection)
+				} else {
+					err = e
+				}
+				cancel()
+			}
+			if err != nil {
+				b.Status, b.Reason = "failed", "approval_checkpoint_invalid"
+				return b, true
+			}
+		}
+	}
 	defer func() {
 		if reportWorkspace != nil {
 			_ = reportWorkspace.Close()
 		}
 	}()
 	for _, step := range build.steps {
+		if build.resume != nil && step.index < build.resume.Evidence.NextOrdinaryIndex {
+			continue
+		}
 		if logger.remote != nil && logger.remote.blocked() != "" {
 			reason := logger.remote.blocked()
 			b.Steps = append(b.Steps, skippedStep(step, reason))
@@ -997,7 +1082,7 @@ func executeBuild(ctx context.Context, root string, build preparedBuild, logger 
 			step.ios = ios
 		}
 		// 首个发布屏障封存声明测试；之后仅使用原seal，不重采被post改写的工作区。
-		if step.step.Kind == "upload" && reportSet != nil && b.ReportSealDigest == "" {
+		if (step.step.Kind == "upload" || step.step.Kind == "approval" && build.hasUpload) && reportSet != nil && b.ReportSealDigest == "" {
 			err := checkBuildReports(ctx, build, &b, logger, reportSet, 0, "", true, reportRemaining(build, elapsed, logger.remote))
 			if err != nil || b.Reports == nil || b.Reports.Outcome != "passed" {
 				b.Status, b.Reason = "failed", "report_failed"
@@ -1007,6 +1092,45 @@ func executeBuild(ctx context.Context, root string, build preparedBuild, logger 
 				}
 				continue
 			}
+		}
+
+		if step.step.Kind == "approval" {
+			if logger.remote != nil {
+				pause, err := pauseApproval(ctx, root, build, step, &b, logger, reportSet, ios)
+				if err != nil {
+					b.Status, b.Reason = "failed", "persistence_error"
+					b.CleanupFailed = errors.Is(err, mobile.ErrIOSCleanup)
+					return b, b.CleanupFailed
+				}
+				b.Status = "waiting_approval"
+				b.paused = pause
+				return b, false
+			}
+			waiting := time.Now()
+			ok := false
+			var err error
+			if build.confirm == nil {
+				err = errors.New("approval_requires_tty")
+			} else {
+				ok, err = build.confirm(ctx, ApprovalPrompt{Build: build.name, Step: step.step.Name, Index: step.index})
+			}
+			start = start.Add(time.Since(waiting))
+			if err != nil || !ok {
+				b.Status, b.Reason = "cancelled", "approval_rejected"
+				if err != nil {
+					b.Reason = "approval_requires_tty"
+					if err.Error() == "approval_input_error" {
+						b.Reason = "approval_input_error"
+					}
+				}
+				if ctx.Err() != nil {
+					b.Reason = "cancelled"
+				}
+				b.Steps = append(b.Steps, StepRun{Name: step.step.Name, Kind: "approval", Status: "cancelled", Reason: b.Reason, ExitCode: -1})
+				return b, false
+			}
+			b.Steps = append(b.Steps, StepRun{Name: step.step.Name, Kind: "approval", Status: "succeeded", ExitCode: -1})
+			continue
 		}
 		var s StepRun
 		if step.step.Kind == "upload" {

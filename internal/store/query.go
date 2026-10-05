@@ -105,6 +105,15 @@ func buildView(db *gorm.DB, row buildRecord) (BuildView, error) {
 	if row.RetryOf != nil {
 		result.RetryOf = *row.RetryOf
 	}
+	if row.CurrentApprovalID != nil {
+		var a approvalRecord
+		if err := db.First(&a, "id = ?", *row.CurrentApprovalID).Error; err != nil {
+			return BuildView{}, err
+		}
+		result.CurrentApprovalID = a.ID
+		result.ApprovalRevision = a.Revision
+	}
+	result.ResumeReason = row.ResumeReason
 	result.NodeID = buildRef(row).NodeID
 	result.SessionID = buildRef(row).SessionID
 	result.AttemptID = buildRef(row).AttemptID

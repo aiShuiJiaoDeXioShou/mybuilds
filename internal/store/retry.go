@@ -199,6 +199,11 @@ func retryAuthorization(project projectRecord, snapshot BuildSnapshot, branch st
 	return allowed, nil
 }
 func retryStopped(db *gorm.DB, row buildRecord, steps []stepRecord) error {
+	if stopped, err := approvalStopped(db, row); err != nil {
+		return err
+	} else if stopped {
+		return nil
+	}
 	if row.AttemptID == nil {
 		if row.Status != "cancelled" || !row.CancelRequested {
 			return ErrConflict

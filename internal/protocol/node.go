@@ -64,16 +64,17 @@ type ClaimRequest struct {
 	ClaimKey  string `json:"claim_key"`
 }
 type TaskSnapshot struct {
-	Project      string            `json:"project"`
-	BuildName    string            `json:"build_name"`
-	Number       int64             `json:"number"`
-	Repository   string            `json:"repository"`
-	Branch       string            `json:"branch"`
-	SHA          string            `json:"sha"`
-	SourceDigest string            `json:"source_digest"`
-	Definition   config.Build      `json:"definition"`
-	Parameters   map[string]string `json:"parameters"`
-	Facts        map[string]string `json:"facts"`
+	Resume       *ApprovalResumeEvidence `json:"resume,omitempty"`
+	Project      string                  `json:"project"`
+	BuildName    string                  `json:"build_name"`
+	Number       int64                   `json:"number"`
+	Repository   string                  `json:"repository"`
+	Branch       string                  `json:"branch"`
+	SHA          string                  `json:"sha"`
+	SourceDigest string                  `json:"source_digest"`
+	Definition   config.Build            `json:"definition"`
+	Parameters   map[string]string       `json:"parameters"`
+	Facts        map[string]string       `json:"facts"`
 }
 type LeaseGrant struct {
 	Ref                   LeaseRef      `json:"ref"`
@@ -172,37 +173,39 @@ type CollectedReport struct {
 	SnapshotPath string     `json:"-"`
 }
 type ExecutionProgress struct {
-	PublishIntents        []PublishExpectation  `json:"publish_intents,omitempty"`
-	IOSResourceDigest     string                `json:"ios_resource_digest,omitempty"`
-	IOSCleanupConfirmed   bool                  `json:"ios_cleanup_confirmed,omitempty"`
-	Kind                  string                `json:"kind"`
-	Phase                 string                `json:"phase,omitempty"`
-	Name                  string                `json:"name,omitempty"`
-	StepKind              string                `json:"step_kind,omitempty"`
-	Status                string                `json:"status,omitempty"`
-	Reason                string                `json:"reason,omitempty"`
-	PostPhase             string                `json:"post_phase,omitempty"`
-	Index                 int                   `json:"index"`
-	Started               bool                  `json:"started"`
-	StopConfirmed         bool                  `json:"stop_confirmed"`
-	CleanupFailed         bool                  `json:"cleanup_failed"`
-	ExitCode              int                   `json:"exit_code"`
-	ElapsedNS             int64                 `json:"elapsed_ns"`
-	RemainingBudgetNS     *int64                `json:"remaining_budget_ns,omitempty"`
-	RemainingPostBudgetNS int64                 `json:"remaining_post_budget_ns"`
-	At                    time.Time             `json:"at"`
-	ArtifactIDs           []string              `json:"artifact_ids,omitempty"`
-	LastLogSeq            int64                 `json:"last_log_seq"`
-	LastLogOffset         int64                 `json:"last_log_offset"`
-	LastArtifactSeq       int64                 `json:"last_artifact_seq"`
-	ArtifactSteps         []ArtifactExpectation `json:"artifact_steps"`
-	PID                   int                   `json:"-"`
-	PGID                  int                   `json:"-"`
-	LocalResultDir        string                `json:"-"`
-	LocalArtifacts        []CollectedArtifact   `json:"-"`
-	Reports               *ReportEvidence       `json:"reports,omitempty"`
-	ReportManifest        *ReportManifest       `json:"report_manifest,omitempty"`
-	LocalReports          []CollectedReport     `json:"-"`
+	Approval              *ApprovalCheckpointEvidence `json:"approval,omitempty"`
+	PublishIntents        []PublishExpectation        `json:"publish_intents,omitempty"`
+	IOSResourceDigest     string                      `json:"ios_resource_digest,omitempty"`
+	IOSCleanupConfirmed   bool                        `json:"ios_cleanup_confirmed,omitempty"`
+	Kind                  string                      `json:"kind"`
+	Phase                 string                      `json:"phase,omitempty"`
+	Name                  string                      `json:"name,omitempty"`
+	StepKind              string                      `json:"step_kind,omitempty"`
+	Status                string                      `json:"status,omitempty"`
+	Reason                string                      `json:"reason,omitempty"`
+	PostPhase             string                      `json:"post_phase,omitempty"`
+	Index                 int                         `json:"index"`
+	Started               bool                        `json:"started"`
+	StopConfirmed         bool                        `json:"stop_confirmed"`
+	CleanupFailed         bool                        `json:"cleanup_failed"`
+	ExitCode              int                         `json:"exit_code"`
+	ElapsedNS             int64                       `json:"elapsed_ns"`
+	RemainingBudgetNS     *int64                      `json:"remaining_budget_ns,omitempty"`
+	RemainingPostBudgetNS int64                       `json:"remaining_post_budget_ns"`
+	At                    time.Time                   `json:"at"`
+	ArtifactIDs           []string                    `json:"artifact_ids,omitempty"`
+	LastLogSeq            int64                       `json:"last_log_seq"`
+	LastLogOffset         int64                       `json:"last_log_offset"`
+	LastArtifactSeq       int64                       `json:"last_artifact_seq"`
+	ArtifactSteps         []ArtifactExpectation       `json:"artifact_steps"`
+	PID                   int                         `json:"-"`
+	PGID                  int                         `json:"-"`
+	LocalResultDir        string                      `json:"-"`
+	LocalArtifacts        []CollectedArtifact         `json:"-"`
+	Reports               *ReportEvidence             `json:"reports,omitempty"`
+	ReportManifest        *ReportManifest             `json:"report_manifest,omitempty"`
+	LocalReports          []CollectedReport           `json:"-"`
+	LocalApproval         *ApprovalLocalCheckpoint    `json:"-"`
 }
 type ExecutionEvent struct {
 	Ref      LeaseRef          `json:"ref"`

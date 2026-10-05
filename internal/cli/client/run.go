@@ -68,6 +68,7 @@ func newRunCommand() *cobra.Command {
 			defer stop()
 			result, runErr := pipeline.Run(ctx, document, pipeline.RunOptions{
 				PreviewOptions: options, Workspace: workspace, Output: cmd.ErrOrStderr(),
+				ConfirmApproval: confirmLocalApproval(cmd.InOrStdin(), cmd.ErrOrStderr()),
 			})
 			if result != nil {
 				if err := output.Encode(result); err != nil {

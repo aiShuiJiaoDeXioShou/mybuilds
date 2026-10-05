@@ -139,14 +139,34 @@ func (s *Store) FindNodeArtifact(ctx context.Context, actor NodeActor, ref proto
 	var result protocol.ArtifactView
 	err := s.write(ctx, func(tx *gorm.DB) error {
 		build, err := s.currentExecution(tx, actor, ref)
+		current := err == nil
 		if err != nil {
-			return err
+			if e := retentionNodeActor(tx, actor); e != nil {
+				return e
+			}
+			if e := tx.First(&build, "id = ?", ref.BuildID).Error; e != nil {
+				return e
+			}
+			if actor.ID != ref.NodeID || build.CurrentApprovalID == nil {
+				return err
+			}
+			known, e := approvalHistoricalRef(tx, build, ref)
+			if e != nil {
+				return e
+			}
+			if !known {
+				return err
+			}
 		}
+
 		var file artifactRecord
 		if err = tx.First(&file, "id = ? AND build_id = ? AND attempt_id = ?", id, ref.BuildID, ref.AttemptID).Error; err != nil {
 			return err
 		}
 		result = artifactView(build, file)
+		if !current {
+			return nil
+		}
 		return checkBoundary(tx, actor, ref, *build.LeaseExpiresAt)
 	})
 	if err != nil {
@@ -175,15 +195,12 @@ func (s *Store) ListArtifacts(ctx context.Context, actor Actor, buildID string, 
 	}
 	var files []artifactRecord
 	query := db.Where("build_id = ?", buildID)
-	sealed, err := sealedReports(build)
+	ids, err := approvalVisibleReportIDs(db, build)
 	if err != nil {
 		return nil, safeError(err)
 	}
-	if sealed == nil {
-		query = query.Where("purpose <> ?", "junit")
-	} else {
-		query = query.Where("purpose <> ? OR report_revision = ?", "junit", build.ReportRevision)
-	}
+	query = query.Where("purpose <> ? OR id IN ?", "junit", ids)
+
 	if err = query.Order("seq ASC").Limit(page.Limit).Offset(page.Offset).Find(&files).Error; err != nil {
 		return nil, safeError(err)
 	}
@@ -224,11 +241,11 @@ func (s *Store) GetArtifact(ctx context.Context, actor Actor, id string) (Artifa
 		return ArtifactStored{}, err
 	}
 	if file.Purpose == "junit" {
-		sealed, err := sealedReports(build)
+		ids, err := approvalVisibleReportIDs(db, build)
 		if err != nil {
 			return ArtifactStored{}, safeError(err)
 		}
-		if sealed == nil || file.ReportRevision != build.ReportRevision {
+		if !slices.Contains(ids, file.ID) {
 			return ArtifactStored{}, ErrNotFound
 		}
 	}

@@ -37,7 +37,11 @@ func TestLocalProjectSettingsAndRegistration(t *testing.T) {
 	if _, err := executeManagement(t, append(base, "project", "add", "bad", "--repo", directory, "--nodes", "mac-1", "--settings", settings, "--file", "mybuilds.yml")...); err == nil {
 		t.Fatal("settings/file冲突未拒绝")
 	}
-	if _, err := executeManagement(t, append(base, "project", "add", "bad", "--repo", directory, "--nodes", "mac-1", "--platform", "ios")...); err == nil {
-		t.Fatal("未实现平台选项被接受")
+	out = call("project", "add", "ios", "--repo", directory, "--nodes", "mac-1", "--platform", "ios", "--json")
+	if !strings.Contains(out, "native-ios") {
+		t.Fatal("平台选项未绑定真实内置方案", out)
+	}
+	if _, err := executeManagement(t, append(base, "project", "add", "bad", "--repo", directory, "--nodes", "mac-1", "--platform", "unknown")...); err == nil {
+		t.Fatal("非法平台选项被接受")
 	}
 }

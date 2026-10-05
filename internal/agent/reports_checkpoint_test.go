@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"mybuilds/internal/protocol"
@@ -212,5 +213,49 @@ func TestReportCheckpointTerminalRequiresCanonicalAndConfirmedMetadata(t *testin
 				t.Fatal("损坏的checkpoint不能成为终态/只读恢复停止证据")
 			}
 		})
+	}
+}
+
+// 纯私有元数据校验：历史XML必须由原审批摘要及完整Ref链证明，不能仅凭低revision放行。
+func TestApprovalReportHistoryOnlyAcceptsCheckpointFiles(t *testing.T) {
+	e, p := reportJournalFixture(t)
+	p.Reports.Outcome, p.Phase, p.Index, p.Name, p.StepKind = "passed", "", 0, "", ""
+	if err := e.prepareReports(&p); err != nil {
+		t.Fatal(err)
+	}
+	state := &e.journal.state
+	state.Artifacts[0].Confirmed = true
+	old := *state.Ref
+	progress := protocol.ExecutionProgress{Kind: "approval_checkpoint", Phase: "ordinary", Index: 2, Name: "review", StepKind: "approval", PostPhase: "none", StopConfirmed: true, ExitCode: -1, At: time.Now().UTC(), ArtifactSteps: []protocol.ArtifactExpectation{}, Approval: &protocol.ApprovalCheckpointEvidence{ID: uuid.NewString(), Revision: 1, SnapshotDigest: strings.Repeat("a", 64), WorkspaceID: uuid.NewString(), ResultID: uuid.NewString(), NextOrdinaryIndex: 3, Artifacts: []protocol.ArtifactExpectation{}, PublishIntents: []protocol.PublishExpectation{}, SystemResourcesClosed: true, Reports: p.Reports}}
+	digest, err := protocol.ApprovalCheckpointDigest(old, 5, progress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	progress.Approval.CheckpointDigest = digest
+	encoded, _ := json.Marshal(progress)
+	next := old
+	next.Epoch++
+	next.SessionID, next.LeaseID = uuid.NewString(), uuid.NewString()
+	state.Ref = &next
+	state.ApprovalHistory = []approvalRefTransition{{Event: protocol.ExecutionEvent{Ref: old, Seq: 5, Progress: progress, Digest: journalProgressDigest(encoded)}, ResumeRef: next}}
+	file := p.Reports.Files[0]
+	file.ArtifactID = uuid.NewString()
+	evidence := copyReportEvidence(*p.Reports)
+	evidence.Revision = 2
+	evidence.Files = []protocol.ReportFile{file}
+	current := state.Artifacts[0]
+	current.Declaration.ID, current.Declaration.Seq, current.Declaration.Ref, current.Declaration.ReportRevision = file.ArtifactID, 2, next, 2
+	state.Artifacts = append(state.Artifacts, current)
+	if !confirmedReportFiles(state, evidence) {
+		t.Fatal("精确原审批XML历史被拒绝")
+	}
+	state.Artifacts[0].Declaration.Size++
+	if confirmedReportFiles(state, evidence) {
+		t.Fatal("历史XML元数据篡改被接受")
+	}
+	state.Artifacts[0].Declaration.Size--
+	state.ApprovalHistory = nil
+	if confirmedReportFiles(state, evidence) {
+		t.Fatal("无审批链的集合外XML被接受")
 	}
 }

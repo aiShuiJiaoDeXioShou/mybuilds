@@ -29,6 +29,9 @@ func progressDigest(p protocol.ExecutionProgress) string {
 func validProgress(p protocol.ExecutionProgress) bool {
 	_, offset := p.At.Zone()
 	reportEvent := p.Kind == "reports_checked" || p.Kind == "reports_sealed"
+	if (p.Approval != nil) != (p.Kind == "approval_checkpoint") {
+		return false
+	}
 	if p.IOSResourceDigest != "" && (!p.IOSCleanupConfirmed || !validHex(p.IOSResourceDigest, 64)) {
 		return false
 	}
@@ -38,7 +41,7 @@ func validProgress(p protocol.ExecutionProgress) bool {
 	if len(p.LocalReports) != 0 || (p.Reports != nil) != reportEvent || p.ReportManifest != nil && p.Kind != "build_finished" || len(p.PublishIntents) != 0 && p.Kind != "build_finished" {
 		return false
 	}
-	return !p.At.IsZero() && offset == 0 && p.ElapsedNS >= 0 && p.RemainingPostBudgetNS >= 0 && slices.Contains(progressReasons, p.Reason) && slices.Contains([]string{"intent", "started", "finished", "post_selected", "skipped", "build_finished", "reports_checked", "reports_sealed"}, p.Kind) && p.PID == 0 && p.PGID == 0 && p.LocalResultDir == "" && len(p.LocalArtifacts) == 0
+	return !p.At.IsZero() && offset == 0 && p.ElapsedNS >= 0 && p.RemainingPostBudgetNS >= 0 && slices.Contains(progressReasons, p.Reason) && slices.Contains([]string{"intent", "started", "finished", "post_selected", "skipped", "build_finished", "reports_checked", "reports_sealed", "approval_checkpoint"}, p.Kind) && p.PID == 0 && p.PGID == 0 && p.LocalResultDir == "" && len(p.LocalArtifacts) == 0
 }
 func monotoneBudget(previous, next *int64) bool {
 	if previous == nil {
@@ -427,6 +430,8 @@ func (s *Store) ApplyEvent(ctx context.Context, actor NodeActor, in protocol.Exe
 			return ErrBudgetInvalid
 		}
 		switch p.Kind {
+		case "approval_checkpoint":
+			err = applyApprovalCheckpoint(tx, &row, in)
 		case "reports_checked":
 			err = applyReportsChecked(tx, &row, p)
 		case "reports_sealed":
@@ -451,7 +456,7 @@ func (s *Store) ApplyEvent(ctx context.Context, actor NodeActor, in protocol.Exe
 		if err = tx.Model(&row).Updates(map[string]any{"status": row.Status, "reason": row.Reason, "post_phase": row.PostPhase, "stop_unconfirmed": row.StopUnconfirmed, "remaining_budget_ns": row.RemainingBudgetNS, "remaining_post_budget_ns": row.RemainingPostBudgetNS, "last_event_seq": row.LastEventSeq, "terminal_at": row.TerminalAt}).Error; err != nil {
 			return err
 		}
-		if err = tx.Create(&executionReceiptRecord{ID: uuid.NewString(), BuildID: row.ID, AttemptID: in.Ref.AttemptID, Seq: in.Seq, Digest: in.Digest, Kind: p.Kind, StopKnown: p.Kind == "build_finished" && p.StopConfirmed && !p.CleanupFailed && !row.StopUnconfirmed, CreatedAt: time.Now().UTC()}).Error; err != nil {
+		if err = tx.Create(&executionReceiptRecord{ID: uuid.NewString(), BuildID: row.ID, AttemptID: in.Ref.AttemptID, Seq: in.Seq, Digest: in.Digest, Kind: p.Kind, StopKnown: (p.Kind == "build_finished" || p.Kind == "approval_checkpoint") && p.StopConfirmed && !p.CleanupFailed && !row.StopUnconfirmed, CreatedAt: time.Now().UTC()}).Error; err != nil {
 			return err
 		}
 		if p.Kind == "build_finished" {

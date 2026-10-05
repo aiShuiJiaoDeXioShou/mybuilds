@@ -42,7 +42,7 @@ func (s *Store) Recover(ctx context.Context) error {
 	return s.ExpireLeases(ctx)
 }
 func validateRecoveryBuild(db *gorm.DB, row buildRecord) error {
-	if !validUUID(row.ID) || !validUUID(row.BatchID) || !validUUID(row.ProjectID) || !slices.Contains([]string{"queued", "skipped", "running", "succeeded", "failed", "cancelled", "interrupted"}, row.Status) || row.StopUnconfirmed && row.Status != "interrupted" {
+	if !validUUID(row.ID) || !validUUID(row.BatchID) || !validUUID(row.ProjectID) || !slices.Contains([]string{"queued", "skipped", "running", "succeeded", "failed", "cancelled", "interrupted", "waiting_approval", "approved"}, row.Status) || row.StopUnconfirmed && row.Status != "interrupted" {
 		return errDatabase
 	}
 	hasRef := row.NodeID != nil || row.SessionID != nil || row.AttemptID != nil || row.LeaseID != nil || row.LeaseExpiresAt != nil || row.LeaseEpoch != 0
@@ -81,7 +81,12 @@ func validateRecoveryBuild(db *gorm.DB, row buildRecord) error {
 	if row.Status == "queued" && (row.CancelRequested || row.PostPhase != "" || row.LastEventSeq != 0 || row.LastLogSeq != 0 || row.LastLogOffset != 0 || row.LastArtifactSeq != 0) {
 		return errDatabase
 	}
-	if row.Status != "queued" && row.Status != "running" {
+	if row.CurrentApprovalID != nil {
+		if err := validateApprovalRecovery(db, row); err != nil {
+			return err
+		}
+	}
+	if row.Status != "queued" && row.Status != "running" && row.Status != "waiting_approval" && row.Status != "approved" {
 		return nil
 	} // 合法终态沿原判定，不重新计算条件或结果。
 	_, _, err := frozenBuild(db, row)
@@ -141,13 +146,16 @@ func frozenBuild(db *gorm.DB, row buildRecord) (BuildSnapshot, []stepRecord, err
 	prepared := PreparedBuild{Name: row.Name, Status: "queued", Snapshot: snapshot, InitialBudgetNS: row.InitialBudgetNS, PostBudgetNS: row.PostBudgetNS}
 	for _, step := range steps {
 		var why []string
-		if json.Unmarshal([]byte(step.ReasonsJSON), &why) != nil || step.ElapsedNS < 0 || !slices.Contains([]string{"pending", "intent", "started", "succeeded", "failed", "cancelled", "skipped"}, step.Status) || step.Started && !step.Intent || step.CleanupFailed && step.StopConfirmed {
+		if json.Unmarshal([]byte(step.ReasonsJSON), &why) != nil || step.ElapsedNS < 0 || !slices.Contains([]string{"pending", "intent", "started", "succeeded", "failed", "cancelled", "skipped", "waiting_approval"}, step.Status) || step.Started && !step.Intent || step.CleanupFailed && step.StopConfirmed {
 			return snapshot, nil, errDatabase
 		}
 		if (step.Status == "intent" || step.Status == "started") && (step.StopConfirmed || step.CleanupFailed) {
 			return snapshot, nil, errDatabase
 		}
-		if step.Status == "intent" && (!step.Intent || step.Started) || step.Status == "started" && (!step.Intent || !step.Started) || step.Status == "pending" && (step.Intent || step.Started || step.StopConfirmed || step.CleanupFailed) || step.Status == "succeeded" && (!step.Started || !step.StopConfirmed || step.CleanupFailed) {
+		if step.Status == "waiting_approval" && (step.Kind != "approval" || !step.Intent || step.Started || !step.StopConfirmed || step.CleanupFailed || row.CurrentApprovalID == nil) {
+			return snapshot, nil, errDatabase
+		}
+		if step.Status == "intent" && (!step.Intent || step.Started) || step.Status == "started" && (!step.Intent || !step.Started) || step.Status == "pending" && (step.Intent || step.Started || step.StopConfirmed || step.CleanupFailed) || step.Status == "succeeded" && ((!step.Started && step.Kind != "approval") || !step.StopConfirmed || step.CleanupFailed) {
 			return snapshot, nil, errDatabase
 		}
 		status := "pending"

@@ -29,7 +29,7 @@ func validatePublisherJournal(state journalState) error {
 		seen[item.IntentID] = true
 		if item.Grant != nil {
 			digest, err := protocol.PublishGrantDigest(*item.Grant)
-			if err != nil || !safeDigest(digest) || digest != item.Grant.AuthorizationDigest || item.Grant.IntentID != item.IntentID || item.Grant.Ref != *state.Ref {
+			if err != nil || !safeDigest(digest) || digest != item.Grant.AuthorizationDigest || item.Grant.IntentID != item.IntentID || !approvalRefKnown(state, item.Grant.Ref) {
 				return failure("journal_unconfirmed")
 			}
 			if _, ok := manifest[item.IntentID]; !ok {
@@ -39,7 +39,7 @@ func validatePublisherJournal(state journalState) error {
 		if item.Receipt != nil {
 			digest, err := protocol.PublishReceiptDigest(*item.Receipt)
 			remote, ok := manifest[item.IntentID]
-			if item.Grant == nil || err != nil || digest != item.Receipt.Digest || item.Receipt.Ref != *state.Ref || item.Receipt.IntentID != item.IntentID || item.Receipt.AuthorizationDigest != item.Grant.AuthorizationDigest || !ok || remote.ReceiptDigest != digest {
+			if item.Grant == nil || err != nil || digest != item.Receipt.Digest || item.Receipt.Ref != item.Grant.Ref || !approvalRefKnown(state, item.Receipt.Ref) || item.Receipt.IntentID != item.IntentID || item.Receipt.AuthorizationDigest != item.Grant.AuthorizationDigest || !ok || remote.ReceiptDigest != digest {
 				return failure("journal_unconfirmed")
 			}
 		}

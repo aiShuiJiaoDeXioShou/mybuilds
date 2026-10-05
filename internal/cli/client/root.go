@@ -21,7 +21,7 @@ func NewCommand() *cobra.Command {
 		return nil
 	}
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error { return cmd.Help() }
-	cmd.AddCommand(newPublishCommand(), newRetentionCommand(), version.NewCommand(), newInitCommand(), newRunCommand(), newDoctorCommand(), newRemoteGroupCommand(), newBuildCommand(), newStatusCommand(), newRemoteProjectCommand(), newTriggerCommand(), newRemoteNodeCommand(), newLogsCommand(), newArtifactCommand())
+	cmd.AddCommand(newApprovalsCommand(), newApprovalDecisionCommand("approve"), newApprovalDecisionCommand("reject"), newPublishCommand(), newRetentionCommand(), version.NewCommand(), newInitCommand(), newRunCommand(), newDoctorCommand(), newRemoteGroupCommand(), newBuildCommand(), newStatusCommand(), newRemoteProjectCommand(), newTriggerCommand(), newRemoteNodeCommand(), newLogsCommand(), newArtifactCommand())
 	cmd.AddCommand(&cobra.Command{Use: "__ios-signing", Hidden: true, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		return mobile.HandleIOSHelper(cmd.InOrStdin(), cmd.OutOrStdout())
 	}})

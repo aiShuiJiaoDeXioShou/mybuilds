@@ -11,6 +11,8 @@ import (
 
 // RunOptions 增加本地工作区与日志输出，选择与参数规则沿用预览。
 type RunOptions struct {
+	Resume          *ApprovalResume
+	ConfirmApproval func(context.Context, ApprovalPrompt) (bool, error)
 	PreviewOptions
 	Workspace string
 	Output    io.Writer
@@ -32,11 +34,13 @@ type RemoteOptions struct {
 }
 
 type RunResult struct {
-	Builds    []BuildRun `json:"builds"`
-	ResultDir string     `json:"result_dir,omitempty"`
+	Paused    *ApprovalPause `json:"paused,omitempty"`
+	Builds    []BuildRun     `json:"builds"`
+	ResultDir string         `json:"result_dir,omitempty"`
 }
 
 type BuildRun struct {
+	paused              *ApprovalPause
 	iosResourceDigest   string
 	iosTeamID           string
 	CleanupFailed       bool                     `json:"cleanup_failed,omitempty"`
@@ -73,3 +77,18 @@ type ArtifactRecord struct {
 }
 
 type shellCommand = process.Command
+
+// Resume只由Agent从原私有journal与中央已批准grant共同恢复。
+type ApprovalResume struct {
+	Evidence protocol.ApprovalResumeEvidence
+	Local    protocol.ApprovalLocalCheckpoint
+}
+type ApprovalPrompt struct {
+	Build, Step string
+	Index       int
+}
+type ApprovalPause struct {
+	Index int                              `json:"index"`
+	Step  string                           `json:"step"`
+	Local protocol.ApprovalLocalCheckpoint `json:"-"`
+}

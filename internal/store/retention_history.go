@@ -250,7 +250,7 @@ func retentionCleanHistory(tx *gorm.DB, row buildRecord, at time.Time) error {
 	if err := tx.Where("build_id = ? AND state = 'closed'", row.ID).Delete(&evidenceReadRecord{}).Error; err != nil {
 		return err
 	}
-	if err := tx.Where("build_id = ? AND seq <> ?", row.ID, row.LastEventSeq).Delete(&executionReceiptRecord{}).Error; err != nil {
+	if err := tx.Where("build_id = ? AND seq <> ? AND kind <> ?", row.ID, row.LastEventSeq, "approval_checkpoint").Delete(&executionReceiptRecord{}).Error; err != nil {
 		return err
 	}
 	if err := tx.Model(&row).Updates(map[string]any{"history_state": "cleaned", "cleaned_at": at, "snapshot_json": "", "parameter_keys_json": "", "reasons_json": "", "reports_json": "", "report_revision": 0, "report_final": false, "report_seal_digest": "", "report_checked_index": 0}).Error; err != nil {

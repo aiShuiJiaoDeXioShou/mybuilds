@@ -157,8 +157,10 @@ func inspectData(path string) string {
 			return "data_invalid"
 		}
 	}
-	if len(entries) > 0 {
-		return "journal_unconfirmed"
+	for _, entry := range entries {
+		if !pausedJournalForInspection(root, entry.Name()) {
+			return "journal_unconfirmed"
+		}
 	}
 	return ""
 }

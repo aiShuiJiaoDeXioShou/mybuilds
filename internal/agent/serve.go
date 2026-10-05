@@ -178,7 +178,10 @@ func Serve(ctx context.Context, cfg config.AgentConfig) (result error) {
 				if !time.Now().Before(deletionNext) {
 					deletionNext = time.Now().Add(5 * time.Second)
 					cleanupCtx, cancelCleanup := context.WithTimeout(live, 30*time.Second)
-					e := recoverNodeDeletionConfirmations(cleanupCtx, client, lock, grant.NodeID)
+					e := reconcileApprovals(cleanupCtx, client, lock, cfg.Node)
+					if e == nil {
+						e = recoverNodeDeletionConfirmations(cleanupCtx, client, lock, grant.NodeID)
+					}
 					deletionReady = e == nil
 					if e == nil {
 						var items []protocol.NodeDeletion
@@ -266,6 +269,12 @@ func Serve(ctx context.Context, cfg config.AgentConfig) (result error) {
 			if !time.Now().Before(requested.Add(time.Duration(task.TTLNS) - leaseMargin(cfg))) {
 				claimExpired = true
 				continue
+			}
+			if task.Task.Resume != nil {
+				journal, e = adoptApprovalResume(lock, journal, task)
+				if e != nil {
+					return e
+				}
 			}
 			pending = nil
 			// goroutine保存本次原请求时刻，后续claim不能覆盖其Authority起点。

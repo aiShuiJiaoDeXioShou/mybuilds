@@ -38,6 +38,7 @@ type iosMaterial struct {
 }
 
 type IOSResources struct {
+	team                                            string
 	keychainInfo                                    map[string]os.FileInfo
 	mu                                              sync.Mutex
 	closed, preparing, prepared                     bool
@@ -251,6 +252,7 @@ func (resources *IOSResources) Prepare(ctx context.Context, options IOSSigningOp
 		return errors.New("ios_export_options_failed")
 	}
 	resources.env = map[string]string{"MYBUILDS_IOS_KEYCHAIN": resources.keychain, "MYBUILDS_IOS_SIGNING_IDENTITY": response.Identity, "MYBUILDS_IOS_PROFILE_UUID": response.UUID, "MYBUILDS_IOS_TEAM_ID": response.Team, "MYBUILDS_IOS_BUNDLE_ID": options.BundleID, "MYBUILDS_IOS_EXPORT_OPTIONS": export, "MYBUILDS_IOS_BUILD_DIR": resources.temporary, "MYBUILDS_IOS_OUTPUT_DIR": options.OutputDir}
+	resources.team = response.Team
 	resources.prepared = true
 	return nil
 }

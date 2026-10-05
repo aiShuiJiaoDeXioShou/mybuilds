@@ -20,7 +20,7 @@
 
 ## 当前状态
 
-MVP有16个功能模块，目前14个已经完成代码与必要自动检查并本地提交；Apple/Flutter合法签名和真实商店发布由用户集中人工验收。实现顺序、精确提交与验证记录见[实施历史](docs/IMPLEMENTATION_HISTORY.md)，不把代码交付等同于全部人工验收通过。
+MVP有16个功能模块，目前15个已经完成代码与必要自动检查并本地提交；Apple/Flutter合法签名和真实商店发布由用户集中人工验收。实现顺序、精确提交与验证记录见[实施历史](docs/IMPLEMENTATION_HISTORY.md)，不把代码交付等同于全部人工验收通过。
 
 | 能力 | 状态与验证入口 |
 |---|---|
@@ -31,9 +31,10 @@ MVP有16个功能模块，目前14个已经完成代码与必要自动检查并�
 | 019 测试报告、020 保留 | 已完成实际联验；JUnit原XML解析/封存与下载、受保护的中央及原节点清理；[报告记录](specs/019-test-reports/validation.md)、[清理记录](specs/020-project-retention/validation.md) |
 | 010/011 Google Play/App Store | 代码与必要自动检查完成；共同发布授权、工具、应用保护、精确GET核对与CLI；[Google记录](specs/010-google-play/validation.md)、[Apple记录](specs/011-app-store/validation.md)；真实商店人工待验 |
 | 012 可复用方案/custom | 代码与必要自动检查完成；repo/auto/profile完整来源选择、四内置方案、命名参数与原快照重试、用户argv发布和metadata查询；[指南](specs/012-custom-workflows/quickstart.md)、[脚本案例](examples/custom/README.md) |
-| 014 审批、015 Webhook | 模块已冻结，主工作区串行集成；最终联合检查尚在执行 |
+| 014 审批 | 代码与必要自动检查完成；精确CLI决定、释放容量与原节点续执行、本地TTY；[指南](specs/014-release-approval/quickstart.md) |
+| 015 Webhook | 源码已集成，最终双库联合案例与整功能提交正在完成 |
 
-[Flutter集中验收案例](examples/mvp/acceptance.md)从实际CLI模板生成一个仓库的Android/iOS配置、控制端和两个节点设置，串联测试、下载、审批与商店分发。当前生成/dry-run已通过，014/015最终集成与集中人工执行仍在完成。通知013、轮询/cron016、额外渠道017与部署打磨018属于后续功能。
+[Flutter集中验收案例](examples/mvp/acceptance.md)从实际CLI模板生成一个仓库的Android/iOS配置、控制端和两个节点设置，串联测试、下载、审批与商店分发。当前生成/dry-run已通过，015最终提交正在完成，双平台合法签名与真实商店由用户人工验收。通知013、轮询/cron016、额外渠道017与部署打磨018属于后续功能。
 
 ## 开发与运行
 
@@ -82,7 +83,7 @@ go build -o bin/mybuilds-agent ./cmd/mybuilds-agent
 `mybuilds doctor --platform android --json --working-dir <工程目录>` 检查实际 Java、SDK 包和 wrapper。签名检查须显式提供 `--keystore`、`--key-alias`、`--store-password-env`、`--key-password-env`，两个密码仅从指定环境变量读取；未声明签名为 skipped，任一 failed 返回非零。doctor 默认 android；007 支持 `doctor --node NODE` 和 `doctor --server`；节点诊断读取最近实际报告，节点离线明确失败。首次 wrapper 检查可能下载工程锁定的 Gradle 到缓存，普通 run 不会自动调用 doctor。
 `run --dry-run` 只输出脱敏 JSON，不执行脚本、Git 或网络请求，也不读取密钥。多 build 必须用 `--build android,ios` 或 `--all`，参数用重复的 `--param key=value`；`--step` 仅限单 build。
 去掉 `--dry-run` 执行本地脚本：日志写 stderr，脱敏结果 JSON 写 stdout，失败/取消返回非零。配置路径不改变当前工作目录，多个 build 顺序执行；`--step` 只运行选中普通步骤，不自动执行前序依赖。
-先校验整批再启动脚本；审批由014接入，通知仍明确未支持，`enabled: false`可关闭。本地生效upload在任何脚本前拒绝，商店分发使用远程控制端授权和节点实际工具。
+先校验整批再启动脚本；本地审批要求真实终端明确确认，远程审批释放容量后只在原节点续执行；通知仍明确未支持，`enabled: false`可关闭。本地生效upload在任何脚本前拒绝，商店分发使用远程控制端授权和节点实际工具。
 artifact 支持相对根目录递归 glob（`**`）；每个模式须匹配普通文件，按步骤保存独立快照、大小和 SHA-256。结果 JSON 的 `result_dir` 定位临时结果根，`log_path` 定位 UTC 脱敏步骤日志，失败后仍保留完整证据。普通与 post 的快照分开；结果数据不进入源码工作树。预览、预检查失败、全部跳过不创建结果目录。
 可运行的本地例子见 [local-run.yml](examples/local-run.yml) 和 [local-artifacts.yml](examples/local-artifacts.yml)，在临时目录以已构建二进制的绝对路径和 `--file` 指向该例子运行。
 
@@ -180,7 +181,7 @@ cd "$project_dir"
 
 这个演示没有登记并启动合格 Agent，结果保持 queued，示例的 `printf` 不会执行。完整节点执行见下节。`build show` 默认输出安全详情表格，`--json` 返回同一视图。参数值、脚本正文和凭据不公开，列表默认 20 条、最大 200 条，支持 limit/offset 及项目、组、build 名、批次和状态过滤。
 
-`--settings ./settings.yml` 由客户端按当前目录读取内容；`pipeline.file` 和注册时的 `--file ci/mybuilds.yml` 都是仓库相对路径，`--file` 与 `--settings` 互斥。`project set mobile --settings ./settings.yml` 替换设置；项目framework/platform与profile绑定由012接入、Webhook由015接入；当前尚未集成的选项明确报未支持。poll/schedule属于后续016。
+`--settings ./settings.yml` 由客户端按当前目录读取内容；`pipeline.file` 和注册时的 `--file ci/mybuilds.yml` 都是仓库相对路径，`--file` 与 `--settings` 互斥。`project set mobile --settings ./settings.yml` 替换设置；项目支持framework/platform与profile绑定；Webhook管理见015指南。poll/schedule属于后续016。
 
 触发可用 `--build android,ios` 或 `--all`。共享 `--param key=value` 应用到所有所选 build，`--param android:key=value` 只覆盖指定 build；命名值优先，同 scope 重复参数拒绝。`--version`、`--channel` 是共享参数快捷选项。客户端每次新请求生成一个随机 key，在发起网络请求前写到 stderr，成功 JSON 含 `request_key`；网络失败后用原 `--idempotency-key` 和相同参数恢复，重放返回原 SHA/编号/结果，不自动重试或换 key。
 
@@ -188,7 +189,7 @@ cd "$project_dir"
 
 | 命令端 | 当前命令 |
 |---|---|
-| 客户端 | group create/ls/rename/rm；project init/set/ls/move/rm/app；trigger；build ls/show/cancel/confirm-stopped/retry；node；logs；artifact ls/download；publish；status；doctor |
+| 客户端 | group create/ls/rename/rm；project init/set/ls/move/rm/app；trigger；build ls/show/cancel/confirm-stopped/retry；node；logs；artifact ls/download；approvals/approve/reject；publish；status；doctor |
 | 服务端本机 | serve/migrate；group create/ls/rename/rm；project add/set/ls/move/rm；token create/ls/revoke |
 
 serve 在线时同一数据库被独占，本机 migrate、project/group/token 管理会拒绝，使用客户端远程管理或鉴权 HTTP API。停止示例控制端后，可创建身份并查看安全列表：
@@ -200,7 +201,7 @@ serve 在线时同一数据库被独占，本机 migrate、project/group/token �
 
 token create 只显示一次明文，列表不显示 token；首次管理员通过 `MYBUILDS_BOOTSTRAP_ADMIN_TOKEN` 初始化，撤销全部身份后重启不会重新创建 bootstrap 身份。
 
-角色为 admin/trigger/approver：admin 管理与读写；trigger 只读 status 并触发所选定义不含 upload 的构建；approver 只读 status 和全部脱敏 build 证据。所选定义含 upload 时，即使条件为 false，也要求 admin 与显式 `--allow-upload`；本阶段仍只排队，不执行上传。
+角色为 admin/trigger/approver：admin 管理与读写；trigger 只读 status 并触发所选定义不含 upload 的构建；approver可读脱敏证据并明确批准或拒绝精确审批检查点。所选定义含 upload 时，即使条件为 false，也要求 admin 与显式 `--allow-upload`；节点执行仍须当前应用、报告和审批授权。
 
 配置默认位于 `~/.mybuilds/server.yml`、`~/.mybuilds/client.yml`。覆盖顺序为默认值 < 文件 < 明确白名单环境变量 < 显式 CLI；服务端白名单为 `MYBUILDS_LISTEN`、`MYBUILDS_DATA_DIR`、`MYBUILDS_CONCURRENCY`、`MYBUILDS_DATABASE_DRIVER`、`MYBUILDS_DATABASE_DSN`、`MYBUILDS_SECRETS_FILE`；客户端为 `MYBUILDS_SERVER_URL`、`MYBUILDS_CLIENT_TOKEN`、`MYBUILDS_CLIENT_TIMEOUT`、`MYBUILDS_CA_FILE`。相对服务端路径基于配置文件目录，data_dir 创建为或要求 0700；客户端 token 可以是 0600 文件中的字面量或完整 `${NAME}` 引用，空/弱 token 拒绝。PostgreSQL 可通过 database.driver 和私有环境中的 MYBUILDS_DATABASE_DSN 配置；切换数据库不迁移已有数据。PostgreSQL 只使用明确 DSN，拒绝非空宿主 PG 环境变量和隐式 service/passfile；显式 TLS 材料需受限普通文件，读入内存后验证，不继承宿主凭据。
 
@@ -352,7 +353,7 @@ mybuilds/
 | 目录 | 职责 |
 |---|---|
 | `internal/config` | 流水线、客户端及服务端配置与校验 |
-| `internal/pipeline` | 同一Run的预览、脚本、预算、post、产物、报告与发布屏障；审批接入中 |
+| `internal/pipeline` | 同一Run的预览、脚本、预算、post、产物、报告与发布屏障；审批暂停/原节点续执行 |
 | `cmd/mybuilds-agent`、`internal/cli/agent` | 007 已验收帮助/版本/doctor/serve、实际执行闭环与全量检查；008恢复/重试已验收 |
 | `internal/server` | 已接入控制端生命周期、鉴权 HTTP、节点调度、租约、中央日志/制品与停止保护 |
 | `internal/agent` | 007 已验收诊断/注册/心跳、任务领取/续租、同一 Run 执行与日志/产物回传；008网络及终态核对已验收 |

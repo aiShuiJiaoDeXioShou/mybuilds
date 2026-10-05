@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"slices"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -33,6 +34,29 @@ func (s *Store) Cancel(ctx context.Context, actor Actor, buildID string) (BuildV
 			}
 			build.Reason = "cancelled"
 			build.CancelRequested = true
+		case "waiting_approval", "approved":
+			if build.CurrentApprovalID == nil {
+				return ErrConflict
+			}
+			var a approvalRecord
+			if err := tx.First(&a, "id = ?", *build.CurrentApprovalID).Error; err != nil {
+				return err
+			}
+			if !slices.Contains([]string{"pending", "approved"}, a.State) || a.ResumeRefJSON != "" {
+				return ErrConflict
+			}
+			if err := closeApprovalSteps(tx, build, a.OrdinaryIndex, "cancelled"); err != nil {
+				return err
+			}
+			if err := tx.Model(&a).Update("state", "cancelled").Error; err != nil {
+				return err
+			}
+			build.Status = "cancelled"
+			build.Reason = "cancelled"
+			build.CancelRequested = true
+			build.PostPhase = "none"
+			now := time.Now().UTC()
+			build.TerminalAt = &now
 		case "running":
 			build.CancelRequested = true
 		case "cancelled":
@@ -43,7 +67,7 @@ func (s *Store) Cancel(ctx context.Context, actor Actor, buildID string) (BuildV
 		default:
 			return ErrConflict
 		}
-		if err := tx.Model(&build).Updates(map[string]any{"status": build.Status, "reason": build.Reason, "cancel_requested": build.CancelRequested, "terminal_at": build.TerminalAt}).Error; err != nil {
+		if err := tx.Model(&build).Updates(map[string]any{"status": build.Status, "reason": build.Reason, "cancel_requested": build.CancelRequested, "terminal_at": build.TerminalAt, "post_phase": build.PostPhase}).Error; err != nil {
 			return err
 		}
 		if err := audit(tx, actor, "build_cancel", buildID, "", build.Status); err != nil {

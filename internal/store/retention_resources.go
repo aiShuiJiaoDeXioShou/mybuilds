@@ -66,6 +66,13 @@ func (s *Store) RegisterNodeResource(ctx context.Context, actor NodeActor, in pr
 		expires := *current.LeaseExpiresAt
 		if found {
 			if !same {
+				rebound, err := approvalResourceRebind(tx, current, old, in)
+				if err != nil {
+					return err
+				}
+				if rebound {
+					return checkBoundary(tx, actor, in.Ref, expires)
+				}
 				// 同一attempt只能增加一次结果槽；不能减槽、换ID或改已有槽摘要。
 				if resourceRecordRef(old) != in.Ref || old.ID != in.ID || old.HasWorkspace != in.HasWorkspace || old.HasResults || !in.HasResults || old.OwnershipDigest == in.OwnershipDigest {
 					return ErrConflict

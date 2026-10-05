@@ -79,10 +79,18 @@ func (execution *taskExecution) declareReports(p *protocol.ExecutionProgress) er
 		if !final {
 			continue
 		}
+		found := false
 		for _, a := range journal.state.Artifacts {
 			if a.Declaration.ID == file.ArtifactID {
-				return failure("report_invalid")
+				d := a.Declaration
+				if !a.Confirmed || !approvalRefKnown(journal.state, d.Ref) || d.Purpose != "junit" || d.ReportRevision > e.Revision || d.ReportKey != file.Key || d.Size != file.Size || d.SHA256 != file.SHA256 || d.Index != file.SourceIndex || d.Step != file.SourceStep {
+					return failure("report_invalid")
+				}
+				found = true
 			}
+		}
+		if found {
+			continue
 		}
 		total += file.Size
 		if len(journal.state.Artifacts)+len(pending) >= 128 || total > 4<<30 {
@@ -160,15 +168,6 @@ func confirmedReportFiles(state *journalState, evidence protocol.ReportEvidence)
 	if state.Ref == nil || len(evidence.Files) > 64 || len(state.Artifacts) > 128 {
 		return false
 	}
-	count := 0
-	for _, artifact := range state.Artifacts {
-		if artifact.Declaration.Purpose == "junit" {
-			count++
-		}
-	}
-	if count != len(evidence.Files) {
-		return false
-	}
 	seen := map[string]bool{}
 	for _, file := range evidence.Files {
 		if seen[file.ArtifactID] {
@@ -178,7 +177,7 @@ func confirmedReportFiles(state *journalState, evidence protocol.ReportEvidence)
 		found := false
 		for index, artifact := range state.Artifacts {
 			d := artifact.Declaration
-			if d.Ref == *state.Ref && d.ID == file.ArtifactID && d.Seq == int64(index+1) && artifact.Confirmed && d.Phase == "ordinary" && d.Name == path.Base(file.Path) && d.Purpose == "junit" && d.ReportRevision == evidence.Revision && d.ReportKey == file.Key && d.Size == file.Size && d.SHA256 == file.SHA256 && d.Index == file.SourceIndex && d.Step == file.SourceStep {
+			if approvalRefKnown(*state, d.Ref) && d.ID == file.ArtifactID && d.Seq == int64(index+1) && artifact.Confirmed && d.Phase == "ordinary" && d.Name == path.Base(file.Path) && d.Purpose == "junit" && d.ReportRevision <= evidence.Revision && d.ReportKey == file.Key && d.Size == file.Size && d.SHA256 == file.SHA256 && d.Index == file.SourceIndex && d.Step == file.SourceStep {
 				found = true
 				break
 			}
@@ -187,5 +186,44 @@ func confirmedReportFiles(state *journalState, evidence protocol.ReportEvidence)
 			return false
 		}
 	}
+	// 集合外XML只能是先前实际审批封存后被新检查替换的历史文件。
+	for index, artifact := range state.Artifacts {
+		if artifact.Declaration.Seq != int64(index+1) {
+			return false
+		}
+		if artifact.Declaration.Purpose == "junit" && !seen[artifact.Declaration.ID] && !approvalReportArtifactKnown(state, artifact, evidence.Revision) {
+			return false
+		}
+	}
 	return true
+}
+
+func approvalReportArtifactKnown(state *journalState, artifact localArtifact, revision int64) bool {
+	d := artifact.Declaration
+	if !artifact.Confirmed || d.ReportRevision < 1 || d.ReportRevision >= revision || !approvalRefKnown(*state, d.Ref) {
+		return false
+	}
+	matches := func(event protocol.ExecutionEvent) bool {
+		p := event.Progress.Approval
+		if p == nil || p.Reports == nil || event.Ref != d.Ref || p.Reports.Revision < d.ReportRevision {
+			return false
+		}
+		digest, err := protocol.ApprovalCheckpointDigest(event.Ref, event.Seq, event.Progress)
+		encoded, marshalErr := json.Marshal(event.Progress)
+		if err != nil || marshalErr != nil || digest != p.CheckpointDigest || journalProgressDigest(encoded) != event.Digest {
+			return false
+		}
+		for _, file := range p.Reports.Files {
+			if d.ID == file.ArtifactID && d.Phase == "ordinary" && d.Name == path.Base(file.Path) && d.ReportKey == file.Key && d.Size == file.Size && d.SHA256 == file.SHA256 && d.Index == file.SourceIndex && d.Step == file.SourceStep {
+				return true
+			}
+		}
+		return false
+	}
+	for _, proof := range state.ApprovalHistory {
+		if matches(proof.Event) {
+			return true
+		}
+	}
+	return false
 }

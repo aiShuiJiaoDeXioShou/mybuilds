@@ -254,6 +254,7 @@ steps:
     notify: false
   - kind: upload
     target: google_play
+    app_identifier: com.example.preview
     file: output/*.aab
     track: internal
     credentials: ${PREVIEW_SECRET}

@@ -143,7 +143,7 @@ func TestTargetAndOrdinaryApproval(t *testing.T) {
 	for _, steps := range []string{
 		"[{kind: approval}, {kind: run, run: echo}]",
 		"[{kind: upload, target: app_store, app_identifier: com.example.app, file: '*.ipa', credentials: '${CREDS}', submit_for_review: true, automatic_release: false}]",
-		"[{kind: upload, target: custom, argv: [bash, ci/publish.sh], result_file: publish/result.json, query_argv: [bash, ci/query.sh], working_dir: '.', timeout: 1m}]",
+		"[{kind: upload, target: custom, app_identifier: com.example.app, file: out/*.zip, argv: [bash, ci/publish.sh], result_file: publish/result.json, query_argv: [bash, ci/query.sh], working_dir: '.', timeout: 1m}]",
 	} {
 		if _, err := Parse([]byte("version: 1\nsteps: " + steps)); err != nil {
 			t.Fatal(err)
@@ -224,8 +224,19 @@ func TestActualResourceBounds(t *testing.T) {
 	if err := os.WriteFile(filename, []byte(strings.Repeat(" ", MaxConfigBytes+1)), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(filename); err == nil || !strings.Contains(err.Error(), "大小上限") {
-		t.Fatalf("读取未限制: %v", err)
+	if _, _, err := readConfiguration(filename); err == nil || !strings.Contains(err.Error(), "大小上限") {
+		t.Fatalf("真实普通文件读取未限制: %v", err)
+	}
+	if _, err := Load(filename); err == nil || strings.Contains(err.Error(), filename) {
+		t.Fatalf("加载未拒绝超限或诊断泄露路径: %v", err)
+	}
+	// 有效YAML恰好达到上限仍可加载，避免把拒绝全部大文件当作边界检查。
+	bounded := minimal + "#" + strings.Repeat(" ", MaxConfigBytes-len(minimal)-1)
+	if err := os.WriteFile(filename, []byte(bounded), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(filename); err != nil {
+		t.Fatalf("恰好上限的有效配置被拒: %v", err)
 	}
 }
 

@@ -97,6 +97,9 @@ type BuildFilter struct {
 type BuildView struct {
 	PublishIDs            []string                 `json:"publish_ids,omitempty"`
 	Origin                *PipelineOriginView      `json:"origin,omitempty"`
+	CurrentApprovalID     string                   `json:"current_approval_id,omitempty"`
+	ApprovalRevision      int64                    `json:"approval_revision,omitempty"`
+	ResumeReason          string                   `json:"resume_reason,omitempty"`
 	HistoryState          string                   `json:"history_state,omitempty"`
 	TerminalAt            *time.Time               `json:"terminal_at,omitempty"`
 	CleanedAt             *time.Time               `json:"cleaned_at,omitempty"`
@@ -202,6 +205,8 @@ type batchRecord struct {
 func (batchRecord) TableName() string { return "batches" }
 
 type buildRecord struct {
+	CurrentApprovalID                                        *string `gorm:"size:36;index"`
+	ResumeReason                                             string  `gorm:"not null;default:''"`
 	TerminalAt                                               *time.Time
 	HistoryState                                             string `gorm:"not null;default:live"`
 	CleanedAt                                                *time.Time

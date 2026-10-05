@@ -27,6 +27,7 @@ type taskExecution struct {
 	journal         *executionJournal
 	spool           *logSpool
 	terminal        bool
+	paused          bool
 	stopRenew       func()
 }
 
@@ -52,6 +53,15 @@ func (execution *taskExecution) progress(ctx context.Context, p protocol.Executi
 			return errSave
 		}
 		return err
+	}
+	if p.Kind == "approval_checkpoint" {
+		if err := execution.prepareApproval(ctx, &p); err != nil {
+			return err
+		}
+		execution.stopRenew()
+		if err := execution.lease.check(); err != nil {
+			return err
+		}
 	}
 	if p.Kind == "build_finished" {
 		if !execution.iosClosed() || execution.journal.state.IOSSigningRequired != p.IOSCleanupConfirmed || p.IOSResourceDigest != iosDigestState(execution.journal.state) {
@@ -89,7 +99,7 @@ func (execution *taskExecution) progress(ctx context.Context, p protocol.Executi
 		return err
 	}
 	var ack protocol.EventAck
-	if p.Kind == "build_finished" {
+	if p.Kind == "build_finished" || p.Kind == "approval_checkpoint" {
 		err = execution.client.post(ctx, "/api/agent/events", event, &ack)
 	} else {
 		err = execution.client.retryExecutionPost(ctx, "/api/agent/events", event, &ack)
@@ -113,6 +123,9 @@ func (execution *taskExecution) progress(ctx context.Context, p protocol.Executi
 			execution.lease.cancel()
 			return err
 		}
+	}
+	if p.Kind == "approval_checkpoint" {
+		execution.paused = true
 	}
 	if p.Kind == "build_finished" {
 		execution.terminal = true
@@ -182,7 +195,15 @@ func executeTask(parent context.Context, client *agentHTTP, lock *dataLock, cfg 
 		options.SSHKey = values["MYBUILDS_GIT_SSH_KEY"]
 		options.KnownHosts = values["MYBUILDS_GIT_KNOWN_HOSTS"]
 	}
-	checkout, checkoutErr := scm.Checkout(lease.ctx, options)
+	var checkout scm.CheckoutResult
+	var checkoutErr error
+	if task.Resume != nil {
+		checkout.Workspace = journal.state.Approval.Local.Workspace
+		checkout.StopConfirmed = true
+		checkoutErr = validateApprovalResource(journal)
+	} else {
+		checkout, checkoutErr = scm.Checkout(lease.ctx, options)
+	}
 	journal.mu.Lock()
 	journal.state.StopConfirmed = checkout.StopConfirmed
 	journal.state.CleanupFailed = !checkout.StopConfirmed
@@ -191,7 +212,12 @@ func executeTask(parent context.Context, client *agentHTTP, lock *dataLock, cfg 
 	if saveErr != nil {
 		return saveErr
 	}
-	if checkoutErr == nil {
+	if checkoutErr == nil && task.Resume != nil {
+		if err = execution.registerApprovalResource(lease.ctx); err != nil {
+			return err
+		}
+	}
+	if checkoutErr == nil && task.Resume == nil {
 		// 从本次领取起计时，登记网络与fsync不能取得新的构建预算。
 		registrationCtx := lease.ctx
 		registrationCancel := func() {}
@@ -224,7 +250,10 @@ func executeTask(parent context.Context, client *agentHTTP, lock *dataLock, cfg 
 	facts := map[string]string{"project": task.Project, "build.id": grant.Ref.BuildID, "build.number": strconv.FormatInt(task.Number, 10), "node.name": cfg.Node, "git.sha": task.SHA, "git.branch": task.Branch}
 	document := &config.Document{Version: 1, Builds: map[string]*config.Build{task.BuildName: &task.Definition}}
 	runStart := time.Now()
-	result, runErr := pipeline.Run(lease.user, document, pipeline.RunOptions{PreviewOptions: pipeline.PreviewOptions{Names: []string{task.BuildName}, Params: task.Parameters}, Workspace: checkout.Workspace, Output: io.Discard, Remote: &pipeline.RemoteOptions{Publish: execution.publish, AuthorityContext: lease.ctx, Facts: facts, Secrets: secrets, ResultParent: resultParent, ResultCreated: execution.registerResult, RemainingBudgetNS: remaining, RemainingPostBudgetNS: grant.RemainingPostBudgetNS, IOSCheckpoint: execution.saveIOSOwnership, Progress: execution.progress, Log: execution.log}})
+	result, runErr := pipeline.Run(lease.user, document, pipeline.RunOptions{PreviewOptions: pipeline.PreviewOptions{Names: []string{task.BuildName}, Params: task.Parameters}, Workspace: checkout.Workspace, Resume: approvalRunResume(journal, task), Output: io.Discard, Remote: &pipeline.RemoteOptions{Publish: execution.publish, AuthorityContext: lease.ctx, Facts: facts, Secrets: secrets, ResultParent: resultParent, ResultCreated: execution.registerResult, RemainingBudgetNS: remaining, RemainingPostBudgetNS: grant.RemainingPostBudgetNS, IOSCheckpoint: execution.saveIOSOwnership, Progress: execution.progress, Log: execution.log}})
+	if execution.paused && errors.Is(runErr, pipeline.ErrApprovalPaused) {
+		return nil
+	}
 	if execution.terminal {
 		journal.mu.Lock()
 		stopped := journal.state.StopConfirmed && !journal.state.CleanupFailed && iosClosedState(journal.state)

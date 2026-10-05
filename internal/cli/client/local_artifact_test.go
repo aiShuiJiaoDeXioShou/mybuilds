@@ -193,7 +193,8 @@ func TestLocalArtifactsNoResultForDryRunPrecheckOrSkipped(t *testing.T) {
 	}{
 		{"预览", "version: 1\nsteps:\n  - kind: artifact\n    paths: [output/**/*.bin]\n", []string{"run", "--dry-run"}, false},
 		{"全部跳过", "version: 1\nparams: {release: 'no'}\nsteps:\n  - kind: artifact\n    paths: [output/**/*.bin]\n    when:\n      params: {release: 'yes'}\n", []string{"run"}, false},
-		{"预检查失败", "version: 1\nsteps:\n  - kind: run\n    run: ': > forbidden-marker'\n  - kind: approval\n    notify: false\n", []string{"run"}, true},
+		{"审批纯预览", "version: 1\nsteps:\n  - kind: run\n    run: ': > forbidden-marker'\n  - kind: approval\n    notify: false\n", []string{"run", "--dry-run"}, false},
+		{"通知预检查失败", "version: 1\nsteps:\n  - kind: run\n    run: ': > forbidden-marker'\n  - kind: approval\n    notify: true\n", []string{"run"}, true},
 	} {
 		writeConfig(t, "mybuilds.yml", tc.contents)
 		stdout, _, err := localExecute(t, context.Background(), tc.args...)
