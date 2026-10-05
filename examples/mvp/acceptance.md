@@ -20,19 +20,22 @@ python3 examples/mvp/prepare.py "$PWD/bin/mybuilds" /绝对路径/新的验收�
 
 ## 服务端与客户端
 
-把已构建的三个CLI目录加入PATH，进入新验收目录：
+每个终端先设置`MYBUILDS_ROOT`为mybuilds源码绝对路径、`CASE_DIR`为新案例绝对路径，执行`export PATH="$MYBUILDS_ROOT/bin:$PATH"`并`cd "$CASE_DIR"`。新终端不会继承其他终端的token。控制端首次启动时生成并保存同一管理员token供客户端读取；私有文件放案例根目录，不能提交到`repo/`：
 
 ```bash
 umask 077
 export MYBUILDS_BOOTSTRAP_ADMIN_TOKEN="$(openssl rand -hex 32)"
-export MYBUILDS_CLIENT_TOKEN="$MYBUILDS_BOOTSTRAP_ADMIN_TOKEN"
+printf '%s\n' "$MYBUILDS_BOOTSTRAP_ADMIN_TOKEN" > admin-token.private.txt
+chmod 0600 admin-token.private.txt
 mybuilds-server --config server.yml migrate
 mybuilds-server --config server.yml serve
 ```
 
-在另一个终端注入**相同管理员token**并执行：
+在客户端终端读取**同一个管理员token**并执行，不要再生成一个：
 
 ```bash
+umask 077
+export MYBUILDS_CLIENT_TOKEN="$(cat admin-token.private.txt)"
 mybuilds --config client.yml status --json
 mybuilds --config client.yml group create mobile
 mybuilds --config client.yml node create flutter-android --labels flutter,android-sdk --capacity 1 --json > android-node.private.json
@@ -48,14 +51,18 @@ mybuilds --config client.yml project init flutter-demo --repo "$PWD/repo" \
 
 ## 两个节点和商店工具
 
-在案例目录下部署项目`internal/distribute/fastlane`完整副本到`tools/fastlane`。使用Ruby3.4.1、Bundler2.6.2和已提交Gemfile.lock，明确安装到该目录的`gems`，运行时不会安装或更新工具：
+生成器只创建工程与配置，不创建商店工具。使用Ruby3.4.1、Bundler2.6.2和已提交Gemfile.lock，在案例目录下复制项目`internal/distribute/fastlane`完整内容，并明确安装到该目录的`gems`。新案例首次执行以下复制；运行时不会安装或更新工具：
 
 ```bash
+mkdir -p tools
+cp -R "$MYBUILDS_ROOT/internal/distribute/fastlane" tools/fastlane
 BUNDLE_GEMFILE="$PWD/tools/fastlane/Gemfile" BUNDLE_PATH="$PWD/tools/fastlane/gems" \
   BUNDLE_FROZEN=true bundle install
 ```
 
 Google节点还需准备bundletool1.18.3，放在配置中的明确路径；JAR SHA-256为`a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29`。Apple节点需实际Xcode、CocoaPods与合法分发签名。Flutter、Java及Android SDK通过各节点已准备的工具环境提供，不自动下载SDK或接受协议。
+
+将已准备JAR保存为`tools/bundletool-1.18.3.jar`，执行`shasum -a 256 tools/bundletool-1.18.3.jar`核对上述摘要。同步修改`settings.yml`和Android/Xcode工程中的应用标识、flavor、scheme及签名设置，工程接入见[Flutter示例](../flutter/README.md)。`internal`仍执行release构建，需要真实签名材料；它只跳过商店步骤。
 
 创建两个**自有0600**秘密文件，每项一行`NAME=value`，不使用shell展开，也不要把文件加入Git：
 
@@ -71,7 +78,14 @@ export MYBUILDS_AGENT_TOKEN="$(python3 -c 'import json; print(json.load(open("an
 mybuilds-agent --config agent-android.yml serve
 ```
 
-iOS终端对应使用`ios-node.private.json`与`agent-ios.yml`。客户端终端执行`node ls --json`及`doctor --node flutter-ios --json`，确认实际工具能力和两节点在线。
+iOS节点在另一个终端执行：
+
+```bash
+export MYBUILDS_AGENT_TOKEN="$(python3 -c 'import json; print(json.load(open("ios-node.private.json"))["token"])')"
+mybuilds-agent --config agent-ios.yml serve
+```
+
+客户端终端执行`node ls --json`以及`doctor --node flutter-android --json`、`doctor --node flutter-ios --json`，确认两节点在线及实际工具能力。需要诊断生成的工程时，在对应节点执行`mybuilds doctor --framework flutter --platform android --working-dir "$CASE_DIR/repo" --json`，iOS节点将platform改为ios；签名参数按[Flutter指南](../flutter/README.md)补齐。
 
 ## 一次构建、下载与审批分发
 
@@ -84,7 +98,7 @@ mybuilds --config client.yml artifact ls BUILD_ID --json
 mybuilds --config client.yml artifact download ARTIFACT_ID --output ./downloaded-artifact
 ```
 
-编号由控制端分配；两个build使用同一SHA但各自独立记录，原产物/版本/编号和下载SHA-256一致。默认未进入商店步骤，即使定义中有upload仍要求管理员显式`--allow-upload`；许可本身不把不满足条件的upload变成生效。
+从trigger的`builds[]`按`build_name`取`id`作为BUILD_ID，顶层`batch_id`是批次ID。等待两个build最终succeeded，再从artifact ls的`items[]`按`name/purpose`选择包或JUnit原XML的`id`；不同文件使用不同输出路径，并用`shasum -a 256`与列表摘要核对。编号由控制端分配；两个build使用同一SHA但各自独立记录，原产物/版本/编号和下载SHA-256一致。默认未进入商店步骤，即使定义中有upload仍要求管理员显式`--allow-upload`；许可本身不把不满足条件的upload变成生效。
 
 下一轮前，绑定实际应用；用settings中的Android/iOS应用ID替换示例值：
 
@@ -97,7 +111,7 @@ mybuilds --config client.yml project app bind flutter-demo --store app_store \
 mybuilds --config client.yml project app ls flutter-demo --json
 ```
 
-等待原节点真实doctor完成并显示verified，pending不能发布。商店首次应用/协议、Google App Signing、Apple元数据由用户准备。再发起明确分发轮次：
+等待原节点的应用诊断完成，并在`project app ls`中显示verified，pending不能发布。需要重新诊断时用`mybuilds --config client.yml project app doctor BINDING_ID --json`；节点doctor不能替代该应用权限检查。商店首次应用/协议、Google App Signing、Apple元数据由用户准备。手动trigger不受when.changes路径筛选，同一Git版本可切换channel；换用新的请求key和渠道允许的新版本/构建号，再发起明确分发轮次：
 
 ```bash
 mybuilds --config client.yml trigger flutter-demo --all --allow-upload \
@@ -111,11 +125,11 @@ mybuilds --config client.yml publish query INTENT_ID --json
 mybuilds --config client.yml publish query-show QUERY_ID --json
 ```
 
-从本次安全审批结果填写精确ID/revision/digest，分别批准两个build；同内容重放应幂等，不能用第一次审批批准下一次。核对原节点恢复、原SHA/编号/报告/产物不变，Google internal实际可见、ASC实际构建应用/版本/编号对应。Apple明确App Review另按[011指南](../../specs/011-app-store/quickstart.md)改配置并提交新Git版本，保持默认automatic_release=false。
+approvals返回数组，从同一项读取build_id/id/revision/checkpoint_digest，分别批准两个build；同内容重放应幂等，不能用第一次审批批准下一次。publish query返回的顶层id用于query-show。核对原节点恢复、原SHA/编号/报告/产物不变，Google internal实际可见、ASC实际构建应用/版本/编号对应。Apple明确App Review另按[011指南](../../specs/011-app-store/quickstart.md)改配置并提交新Git版本，保持默认automatic_release=false。
 
 ## 两次审批与custom联合导航
 
-这一段验证自有接收端，不需要商店账号。联合自动门仍在执行，下面是操作步骤，不是通过记录；最终结果由对应validation登记。上文生成配置每个平台只有一次审批，不能把两个平台各一次算成同一build连续两次。
+这一段验证自有接收端，不需要商店账号。双库三CLI联合自动案例118项已通过，范围与证据见[验证记录](validation.md)；以下用于你重复验收，不代表真实商店通过。上文生成配置每个平台只有一次审批，不能把两个平台各一次算成同一build连续两次。
 
 沿[原custom三步骤示例](../custom/README.md)创建独立可信仓库与`custom-demo`项目，原`run`生成package、`artifact`收集，不改成另一套执行器。节点仍使用已注册的`flutter-android`。按[自有HTTPS接收端指南](custom/README.md)启动服务、声明`CUSTOM_ENDPOINT`与`SSL_CERT_FILE`并登记`manual_attested`应用归属；它仅确认自有服务与应用的人工声明，不证明外部商店真实性。在该配置的artifact和custom upload之间加入两个不同名称的步骤，提交此真实Git版本：
 

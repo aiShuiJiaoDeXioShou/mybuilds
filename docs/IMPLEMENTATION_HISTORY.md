@@ -22,7 +22,7 @@ MVP 批次、真实验证与完成定义见 [执行计划](plans/MVP_EXECUTION.m
 | 010/011 主商店分发 | 代码与自动检查完成，商店人工待验 | [Google验证](../specs/010-google-play/validation.md)、[Apple验证](../specs/011-app-store/validation.md)；第三方分区已核对集成，共同Store/Agent/Run/HTTP/CLI、原产物与报告保护已接线；本地提交`1d1e323`：feat(distribute): 实现双商店发布与结果核对；商店真实操作由用户人工验收 |
 | 012 可复用方案/custom | 代码与必要自动检查完成 | [规范](../specs/012-custom-workflows/spec.md)、[验证](../specs/012-custom-workflows/validation.md)；固定SHA来源、内置/文件方案、原发布链custom及metadata query；双库普通/race/vet通过；本地提交`76d3000`：feat(workflows): 实现可复用方案与自定义发布；人工平台验收独立待验。 |
 | 014 审批 | 代码与必要自动检查完成 | [规范](../specs/014-release-approval/spec.md)、[验证](../specs/014-release-approval/validation.md)；精确审批/原节点续执行/累计预算/原报告与多epoch发布历史、本地TTY；真实重启与报告负例、双库race、最终三CLI联合118项与18编译通过；合法签名/商店/完整人工矩阵待验；本地提交`cd58300`：feat(approval): 实现原节点审批与续构建。 |
-| 015 Webhook | 代码与必要自动检查完成 | [规范](../specs/015-webhook-trigger/spec.md)、[验证](../specs/015-webhook-trigger/validation.md)；四来源有限认证、固定窗口/去重/changes、profile与原唯一执行链；双库三CLI联合118项、必要race/vet与18编译通过，converge无代码缺口；外部push/完整人工矩阵待验；本文件所属整功能提交：feat(webhook): 实现去重触发与变更筛选。 |
+| 015 Webhook | 代码与必要自动检查完成 | [规范](../specs/015-webhook-trigger/spec.md)、[验证](../specs/015-webhook-trigger/validation.md)；四来源有限认证、固定窗口/去重/changes、profile与原唯一执行链；双库三CLI联合118项、必要race/vet与18编译通过，converge无代码缺口；外部push/完整人工矩阵待验；本地提交`a5aecf2`：feat(webhook): 实现去重触发与变更筛选。 |
 | 013、016–018 | 未开始，后置 | 不作为本轮 MVP 完成前提 |
 
 更新一行时补充实际 specs 链接、当前阶段、验证结论/证据位置、缺失真实条件及功能集成提交；验收未闭合不记“已完成”。提交哈希来自真实 Git 记录，规划状态不代表代码可用。
@@ -45,3 +45,5 @@ MVP 批次、真实验证与完成定义见 [执行计划](plans/MVP_EXECUTION.m
 发布HTTP正文上限修复已本地提交`55750d1`：fix(server): 限定发布路由正文上限。
 
 本轮001–012、014–015、019–020共16个模块代码已交付；合法Apple/Flutter签名、真实商店发布及外部投递按[集中案例](../examples/mvp/acceptance.md)人工验收。未执行矩阵保留待验标记，不将代码完成等同所有人工验收通过。
+
+2026-10-05 README验收说明更新：补本地、双平台案例、控制端/两节点、internal与store、扩展/故障五阶段及通过标准；同步案例的工具复制、多终端token、真实返回ID与应用doctor说明。三个CLI构建/help/version、本地普通/post四快照内容/大小/SHA-256、双平台dry-run通过；80处链接/锚点、33个bash代码块语法和9组实际CLI帮助核对通过。本次仅更新文档，未执行真实签名或商店发布，人工项仍待验。
