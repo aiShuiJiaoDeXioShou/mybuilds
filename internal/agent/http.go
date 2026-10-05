@@ -91,7 +91,7 @@ func (client *agentHTTP) request(parent context.Context, method, path string, in
 	}
 	defer response.Body.Close()
 	limit := 1 << 20
-	if strings.HasPrefix(path, "/api/agent/publish") {
+	if strings.HasPrefix(path, "/api/agent/publishes/") || strings.HasPrefix(path, "/api/agent/publish-queries/") {
 		limit = 64 << 10
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, int64(limit)+1))

@@ -20,7 +20,7 @@
 
 ## 当前状态
 
-MVP有16个功能模块，目前13个已经完成代码与必要自动检查并本地提交；Apple/Flutter合法签名和真实商店发布由用户集中人工验收。实现顺序、精确提交与验证记录见[实施历史](docs/IMPLEMENTATION_HISTORY.md)，不把代码交付等同于全部人工验收通过。
+MVP有16个功能模块，目前14个已经完成代码与必要自动检查并本地提交；Apple/Flutter合法签名和真实商店发布由用户集中人工验收。实现顺序、精确提交与验证记录见[实施历史](docs/IMPLEMENTATION_HISTORY.md)，不把代码交付等同于全部人工验收通过。
 
 | 能力 | 状态与验证入口 |
 |---|---|
@@ -30,9 +30,10 @@ MVP有16个功能模块，目前13个已经完成代码与必要自动检查并�
 | 006–008 控制端、节点、恢复 | 已完成双库与macOS/Linux实际程序验收；项目组、多节点授权/调度、原SHA入队、日志/下载、恢复与显式retry |
 | 019 测试报告、020 保留 | 已完成实际联验；JUnit原XML解析/封存与下载、受保护的中央及原节点清理；[报告记录](specs/019-test-reports/validation.md)、[清理记录](specs/020-project-retention/validation.md) |
 | 010/011 Google Play/App Store | 代码与必要自动检查完成；共同发布授权、工具、应用保护、精确GET核对与CLI；[Google记录](specs/010-google-play/validation.md)、[Apple记录](specs/011-app-store/validation.md)；真实商店人工待验 |
-| 012 可复用方案/custom、014 审批、015 Webhook | 独立worktree并行实现，主工作区串行集成；尚未声明整功能交付 |
+| 012 可复用方案/custom | 代码与必要自动检查完成；repo/auto/profile完整来源选择、四内置方案、命名参数与原快照重试、用户argv发布和metadata查询；[指南](specs/012-custom-workflows/quickstart.md)、[脚本案例](examples/custom/README.md) |
+| 014 审批、015 Webhook | 模块已冻结，主工作区串行集成；最终联合检查尚在执行 |
 
-[Flutter集中验收案例](examples/mvp/acceptance.md)从实际CLI模板生成一个仓库的Android/iOS配置、控制端和两个节点设置，串联测试、下载、审批与商店分发。当前生成/dry-run已通过，012/014/015最终集成与集中人工执行仍在完成。通知013、轮询/cron016、额外渠道017与部署打磨018属于后续功能。
+[Flutter集中验收案例](examples/mvp/acceptance.md)从实际CLI模板生成一个仓库的Android/iOS配置、控制端和两个节点设置，串联测试、下载、审批与商店分发。当前生成/dry-run已通过，014/015最终集成与集中人工执行仍在完成。通知013、轮询/cron016、额外渠道017与部署打磨018属于后续功能。
 
 ## 开发与运行
 

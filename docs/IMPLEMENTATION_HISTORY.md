@@ -19,8 +19,9 @@ MVP 批次、真实验证与完成定义见 [执行计划](plans/MVP_EXECUTION.m
 | 019-test-reports | 已完成并验收 | 基线008 504dc6；[spec](../specs/019-test-reports/spec.md)、[tasks](../specs/019-test-reports/tasks.md)、[validation](../specs/019-test-reports/validation.md)；18FR/6SC/12AC、46任务与正式analyze零阻塞。本地8场景、双库各92应用检查点、最终20故障192断言、macOS/Linux及全量test/race/vet/12编译通过；Spec Kit收敛无缺口；集成提交 `fee97e8`：feat(reports): 实现本次测试报告与中央证据 |
 | 020-project-retention | 验收通过 | [spec](../specs/020-project-retention/spec.md)、[tasks](../specs/020-project-retention/tasks.md)、[validation](../specs/020-project-retention/validation.md)；前置008/019已验收，正式plan/tasks/analyze零阻塞；Store/Agent/边界三worktree与root共享串行。真实策略/继承与候选、资源登记、中央读/物理清理/管理CLI与60s后台已接通；双库Store与Mac/Linux实际文件/3×100TCP竞争通过，节点分段删除/重启/20次确认已通过Mac/Linux专项门，有界续扫修复已通过最新完整双库Store normal/race/vet；最终macOS/Linux各双库三CLI门、全量普通/必要race/vet和18编译已通过，Spec Kit收敛无缺口，整功能本地提交 `2602094`：feat(retention): 支持项目保留与节点清理 |
 | 009-flutter-builds | 代码与自动检查完成，双平台签名人工待验 | [spec](../specs/009-flutter-builds/spec.md)、[validation](../specs/009-flutter-builds/validation.md)；单YAML单双平台/变体、scoped参数、真实SDK环境与框架匹配、唯一Run/报告/原生签名资源；005联合Parse/CLI/能力与必要双库检查通过，无新增Go依赖；本地提交 `802cb0c`：feat(flutter): 实现双平台模板与框架调度 |
-| 010/011 主商店分发 | 代码与自动检查完成，商店人工待验 | [Google验证](../specs/010-google-play/validation.md)、[Apple验证](../specs/011-app-store/validation.md)；第三方分区已核对集成，共同Store/Agent/Run/HTTP/CLI、原产物与报告保护已接线；商店真实操作由用户人工验收 |
-| 012/014/015 | 独立worktree并行实现 | 原方案/custom、审批恢复与Webhook模块各自Spec Kit implement；Root串行集成；不把分区检查当整功能交付 |
+| 010/011 主商店分发 | 代码与自动检查完成，商店人工待验 | [Google验证](../specs/010-google-play/validation.md)、[Apple验证](../specs/011-app-store/validation.md)；第三方分区已核对集成，共同Store/Agent/Run/HTTP/CLI、原产物与报告保护已接线；本地提交`1d1e323`：feat(distribute): 实现双商店发布与结果核对；商店真实操作由用户人工验收 |
+| 012 可复用方案/custom | 代码与必要自动检查完成 | [规范](../specs/012-custom-workflows/spec.md)、[验证](../specs/012-custom-workflows/validation.md)；固定SHA来源、内置/文件方案、原发布链custom及metadata query；双库普通/race/vet通过，人工平台验收独立待验。
+| 014/015 | 整模块已冻结，串行集成中 | 审批真实重启与Webhook三程序检查已通过分区门；最终联合检查与本地提交待完成 |
 | 013、016–018 | 未开始，后置 | 不作为本轮 MVP 完成前提 |
 
 更新一行时补充实际 specs 链接、当前阶段、验证结论/证据位置、缺失真实条件及功能集成提交；验收未闭合不记“已完成”。提交哈希来自真实 Git 记录，规划状态不代表代码可用。

@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -10,23 +11,27 @@ import (
 )
 
 type ProjectView struct {
-	ID             string    `json:"id"`
-	Name           string    `json:"name"`
-	GroupID        string    `json:"group_id"`
-	Group          string    `json:"group"`
-	Provider       string    `json:"provider"`
-	Branches       []string  `json:"branches"`
-	Nodes          []string  `json:"nodes"`
-	DefaultNode    string    `json:"default_node"`
-	PipelineSource string    `json:"pipeline_source"`
-	PipelineFile   string    `json:"pipeline_file"`
-	NextNumber     int64     `json:"next_number"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ProfileNames   []string            `json:"profile_names"`
+	ParameterKeys  map[string][]string `json:"parameter_keys"`
+	ID             string              `json:"id"`
+	Name           string              `json:"name"`
+	GroupID        string              `json:"group_id"`
+	Group          string              `json:"group"`
+	Provider       string              `json:"provider"`
+	Branches       []string            `json:"branches"`
+	Nodes          []string            `json:"nodes"`
+	DefaultNode    string              `json:"default_node"`
+	PipelineSource string              `json:"pipeline_source"`
+	PipelineFile   string              `json:"pipeline_file"`
+	NextNumber     int64               `json:"next_number"`
+	CreatedAt      time.Time           `json:"created_at"`
+	UpdatedAt      time.Time           `json:"updated_at"`
 }
 
 func ProjectSummary(p store.Project) ProjectView {
 	source, file := "auto", "mybuilds.yml"
+	profiles := []string{}
+	parameters := map[string][]string{}
 	if p.Settings.Pipeline != nil {
 		if p.Settings.Pipeline.Source != "" {
 			source = p.Settings.Pipeline.Source
@@ -34,8 +39,34 @@ func ProjectSummary(p store.Project) ProjectView {
 		if p.Settings.Pipeline.File != "" {
 			file = p.Settings.Pipeline.File
 		}
+
+		binding := p.Settings.Pipeline
+		if binding.Profile != "" {
+			profiles = append(profiles, binding.Profile)
+		}
+		if binding.Params != nil {
+			keys := []string{}
+			for key := range binding.Params {
+				keys = append(keys, key)
+			}
+			slices.Sort(keys)
+			parameters["default"] = keys
+		}
+		for name, item := range binding.Builds {
+			if item.Profile != "" {
+				profiles = append(profiles, item.Profile)
+			}
+			keys := []string{}
+			for key := range item.Params {
+				keys = append(keys, key)
+			}
+			slices.Sort(keys)
+			parameters[name] = keys
+		}
 	}
-	return ProjectView{ID: p.ID, Name: p.Name, GroupID: p.GroupID, Group: p.GroupName, Provider: p.Provider, Branches: p.Branches, Nodes: p.AllowedNodes, DefaultNode: p.DefaultNode, PipelineSource: source, PipelineFile: file, NextNumber: p.NextNumber, CreatedAt: p.CreatedAt.UTC(), UpdatedAt: p.UpdatedAt.UTC()}
+	slices.Sort(profiles)
+	profiles = slices.Compact(profiles)
+	return ProjectView{ProfileNames: profiles, ParameterKeys: parameters, ID: p.ID, Name: p.Name, GroupID: p.GroupID, Group: p.GroupName, Provider: p.Provider, Branches: p.Branches, Nodes: p.AllowedNodes, DefaultNode: p.DefaultNode, PipelineSource: source, PipelineFile: file, NextNumber: p.NextNumber, CreatedAt: p.CreatedAt.UTC(), UpdatedAt: p.UpdatedAt.UTC()}
 }
 
 type ProjectRequest struct {

@@ -554,18 +554,34 @@ func (p *runPreparation) step(buildName string, step config.Step, buildEnv map[s
 	if prepared.skipped {
 		return prepared, nil
 	}
-	if step.Kind == "upload" && p.remote != nil && p.remote.options.Publish != nil && (step.Target == "google_play" || step.Target == "app_store") {
+	if step.Kind == "upload" && p.remote != nil && p.remote.options.Publish != nil && (step.Target == "google_play" || step.Target == "app_store" || step.Target == "custom") {
 		local := maps.Clone(p.facts)
 		local["build.name"], local["workspace"], local["step.name"] = buildName, p.root, step.Name
 		for _, item := range []struct {
 			source string
 			out    *string
-		}{{step.File, &prepared.step.File}, {step.AppIdentifier, &prepared.step.AppIdentifier}, {step.Track, &prepared.step.Track}} {
+		}{{step.File, &prepared.step.File}, {step.AppIdentifier, &prepared.step.AppIdentifier}, {step.Track, &prepared.step.Track}, {step.WorkingDir, &prepared.step.WorkingDir}, {step.ResultFile, &prepared.step.ResultFile}} {
 			value, e := p.render(item.source, "upload", params, local)
 			if e != nil {
 				return prepared, e
 			}
 			*item.out = value
+		}
+		if step.Target == "custom" {
+			declared := maps.Clone(buildEnv)
+			if declared == nil {
+				declared = map[string]string{}
+			}
+			maps.Copy(declared, step.Env)
+			env := process.HostEnvironment()
+			for _, key := range sortedKeys(declared) {
+				value, e := p.envValue(declared[key], params, local)
+				if e != nil {
+					return prepared, e
+				}
+				env[key] = value
+			}
+			prepared.command.Env = environmentList(env)
 		}
 		return prepared, nil
 	}

@@ -22,8 +22,9 @@ import (
 	"mybuilds/internal/process"
 )
 
-type Options struct{ DataDir, Repository, Branch, Ref, File, SecretsFile string }
+type Options struct{ DataDir, Repository, Branch, Ref, File, SecretsFile, FileMode string }
 type Snapshot struct {
+	Missing      bool
 	SHA          string
 	Content      []byte
 	Digest, File string
@@ -109,7 +110,7 @@ func ReadPipeline(parent context.Context, options Options) (snapshot Snapshot, e
 		return Snapshot{}, failure("platform_unsupported")
 	}
 	protocol, e := sourceProtocol(options.Repository)
-	if e != nil || !validFile(options.File) || options.Branch == "" || len(options.Branch) > 1024 || controls(options.Branch) || (options.Ref != "" && !fullOID.MatchString(options.Ref)) {
+	if e != nil || (options.FileMode != "" && options.FileMode != "required" && options.FileMode != "optional" && options.FileMode != "none") || !validFile(options.File) || options.Branch == "" || len(options.Branch) > 1024 || controls(options.Branch) || (options.Ref != "" && !fullOID.MatchString(options.Ref)) {
 		return Snapshot{}, failure("input_invalid")
 	}
 	if options.DataDir == "" {
@@ -240,13 +241,37 @@ func ReadPipeline(parent context.Context, options Options) (snapshot Snapshot, e
 		}
 		return Snapshot{}, e
 	}
+	if options.FileMode == "none" {
+		return Snapshot{SHA: selected, File: options.File}, nil
+	}
+	// 每个父级必须是真tree；symlink/gitlink下的空输出不是真缺失。
+	components := strings.Split(options.File, "/")
+	for i := 1; i < len(components); i++ {
+		prefix := strings.Join(components[:i], "/")
+		parent, _, err := runner.run(ctx, 32<<10, "ls-tree", "-l", "-z", "--full-tree", selected, "--", prefix)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		if len(parent) == 0 {
+			return missingPipeline(selected, options)
+		}
+		rows := strings.Split(string(parent), "\x00")
+		if len(rows) != 2 || rows[1] != "" {
+			return Snapshot{}, failure("config_not_regular")
+		}
+		metadata, name, ok := strings.Cut(rows[0], "\t")
+		fields := strings.Fields(metadata)
+		if !ok || name != prefix || len(fields) != 4 || fields[0] != "040000" || fields[1] != "tree" || !fullOID.MatchString(fields[2]) {
+			return Snapshot{}, failure("config_not_regular")
+		}
+	}
 	tree, _, e := runner.run(ctx, 32<<10, "ls-tree", "-l", "-z", "--full-tree", selected, "--", options.File)
 	if e != nil {
 		return Snapshot{}, e
 	}
 	rows := strings.Split(string(tree), "\x00")
 	if len(rows) == 1 && rows[0] == "" {
-		return Snapshot{}, failure("config_missing")
+		return missingPipeline(selected, options)
 	}
 	if len(rows) != 2 || rows[1] != "" {
 		return Snapshot{}, failure("config_not_regular")
@@ -364,4 +389,11 @@ func prepareGitRunner(workspace, protocol string, sshEnv map[string]string) (git
 	runner.prefix = []string{"--no-replace-objects", "--literal-pathspecs", "-c", "core.hooksPath=" + filepath.Join(workspace, "empty"), "-c", "credential.helper=", "-c", "core.askPass=/usr/bin/false", "-c", "protocol.allow=never", "-c", "protocol." + protocol + ".allow=always", "-c", "fetch.recurseSubmodules=false", "-c", "fetch.fsckObjects=true", "-c", "gc.auto=0", "-c", "http.sslVerify=true", "-c", "http.followRedirects=false"}
 
 	return runner, nil
+}
+
+func missingPipeline(sha string, options Options) (Snapshot, error) {
+	if options.FileMode == "optional" {
+		return Snapshot{SHA: sha, File: options.File, Missing: true}, nil
+	}
+	return Snapshot{}, failure("config_missing")
 }

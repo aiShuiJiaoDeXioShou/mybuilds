@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/google/uuid"
@@ -22,7 +23,7 @@ var publishTrack = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 var appleActions = []string{"upload_binary", "select_build", "set_release_policy", "create_review", "add_review_item", "submit_review"}
 
 func applicationView(r applicationRecord) (ApplicationView, error) {
-	out := ApplicationView{ID: r.ID, ProjectID: r.ProjectID, NodeID: r.NodeID, Store: r.Store, AppIdentifier: r.AppIdentifier, Status: r.Status, UploadCertificateSHA256: r.UploadCertificateSHA256, VerifiedAt: r.VerifiedAt, AllowedTracks: []string{}}
+	out := ApplicationView{ID: r.ID, ProjectID: r.ProjectID, NodeID: r.NodeID, Store: r.Store, AppIdentifier: r.AppIdentifier, Status: r.Status, VerificationSource: r.VerificationSource, UploadCertificateSHA256: r.UploadCertificateSHA256, VerifiedAt: r.VerifiedAt, AllowedTracks: []string{}}
 	if json.Unmarshal([]byte(r.TracksJSON), &out.AllowedTracks) != nil || out.AllowedTracks == nil {
 		return out, errDatabase
 	}
@@ -32,14 +33,21 @@ func (s *Store) BindApplication(ctx context.Context, actor Actor, in BindApplica
 	if actor.Role != "admin" {
 		return ApplicationView{}, ErrForbidden
 	}
-	if !validUUID(in.ProjectID) || len(in.AppIdentifier) > 255 || !publishApplication.MatchString(in.AppIdentifier) || !slices.Contains([]string{"google_play", "app_store"}, in.Store) || !secretReference(in.CredentialRef) {
+	if !validUUID(in.ProjectID) || len(in.AppIdentifier) > 255 || !publishApplication.MatchString(in.AppIdentifier) || !slices.Contains([]string{"google_play", "app_store", "custom"}, in.Store) || (in.Store != "custom" || in.CredentialRef != "") && !secretReference(in.CredentialRef) {
 		return ApplicationView{}, ErrInvalid
 	}
 	if in.Store == "google_play" && !validDigest(in.UploadCertificateSHA256) || in.Store == "app_store" && in.UploadCertificateSHA256 != "" {
 		return ApplicationView{}, ErrInvalid
 	}
+	if in.Store == "custom" {
+		if !validCustomBinding(in.Custom) || in.UploadCertificateSHA256 != "" || len(in.AllowedTracks) != 0 {
+			return ApplicationView{}, ErrInvalid
+		}
+	} else if in.Custom != nil {
+		return ApplicationView{}, ErrInvalid
+	}
 	tracks := slices.Clone(in.AllowedTracks)
-	if len(tracks) == 0 {
+	if len(tracks) == 0 && in.Store != "custom" {
 		tracks = []string{"internal"}
 	}
 	slices.Sort(tracks)
@@ -74,8 +82,12 @@ func (s *Store) BindApplication(ctx context.Context, actor Actor, in BindApplica
 		var old applicationRecord
 		err := tx.First(&old, "store = ? AND app_identifier = ?", in.Store, in.AppIdentifier).Error
 		text, _ := encode(tracks)
+		evidence := ""
+		if in.Custom != nil {
+			evidence, _ = encode(in.Custom)
+		}
 		if err == nil {
-			if old.ProjectID != in.ProjectID || old.NodeID != node.ID || old.CredentialRef != in.CredentialRef || old.UploadCertificateSHA256 != in.UploadCertificateSHA256 || old.TracksJSON != text {
+			if old.ProjectID != in.ProjectID || old.NodeID != node.ID || old.CredentialRef != in.CredentialRef || old.UploadCertificateSHA256 != in.UploadCertificateSHA256 || old.TracksJSON != text || old.CustomEvidenceJSON != evidence {
 				return ErrConflict
 			}
 			out, err = applicationView(old)
@@ -85,10 +97,21 @@ func (s *Store) BindApplication(ctx context.Context, actor Actor, in BindApplica
 			return err
 		}
 		row := applicationRecord{ID: uuid.NewString(), ProjectID: in.ProjectID, NodeID: node.ID, Store: in.Store, AppIdentifier: in.AppIdentifier, CredentialRef: in.CredentialRef, UploadCertificateSHA256: in.UploadCertificateSHA256, TracksJSON: text, Status: "pending"}
+		if in.Store == "custom" {
+			now := time.Now().UTC()
+			row.Status = "verified"
+			row.VerifiedAt = &now
+			row.VerificationSource = "manual_attested"
+			row.CustomEvidenceJSON = evidence
+		}
 		if err = tx.Create(&row).Error; err != nil {
 			return err
 		}
-		if err = createPublishQuery(tx, actor, row, nil, "doctor"); err != nil {
+		if in.Store == "custom" {
+			if err = audit(tx, actor, "custom_binding_attested", row.ID, "", ""); err != nil {
+				return err
+			}
+		} else if err = createPublishQuery(tx, actor, row, nil, "doctor"); err != nil {
 			return err
 		}
 		out, err = applicationView(row)
@@ -222,7 +245,7 @@ func (s *Store) AuthorizePublish(ctx context.Context, actor NodeActor, in protoc
 			return ErrInvalid
 		}
 		step := task.Definition.Steps[in.Index-1]
-		if step.Kind != "upload" || step.Name != in.StepName || !slices.Contains([]string{"google_play", "app_store"}, step.Target) {
+		if step.Kind != "upload" || step.Name != in.StepName || !slices.Contains([]string{"google_play", "app_store", "custom"}, step.Target) {
 			return ErrInvalid
 		}
 		var slot stepRecord
@@ -277,7 +300,7 @@ func (s *Store) AuthorizePublish(ctx context.Context, actor NodeActor, in protoc
 		if step.Target == "app_store" {
 			extension = ".ipa"
 		}
-		if !strings.HasSuffix(artifact.Name, extension) {
+		if step.Target != "custom" && !strings.HasSuffix(artifact.Name, extension) {
 			return ErrArtifactConflict
 		}
 		if err = publicationArtifact(tx, row, task, step, in.Index, artifact); err != nil {
@@ -297,7 +320,7 @@ func (s *Store) AuthorizePublish(ctx context.Context, actor NodeActor, in protoc
 			releaseStatus = "completed"
 		}
 		if step.Target == "google_play" {
-			if in.Apple != nil {
+			if in.Apple != nil || in.Custom != nil {
 				return ErrInvalid
 			}
 			configuredTrack, err := renderPublishValue(step.Track, task)
@@ -314,8 +337,15 @@ func (s *Store) AuthorizePublish(ctx context.Context, actor NodeActor, in protoc
 			if track != configuredTrack || !slices.Contains(tracks, track) || track == "production" && !in.ExplicitProduction || !slices.Contains([]string{"draft", "completed"}, releaseStatus) {
 				return ErrConflict
 			}
+		} else if step.Target == "custom" {
+			commandDigest, e := protocol.CustomCommandDigest(step.Argv, step.QueryArgv, step.WorkingDir, step.ResultFile, app, version, in.ArtifactID, in.ArtifactSHA256, in.VersionCode, in.ArtifactSize)
+			if e != nil || in.Custom == nil || in.Custom.ResultSchemaVersion != 1 || in.Custom.CommandDigest != commandDigest || in.Apple != nil || in.Track != "" || in.ExplicitProduction {
+				return ErrInvalid
+			}
+			action = "custom_upload"
+			releaseStatus = ""
 		} else {
-			if in.Apple == nil || !slices.Contains(appleActions, in.Apple.Action) || !validDigest(in.Apple.RequestSHA256) || track != "" {
+			if in.Custom != nil || in.Apple == nil || !slices.Contains(appleActions, in.Apple.Action) || !validDigest(in.Apple.RequestSHA256) || track != "" {
 				return ErrInvalid
 			}
 			action = in.Apple.Action
@@ -355,7 +385,7 @@ func (s *Store) AuthorizePublish(ctx context.Context, actor NodeActor, in protoc
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		grant = protocol.PublishGrant{IntentID: in.IntentID, Ref: in.Ref, Action: action, AppIdentifier: app, Track: track, ReleaseName: "mybuilds-" + in.IntentID, ReleaseStatus: releaseStatus, VersionName: version, VersionCode: in.VersionCode, ArtifactID: in.ArtifactID, ArtifactSize: in.ArtifactSize, ArtifactSHA256: in.ArtifactSHA256, ReportSealDigest: in.ReportSealDigest, ReportIDs: slices.Clone(in.ReportIDs), Apple: in.Apple}
+		grant = protocol.PublishGrant{IntentID: in.IntentID, Ref: in.Ref, Action: action, AppIdentifier: app, Track: track, ReleaseName: "mybuilds-" + in.IntentID, ReleaseStatus: releaseStatus, VersionName: version, VersionCode: in.VersionCode, ArtifactID: in.ArtifactID, ArtifactSize: in.ArtifactSize, ArtifactSHA256: in.ArtifactSHA256, ReportSealDigest: in.ReportSealDigest, ReportIDs: slices.Clone(in.ReportIDs), Apple: in.Apple, Custom: in.Custom}
 		grant.AuthorizationDigest, err = protocol.PublishGrantDigest(grant)
 		if err != nil {
 			return ErrInvalid
@@ -379,6 +409,9 @@ func (s *Store) AuthorizePublish(ctx context.Context, actor NodeActor, in protoc
 	return grant, err
 }
 func boundedPublishEvidence(remote protocol.PublishRemoteEvidence) bool {
+	if remote.Custom != nil && (!validCustomEvidence(remote.Custom) || remote.Apple != nil) {
+		return false
+	}
 	data, err := json.Marshal(remote)
 	if err != nil || len(data) > 8192 {
 		return false
@@ -445,11 +478,29 @@ func (s *Store) RecordPublish(ctx context.Context, actor NodeActor, in protocol.
 			out, err = publishView(tx, intent)
 			return err
 		}
+		if grant.Custom != nil {
+			if in.Remote.Apple != nil || in.Remote.Custom != nil && !validCustomEvidence(in.Remote.Custom) {
+				return ErrInvalid
+			}
+			if in.Status != "unknown" && (!in.Started || !in.StopConfirmed || in.CleanupFailed || in.MutationStage != "custom_upload" || in.Remote.Custom == nil || in.Remote.Custom.Lifecycle != in.Status) {
+				return ErrConflict
+			}
+			if in.Status != "unknown" && in.Status != "failed" && (!in.Remote.Custom.ActionConfirmed || in.Remote.Custom.RemoteID == "" || !slices.Contains([]string{"remote_receipt", "remote_state"}, in.EvidenceCode)) {
+				return ErrConflict
+			}
+			if in.Status == "failed" && (in.Remote.Custom.ActionConfirmed || !slices.Contains([]string{"confirmed_not_sent", "remote_rejected"}, in.EvidenceCode)) {
+				return ErrConflict
+			}
+		} else if in.Remote.Custom != nil {
+			return ErrInvalid
+		}
 		if in.Status != "unknown" {
 			if !in.StopConfirmed || in.CleanupFailed {
 				return ErrConflict
 			}
-			if in.Status == "failed" {
+			if grant.Custom != nil {
+				// 上面的具体custom回执已核完整原授权。
+			} else if in.Status == "failed" {
 				if in.Started || in.EvidenceCode != "confirmed_not_sent" || in.MutationStage != "not_started" {
 					return ErrConflict
 				}

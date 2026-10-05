@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -14,6 +15,8 @@ import (
 
 // PublishInput只在本次Run与Agent之间传递原快照，私有路径不进入公共JSON。
 type PublishInput struct {
+	Workspace          string
+	Environment        map[string]string
 	DistributionTeamID string
 	Index              int
 	Step               config.Step
@@ -84,7 +87,15 @@ func executePublishStep(ctx context.Context, root, build string, step preparedSt
 		ctx, stop = context.WithTimeout(ctx, limit)
 		defer stop()
 	}
-	input := PublishInput{DistributionTeamID: teamID, Index: step.index, Step: step.step, Artifact: matches[0], ReportSealDigest: seal, ReportIDs: reportIDs}
+	environment := map[string]string{}
+	for _, value := range step.command.Env {
+		key, val, ok := strings.Cut(value, "=")
+		if ok && !strings.HasPrefix(key, "MYBUILDS_") {
+			// 发布输入只带白名单和显式声明；Run自己的保留变量不转为用户声明。
+			environment[key] = val
+		}
+	}
+	input := PublishInput{Workspace: root, Environment: environment, DistributionTeamID: teamID, Index: step.index, Step: step.step, Artifact: matches[0], ReportSealDigest: seal, ReportIDs: reportIDs}
 	input.OnStart = func(info process.StartInfo) error {
 		if r.blocked() != "" || ctx.Err() != nil {
 			return errors.New("发布执行权失效")

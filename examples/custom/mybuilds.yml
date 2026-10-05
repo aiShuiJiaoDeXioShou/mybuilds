@@ -1,0 +1,21 @@
+version: 1
+params:
+  version: {default: '1.2.3'}
+steps:
+  - kind: run
+    name: package
+    run: mkdir -p dist; printf 'owned example package' > dist/package.bin
+  - kind: artifact
+    name: original
+    paths: [dist/package.bin]
+  - kind: upload
+    name: internal
+    target: custom
+    app_identifier: org.example.custom
+    file: dist/package.bin
+    working_dir: .
+    result_file: custom-result.json
+    argv: [python3, examples/custom/publish.py, upload]
+    query_argv: [python3, examples/custom/publish.py, query]
+    env:
+      CUSTOM_ENDPOINT: ${CUSTOM_ENDPOINT}

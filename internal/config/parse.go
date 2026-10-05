@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"os"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -17,14 +16,9 @@ var yamlLine = regexp.MustCompile(`^yaml: line ([0-9]+):`)
 
 // Load 限制读取大小；诊断不包含文件名或底层错误中的敏感内容。
 func Load(filename string) (*Document, error) {
-	f, err := os.Open(filename)
+	data, _, err := readConfiguration(filename)
 	if err != nil {
-		return nil, fmt.Errorf("配置文件：无法读取")
-	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, MaxConfigBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("配置文件：读取失败")
+		return nil, fmt.Errorf("配置文件：无法读取普通文件")
 	}
 	return Parse(data)
 }

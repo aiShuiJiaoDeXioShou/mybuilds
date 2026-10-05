@@ -3,7 +3,6 @@ package client
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
@@ -60,16 +59,9 @@ func newInitCommand() *cobra.Command {
 				}
 			}
 			if hasTemplate {
-				file, err := os.Open(template)
+				var err error
+				data, err = config.LoadTemplate(template)
 				if err != nil {
-					return errors.New("读取本地模板失败")
-				}
-				data, err = io.ReadAll(io.LimitReader(file, config.MaxConfigBytes+1))
-				closeErr := file.Close()
-				if err != nil || closeErr != nil {
-					return errors.New("读取本地模板失败")
-				}
-				if _, err := config.Parse(data); err != nil {
 					return fmt.Errorf("本地模板无效：%w", err)
 				}
 			}

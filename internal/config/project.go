@@ -6,17 +6,20 @@ import (
 )
 
 type BuildSettings struct {
-	Params map[string]string `yaml:"params,omitempty" json:"params,omitempty"`
+	Profile string            `yaml:"profile,omitempty" json:"profile,omitempty"`
+	Params  map[string]string `yaml:"params,omitempty" json:"params,omitempty"`
 }
 type PipelineSettings struct {
-	Source string                   `yaml:"source,omitempty" json:"source,omitempty"`
-	File   string                   `yaml:"file,omitempty" json:"file,omitempty"`
-	Builds map[string]BuildSettings `yaml:"builds,omitempty" json:"builds,omitempty"`
-	Params map[string]string        `yaml:"params,omitempty" json:"params,omitempty"`
+	Profile string                   `yaml:"profile,omitempty" json:"profile,omitempty"`
+	Source  string                   `yaml:"source,omitempty" json:"source,omitempty"`
+	File    string                   `yaml:"file,omitempty" json:"file,omitempty"`
+	Builds  map[string]BuildSettings `yaml:"builds,omitempty" json:"builds,omitempty"`
+	Params  map[string]string        `yaml:"params,omitempty" json:"params,omitempty"`
 }
 type ProjectSettings struct {
-	Retention *RetentionOverride `yaml:"retention,omitempty" json:"retention,omitempty"`
-	Pipeline  *PipelineSettings  `yaml:"pipeline,omitempty" json:"pipeline,omitempty"`
+	Notifications *Notifications     `yaml:"notifications,omitempty" json:"notifications,omitempty"`
+	Retention     *RetentionOverride `yaml:"retention,omitempty" json:"retention,omitempty"`
+	Pipeline      *PipelineSettings  `yaml:"pipeline,omitempty" json:"pipeline,omitempty"`
 }
 
 func ParseProjectSettings(data []byte) (ProjectSettings, error) {
@@ -37,6 +40,9 @@ func ParseProjectSettings(data []byte) (ProjectSettings, error) {
 
 // ValidateProjectSettings不读取Git或节点秘密，默认值由解析与实际业务入口补全。
 func ValidateProjectSettings(settings ProjectSettings) error {
+	if err := validateNotifications(settings.Notifications, "notifications"); err != nil {
+		return err
+	}
 	if err := ValidateRetentionOverride(settings.Retention); err != nil {
 		return err
 	}
@@ -44,7 +50,7 @@ func ValidateProjectSettings(settings ProjectSettings) error {
 	if p == nil {
 		return nil
 	}
-	if p.Source != "" && p.Source != "auto" && p.Source != "repo" {
+	if p.Source != "" && p.Source != "auto" && p.Source != "repo" && p.Source != "profile" {
 		return invalid("pipeline.source", "尚未支持指定来源")
 	}
 	if p.File != "" {
@@ -55,15 +61,21 @@ func ValidateProjectSettings(settings ProjectSettings) error {
 			return invalid("pipeline.file", "不允许模板")
 		}
 	}
-	if p.Params != nil && p.Builds != nil {
+	if (p.Params != nil || p.Profile != "") && p.Builds != nil {
 		return invalid("pipeline", "不能混写旧参数与命名builds")
 	}
 	if len(p.Builds) > 64 {
 		return invalid("pipeline.builds", "超过数量上限")
 	}
+	if p.Profile != "" && !validProfileName(p.Profile) {
+		return invalid("pipeline.profile", "方案名称不合法")
+	}
 	for _, name := range sortedKeys(p.Builds) {
 		if !safeName(name) || len(name) > 64 {
 			return invalid("pipeline.builds", "名称不合法")
+		}
+		if profile := p.Builds[name].Profile; profile != "" && !validProfileName(profile) {
+			return invalid("pipeline.profile", "方案名称不合法")
 		}
 		if err := validateSettingsParams(p.Builds[name].Params); err != nil {
 			return err

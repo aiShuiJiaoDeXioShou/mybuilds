@@ -71,7 +71,7 @@ def main():
     (repo / "ci/test.sh").chmod(0o755)
     (repo / "test").mkdir()
     shutil.copyfile(source / "examples/mvp/smoke_test.dart", repo / "test/smoke_test.dart")
-    for name in ("server.yml", "client.yml", "agent-android.yml", "agent-ios.yml", "settings.yml"):
+    for name in ("server.yml", "client.yml", "agent-android.yml", "agent-ios.yml", "settings.yml", "profile-settings.yml"):
         shutil.copyfile(source / "examples/mvp" / name, target / name)
         (target / name).chmod(0o600)
     print("案例已生成；先编辑应用标识与节点材料，再按acceptance.md登记并运行。")

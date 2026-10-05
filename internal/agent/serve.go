@@ -127,7 +127,7 @@ func Serve(ctx context.Context, cfg config.AgentConfig) (result error) {
 			case <-live.Done():
 				return
 			case <-ticker.C:
-				if cfg.PublishTools == nil || client.paused.Load() {
+				if client.paused.Load() {
 					continue
 				}
 				err := runPublishQuery(live, client, lock, cfg, request.SessionID, grant.NodeID)

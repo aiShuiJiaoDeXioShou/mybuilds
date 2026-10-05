@@ -9,20 +9,21 @@ import (
 
 // PublishAuthorization 固定本次请求与原执行证据，不携带节点秘密。
 type PublishAuthorization struct {
-	IntentID           string                     `json:"intent_id"`
-	Ref                LeaseRef                   `json:"ref"`
-	Index              int                        `json:"index"`
-	StepName           string                     `json:"step_name"`
-	ArtifactID         string                     `json:"artifact_id"`
-	ArtifactSHA256     string                     `json:"artifact_sha256"`
-	ArtifactSize       int64                      `json:"artifact_size"`
-	ReportSealDigest   string                     `json:"report_seal_digest,omitempty"`
-	ReportIDs          []string                   `json:"report_ids"`
-	VersionName        string                     `json:"version_name"`
-	VersionCode        int64                      `json:"version_code"`
-	Track              string                     `json:"track,omitempty"`
-	ExplicitProduction bool                       `json:"explicit_production,omitempty"`
-	Apple              *ApplePublishAuthorization `json:"apple,omitempty"`
+	Custom             *CustomPublishAuthorization `json:"custom,omitempty"`
+	IntentID           string                      `json:"intent_id"`
+	Ref                LeaseRef                    `json:"ref"`
+	Index              int                         `json:"index"`
+	StepName           string                      `json:"step_name"`
+	ArtifactID         string                      `json:"artifact_id"`
+	ArtifactSHA256     string                      `json:"artifact_sha256"`
+	ArtifactSize       int64                       `json:"artifact_size"`
+	ReportSealDigest   string                      `json:"report_seal_digest,omitempty"`
+	ReportIDs          []string                    `json:"report_ids"`
+	VersionName        string                      `json:"version_name"`
+	VersionCode        int64                       `json:"version_code"`
+	Track              string                      `json:"track,omitempty"`
+	ExplicitProduction bool                        `json:"explicit_production,omitempty"`
+	Apple              *ApplePublishAuthorization  `json:"apple,omitempty"`
 }
 type ApplePublishAuthorization struct {
 	Action             string `json:"action"`
@@ -36,23 +37,24 @@ type ApplePublishAuthorization struct {
 	AutomaticRelease   bool   `json:"automatic_release"`
 }
 type PublishGrant struct {
-	IntentID                string                     `json:"intent_id"`
-	AuthorizationDigest     string                     `json:"authorization_digest"`
-	Ref                     LeaseRef                   `json:"ref"`
-	Action                  string                     `json:"action"`
-	AppIdentifier           string                     `json:"app_identifier"`
-	Track                   string                     `json:"track,omitempty"`
-	ReleaseName             string                     `json:"release_name,omitempty"`
-	ReleaseStatus           string                     `json:"release_status,omitempty"`
-	VersionName             string                     `json:"version_name"`
-	VersionCode             int64                      `json:"version_code"`
-	ArtifactID              string                     `json:"artifact_id"`
-	ArtifactSHA256          string                     `json:"artifact_sha256"`
-	ArtifactSize            int64                      `json:"artifact_size"`
-	ReportSealDigest        string                     `json:"report_seal_digest,omitempty"`
-	ReportIDs               []string                   `json:"report_ids"`
-	ChangesNotSentForReview bool                       `json:"changes_not_sent_for_review,omitempty"`
-	Apple                   *ApplePublishAuthorization `json:"apple,omitempty"`
+	Custom                  *CustomPublishAuthorization `json:"custom,omitempty"`
+	IntentID                string                      `json:"intent_id"`
+	AuthorizationDigest     string                      `json:"authorization_digest"`
+	Ref                     LeaseRef                    `json:"ref"`
+	Action                  string                      `json:"action"`
+	AppIdentifier           string                      `json:"app_identifier"`
+	Track                   string                      `json:"track,omitempty"`
+	ReleaseName             string                      `json:"release_name,omitempty"`
+	ReleaseStatus           string                      `json:"release_status,omitempty"`
+	VersionName             string                      `json:"version_name"`
+	VersionCode             int64                       `json:"version_code"`
+	ArtifactID              string                      `json:"artifact_id"`
+	ArtifactSHA256          string                      `json:"artifact_sha256"`
+	ArtifactSize            int64                       `json:"artifact_size"`
+	ReportSealDigest        string                      `json:"report_seal_digest,omitempty"`
+	ReportIDs               []string                    `json:"report_ids"`
+	ChangesNotSentForReview bool                        `json:"changes_not_sent_for_review,omitempty"`
+	Apple                   *ApplePublishAuthorization  `json:"apple,omitempty"`
 }
 type AppleRemoteEvidence struct {
 	AppID              string     `json:"app_id,omitempty"`
@@ -71,16 +73,17 @@ type AppleRemoteEvidence struct {
 	ActionConfirmed    bool       `json:"action_confirmed"`
 }
 type PublishRemoteEvidence struct {
-	EditID         string               `json:"edit_id,omitempty"`
-	ReleaseName    string               `json:"release_name,omitempty"`
-	Track          string               `json:"track,omitempty"`
-	BundleSHA256   string               `json:"bundle_sha256,omitempty"`
-	Lifecycle      string               `json:"lifecycle,omitempty"`
-	VersionCode    int64                `json:"version_code,omitempty"`
-	BundleAccepted bool                 `json:"bundle_accepted,omitempty"`
-	TrackAccepted  bool                 `json:"track_accepted,omitempty"`
-	CommitAccepted bool                 `json:"commit_accepted,omitempty"`
-	Apple          *AppleRemoteEvidence `json:"apple,omitempty"`
+	Custom         *CustomPublishEvidence `json:"custom,omitempty"`
+	EditID         string                 `json:"edit_id,omitempty"`
+	ReleaseName    string                 `json:"release_name,omitempty"`
+	Track          string                 `json:"track,omitempty"`
+	BundleSHA256   string                 `json:"bundle_sha256,omitempty"`
+	Lifecycle      string                 `json:"lifecycle,omitempty"`
+	VersionCode    int64                  `json:"version_code,omitempty"`
+	BundleAccepted bool                   `json:"bundle_accepted,omitempty"`
+	TrackAccepted  bool                   `json:"track_accepted,omitempty"`
+	CommitAccepted bool                   `json:"commit_accepted,omitempty"`
+	Apple          *AppleRemoteEvidence   `json:"apple,omitempty"`
 }
 type PublishReceipt struct {
 	IntentID            string                `json:"intent_id"`
@@ -107,6 +110,7 @@ type PublishLookup struct {
 }
 type PublishQueryTask struct {
 	AppleAuthorization      *ApplePublishAuthorization `json:"apple_authorization,omitempty"`
+	Custom                  *CustomQueryContext        `json:"custom,omitempty"`
 	VersionName             string                     `json:"version_name"`
 	Store                   string                     `json:"store"`
 	UploadCertificateSHA256 string                     `json:"upload_certificate_sha256,omitempty"`
@@ -126,26 +130,28 @@ type PublishQueryTask struct {
 	Apple                   *AppleRemoteEvidence       `json:"apple,omitempty"`
 }
 type PublishMatch struct {
-	ReleaseName  string               `json:"release_name,omitempty"`
-	Track        string               `json:"track,omitempty"`
-	VersionCodes []int64              `json:"version_codes"`
-	Lifecycle    string               `json:"lifecycle"`
-	Apple        *AppleRemoteEvidence `json:"apple,omitempty"`
+	Custom       *CustomPublishEvidence `json:"custom,omitempty"`
+	ReleaseName  string                 `json:"release_name,omitempty"`
+	Track        string                 `json:"track,omitempty"`
+	VersionCodes []int64                `json:"version_codes"`
+	Lifecycle    string                 `json:"lifecycle"`
+	Apple        *AppleRemoteEvidence   `json:"apple,omitempty"`
 }
 type PublishQueryResult struct {
-	ID                string         `json:"id"`
-	Nonce             string         `json:"nonce"`
-	Kind              string         `json:"kind"`
-	BindingID         string         `json:"binding_id"`
-	IntentID          string         `json:"intent_id,omitempty"`
-	NodeID            string         `json:"node_id"`
-	SessionID         string         `json:"session_id"`
-	ObservedAt        time.Time      `json:"observed_at"`
-	ObservedLifecycle string         `json:"observed_lifecycle"`
-	Matches           []PublishMatch `json:"matches"`
-	DoctorChecks      []ToolCheck    `json:"doctor_checks,omitempty"`
-	ToolLockDigest    string         `json:"tool_lock_digest"`
-	Reason            string         `json:"reason"`
+	Custom            *CustomQueryEvidence `json:"custom,omitempty"`
+	ID                string               `json:"id"`
+	Nonce             string               `json:"nonce"`
+	Kind              string               `json:"kind"`
+	BindingID         string               `json:"binding_id"`
+	IntentID          string               `json:"intent_id,omitempty"`
+	NodeID            string               `json:"node_id"`
+	SessionID         string               `json:"session_id"`
+	ObservedAt        time.Time            `json:"observed_at"`
+	ObservedLifecycle string               `json:"observed_lifecycle"`
+	Matches           []PublishMatch       `json:"matches"`
+	DoctorChecks      []ToolCheck          `json:"doctor_checks,omitempty"`
+	ToolLockDigest    string               `json:"tool_lock_digest"`
+	Reason            string               `json:"reason"`
 }
 
 func publishDigest(in any) (string, error) {

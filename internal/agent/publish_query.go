@@ -25,7 +25,7 @@ func runPublishQuery(ctx context.Context, client *agentHTTP, lock *dataLock, cfg
 	if task.ID == "" {
 		return nil
 	}
-	if !exactUUID(task.ID) || !exactUUID(task.Nonce) || task.NodeID != nodeID || task.SessionID != sessionID || !exactUUID(task.BindingID) || !task.ExpiresAt.After(time.Now()) || task.ExpiresAt.After(time.Now().Add(31*time.Second)) || task.Kind != "doctor" && task.Kind != "query" || task.Store != "google_play" && task.Store != "app_store" {
+	if !exactUUID(task.ID) || !exactUUID(task.Nonce) || task.NodeID != nodeID || task.SessionID != sessionID || !exactUUID(task.BindingID) || !task.ExpiresAt.After(time.Now()) || task.ExpiresAt.After(time.Now().Add(31*time.Second)) || task.Kind != "doctor" && task.Kind != "query" || task.Store != "google_play" && task.Store != "app_store" && task.Store != "custom" {
 		return failure("invalid_response")
 	}
 	// 管理命令同样在启动前落盘。Ref为空使未知清理阻止下次session，不能猜旧PID。
@@ -40,6 +40,26 @@ func runPublishQuery(ctx context.Context, client *agentHTTP, lock *dataLock, cfg
 		result.Reason = "apple_tools_missing"
 	}
 	values, err := loadSecrets(cfg)
+	if task.Store == "custom" {
+		if task.Kind != "query" || task.Custom == nil {
+			return failure("invalid_response")
+		}
+		if err == nil {
+			result, err = runCustomPublishQuery(bounded, cfg, task, values)
+		}
+		if errors.Is(err, distribute.ErrCleanup) {
+			return failure("cleanup_error")
+		}
+		if err != nil {
+			result = protocol.PublishQueryResult{ID: task.ID, Nonce: task.Nonce, Kind: task.Kind, BindingID: task.BindingID, IntentID: task.IntentID, NodeID: nodeID, SessionID: sessionID, ObservedAt: time.Now().UTC(), Matches: []protocol.PublishMatch{}, Reason: "observation_insufficient"}
+		}
+		if err = journal.remove(); err != nil {
+			return err
+		}
+		var view store.PublishQueryView
+		return client.retryPost(bounded, "/api/agent/publish-queries/"+task.ID+"/result", result, &view)
+	}
+
 	name := strings.TrimSuffix(strings.TrimPrefix(task.CredentialRef, "${"), "}")
 	if err == nil && cfg.PublishTools != nil && name != "MYBUILDS_AGENT_TOKEN" && name != "MYBUILDS_CLIENT_TOKEN" && name != cfg.TokenEnv && values[name] != "" && values[name] != cfg.RuntimeToken && !strings.HasPrefix(name, "MYBUILDS_BOOTSTRAP_") && !strings.HasPrefix(name, "MYBUILDS_SERVER_") && !strings.HasPrefix(name, "MYBUILDS_CONTROL_") && name != "MYBUILDS_GIT_SSH_KEY" && name != "MYBUILDS_GIT_KNOWN_HOSTS" {
 		if task.Store == "google_play" {

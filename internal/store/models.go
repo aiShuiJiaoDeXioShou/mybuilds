@@ -53,6 +53,7 @@ type EnqueueInput struct {
 	Builds                                                      []PreparedBuild
 }
 type BuildSnapshot struct {
+	Origin        *PipelineOrigin `json:"origin,omitempty"`
 	Definition    config.Build
 	Params, Facts map[string]string
 	Condition     string
@@ -95,6 +96,7 @@ type BuildFilter struct {
 }
 type BuildView struct {
 	PublishIDs            []string                 `json:"publish_ids,omitempty"`
+	Origin                *PipelineOriginView      `json:"origin,omitempty"`
 	HistoryState          string                   `json:"history_state,omitempty"`
 	TerminalAt            *time.Time               `json:"terminal_at,omitempty"`
 	CleanedAt             *time.Time               `json:"cleaned_at,omitempty"`

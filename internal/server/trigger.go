@@ -15,7 +15,6 @@ import (
 
 	"mybuilds/internal/config"
 	"mybuilds/internal/pipeline"
-	"mybuilds/internal/scm"
 	"mybuilds/internal/store"
 )
 
@@ -137,15 +136,11 @@ func (s *Server) Trigger(ctx context.Context, actor store.Actor, project, key st
 	if !authorized {
 		return store.BatchResult{}, store.ErrForbidden
 	}
-	summary := ProjectSummary(p)
-	source, err := scm.ReadPipeline(ctx, scm.Options{DataDir: s.config.DataDir, Repository: p.Repository, Branch: request.Branch, Ref: request.Ref, File: summary.PipelineFile, SecretsFile: s.config.SecretsFile})
+	source, err := s.resolvePipeline(ctx, p, request.Branch, request.Ref)
 	if err != nil {
-		return store.BatchResult{}, errPipeline
+		return store.BatchResult{}, err
 	}
-	document, err := config.Parse(source.Content)
-	if err != nil {
-		return store.BatchResult{}, errPipeline
-	}
+	document := source.Document
 	names, err := document.Select(request.BuildNames, request.All)
 	if err != nil || len(names) > 64 {
 		return store.BatchResult{}, errPipeline
@@ -195,6 +190,7 @@ func (s *Server) Trigger(ctx context.Context, actor store.Actor, project, key st
 		if notification == nil {
 			notification = document.Notifications
 		}
+		notification = config.ResolveNotifications(p.Settings.Notifications, notification, s.config.Defaults.Notifications)
 		if notification != nil && (notification.Enabled == nil || *notification.Enabled) {
 			return store.BatchResult{}, errUnsupported
 		}
@@ -206,7 +202,7 @@ func (s *Server) Trigger(ctx context.Context, actor store.Actor, project, key st
 		condition, reasons := buildCondition(b.When, params, request.Branch)
 		definition := *b
 		definition.Notifications = nil
-		build := store.PreparedBuild{Name: name, Status: "queued", Snapshot: store.BuildSnapshot{Definition: definition, Params: params, Facts: facts, Condition: condition, Reasons: reasons, AllowedNodes: slices.Clone(p.AllowedNodes), DefaultNode: p.DefaultNode}, PostBudgetNS: int64(2 * time.Minute)}
+		build := store.PreparedBuild{Name: name, Status: "queued", Snapshot: store.BuildSnapshot{Origin: source.Origins[name], Definition: definition, Params: params, Facts: facts, Condition: condition, Reasons: reasons, AllowedNodes: slices.Clone(p.AllowedNodes), DefaultNode: p.DefaultNode}, PostBudgetNS: int64(2 * time.Minute)}
 		if condition == "skipped" {
 			build.Status = "skipped"
 			build.Reason = "condition_skipped"
@@ -235,7 +231,7 @@ func (s *Server) Trigger(ctx context.Context, actor store.Actor, project, key st
 		}
 		prepared = append(prepared, build)
 	}
-	return s.store.Enqueue(ctx, store.EnqueueInput{Actor: actor, ProjectID: p.ID, ProjectVersion: p.PolicyVersion, Key: key, RequestDigest: digest, SHA: source.SHA, Branch: request.Branch, Source: summary.PipelineSource, File: source.File, SourceDigest: source.Digest, HasUpload: hasUpload, AllowUpload: request.AllowUpload, Builds: prepared})
+	return s.store.Enqueue(ctx, store.EnqueueInput{Actor: actor, ProjectID: p.ID, ProjectVersion: p.PolicyVersion, Key: key, RequestDigest: digest, SHA: source.SHA, Branch: request.Branch, Source: source.Mode, File: source.File, SourceDigest: source.SourceDigest, HasUpload: hasUpload, AllowUpload: request.AllowUpload, Builds: prepared})
 }
 
 // 这里只判定build.when，缺失编号/节点/工作目录的模板仍留待节点处理。

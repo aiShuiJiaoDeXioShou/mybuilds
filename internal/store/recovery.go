@@ -104,7 +104,10 @@ func frozenBuild(db *gorm.DB, row buildRecord) (BuildSnapshot, []stepRecord, err
 	if db.First(&project, "id = ?", row.ProjectID).Error != nil || db.First(&batch, "id = ?", row.BatchID).Error != nil || batch.ProjectID != row.ProjectID {
 		return snapshot, nil, errDatabase
 	}
-	if !validHex(batch.SHA, 40, 64) || !validHex(batch.SourceDigest, 64) || !sourceFileValid(batch.File) || !slices.Contains([]string{"auto", "repo"}, batch.Source) || !validBranchPattern(batch.Branch) || strings.ContainsAny(batch.Branch, "*?[") {
+	if !validHex(batch.SHA, 40, 64) || !validHex(batch.SourceDigest, 64) || !sourceFileValid(batch.File) || !slices.Contains([]string{"auto", "repo", "profile"}, batch.Source) || !validBranchPattern(batch.Branch) || strings.ContainsAny(batch.Branch, "*?[") {
+		return snapshot, nil, errDatabase
+	}
+	if !validateOrigin(snapshot.Origin, snapshot.Definition) || !originBatchMatches(snapshot.Origin, batch.SHA, batch.Source, batch.File) {
 		return snapshot, nil, errDatabase
 	}
 	if !validName(row.Name) || !validList(snapshot.AllowedNodes, 128, validName) || snapshot.DefaultNode != "" && !slices.Contains(snapshot.AllowedNodes, snapshot.DefaultNode) {

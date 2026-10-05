@@ -90,6 +90,11 @@ func buildView(db *gorm.DB, row buildRecord) (BuildView, error) {
 		}
 		return minimal, nil
 	}
+	var snapshot BuildSnapshot
+	if json.Unmarshal([]byte(row.SnapshotJSON), &snapshot) != nil || !validateOrigin(snapshot.Origin, snapshot.Definition) || !originBatchMatches(snapshot.Origin, batch.SHA, batch.Source, batch.File) {
+		return BuildView{}, errDatabase
+	}
+	result.Origin = snapshot.Origin
 	sealed, err := sealedReports(row)
 	if err != nil {
 		return BuildView{}, err

@@ -15,6 +15,8 @@ import (
 )
 
 type Server struct {
+	profiles          map[string]config.LoadedProfile
+	profileError      error
 	store             *store.Store
 	config            config.ServerConfig
 	evidenceReadOwner string
@@ -23,7 +25,8 @@ type Server struct {
 
 func New(st *store.Store, cfg config.ServerConfig) *Server {
 	owner, err := st.RegisterEvidenceReadOwner(context.Background())
-	return &Server{store: st, config: cfg, evidenceReadOwner: owner, evidenceReadError: err}
+	profiles, profileErr := config.LoadBuildProfiles(cfg.BuildProfiles, builtinProfiles())
+	return &Server{store: st, config: cfg, evidenceReadOwner: owner, evidenceReadError: err, profiles: profiles, profileError: profileErr}
 }
 
 type StatusDTO struct {
@@ -61,6 +64,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	// 所有入口先检查运行权与真实身份，不能借未知路径绕过身份边界。
 	if err := s.store.CheckLock(r.Context()); err != nil {
 		writeError(w, err)
+		return
+	}
+	if s.profileError != nil {
+		writeError(w, errPipeline)
 		return
 	}
 	if s.evidenceReadError != nil {
@@ -121,6 +128,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 
 // ListenAndServe 取消时关闭连接，失锁时停止接入；不恢复旧数据库 session。
 func (s *Server) ListenAndServe(ctx context.Context) error {
+	if s.profileError != nil {
+		return errPipeline
+	}
 	if err := s.store.CheckLock(ctx); err != nil {
 		return err
 	}

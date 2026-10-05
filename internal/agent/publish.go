@@ -88,7 +88,7 @@ func (e *taskExecution) publisherReceipt(ctx context.Context, receipt protocol.P
 	return e.client.retryExecutionPost(ctx, "/api/agent/publishes/"+receipt.IntentID+"/receipt", receipt, &view)
 }
 func (e *taskExecution) publish(ctx context.Context, input pipeline.PublishInput) (receipt protocol.PublishReceipt, returnErr error) {
-	if e.cfg.PublishTools == nil || e.task == nil || e.lease.check() != nil {
+	if input.Step.Target != "custom" && e.cfg.PublishTools == nil || e.task == nil || e.lease.check() != nil {
 		return receipt, failure("publish_precheck")
 	}
 	j := e.journal
@@ -113,7 +113,7 @@ func (e *taskExecution) publish(ctx context.Context, input pipeline.PublishInput
 	input.ArtifactID = artifact.Declaration.ID
 	name := strings.TrimSuffix(strings.TrimPrefix(input.Step.Credentials, "${"), "}")
 	credential, ok := e.publishSecrets[name]
-	if !ok || credential == "" {
+	if input.Step.Credentials != "" && (!ok || credential == "") {
 		return receipt, failure("publish_precheck")
 	}
 	var binding store.NodeApplicationMaterial
@@ -130,6 +130,7 @@ func (e *taskExecution) publish(ctx context.Context, input pipeline.PublishInput
 	}
 	path := filepath.Join(resultDir, filepath.FromSlash(input.Artifact.SnapshotPath))
 	version := e.task.Parameters["version"]
+	var customAuthority *protocol.CustomPublishAuthorization
 	authority := func(apple *protocol.ApplePublishAuthorization) (protocol.PublishGrant, error) {
 		if ctx.Err() != nil || e.lease.check() != nil {
 			return protocol.PublishGrant{}, failure("authority_lost")
@@ -146,7 +147,7 @@ func (e *taskExecution) publish(ctx context.Context, input pipeline.PublishInput
 		if track == "" && input.Step.Target == "google_play" {
 			track = "internal"
 		}
-		request := protocol.PublishAuthorization{IntentID: id, Ref: e.lease.ref, Index: input.Index, StepName: input.Step.Name, ArtifactID: input.ArtifactID, ArtifactSHA256: input.Artifact.SHA256, ArtifactSize: input.Artifact.Size, ReportSealDigest: input.ReportSealDigest, ReportIDs: input.ReportIDs, VersionName: version, VersionCode: e.task.Number, Track: track, ExplicitProduction: track == "production", Apple: apple}
+		request := protocol.PublishAuthorization{IntentID: id, Ref: e.lease.ref, Index: input.Index, StepName: input.Step.Name, ArtifactID: input.ArtifactID, ArtifactSHA256: input.Artifact.SHA256, ArtifactSize: input.Artifact.Size, ReportSealDigest: input.ReportSealDigest, ReportIDs: input.ReportIDs, VersionName: version, VersionCode: e.task.Number, Track: track, ExplicitProduction: track == "production", Apple: apple, Custom: customAuthority}
 		var grant protocol.PublishGrant
 		// 服务端可能已经提交。任何丢响应只保存原候选并闭锁，不再申请另一个grant。
 		if err = e.client.post(ctx, "/api/agent/publishes/authorize", request, &grant); err != nil {
@@ -187,10 +188,47 @@ func (e *taskExecution) publish(ctx context.Context, input pipeline.PublishInput
 			returnErr = failure("cleanup_error")
 		}
 	}
+	if input.Step.Target == "custom" {
+		original := e.task.Definition.Steps[input.Index-1]
+		commandDigest, err := protocol.CustomCommandDigest(original.Argv, original.QueryArgv, original.WorkingDir, original.ResultFile, input.Step.AppIdentifier, version, input.ArtifactID, input.Artifact.SHA256, e.task.Number, input.Artifact.Size)
+		if err != nil {
+			return receipt, failure("publish_precheck")
+		}
+		customAuthority = &protocol.CustomPublishAuthorization{CommandDigest: commandDigest, ResultSchemaVersion: 1}
+		secrets := []string{}
+		for _, v := range e.publishSecrets {
+			if v != "" {
+				secrets = append(secrets, v)
+			}
+		}
+		prepared, err := distribute.PrepareCustom(ctx, distribute.CustomOptions{Workspace: input.Workspace, DataDir: e.cfg.DataDir, WorkingDir: input.Step.WorkingDir, ResultFile: input.Step.ResultFile, Argv: original.Argv, QueryArgv: original.QueryArgv, Environment: input.Environment, Params: e.task.Parameters, Credentials: credential, CommandDigest: commandDigest, SecretValues: secrets, AppIdentifier: input.Step.AppIdentifier, VersionName: version, Number: e.task.Number, ArtifactID: input.ArtifactID, ArtifactPath: path, ArtifactSize: input.Artifact.Size, ArtifactSHA256: input.Artifact.SHA256})
+		if err != nil {
+			if errors.Is(err, distribute.ErrCleanup) {
+				receipt.CleanupFailed = true
+				receipt.StopConfirmed = false
+				return receipt, failure("cleanup_error")
+			}
+			return receipt, failure("publish_precheck")
+		}
+		defer func() { cleanup(prepared.Close) }()
+		grant, err := authority(nil)
+		if err != nil {
+			return receipt, err
+		}
+		if grant.Custom == nil || grant.Custom.CommandDigest != commandDigest || grant.Custom.ResultSchemaVersion != 1 || grant.Apple != nil {
+			return receipt, failure("invalid_response")
+		}
+		receipt, err = distribute.UploadCustom(ctx, prepared, grant, onStart)
+		if recordErr := e.publisherReceipt(ctx, receipt); recordErr != nil {
+			e.lease.cancel()
+			return receipt, recordErr
+		}
+		return receipt, err
+	}
 	if input.Step.Target == "google_play" {
 		prepared, err := distribute.PrepareGooglePlay(ctx, distribute.GooglePlayOptions{BundleDir: e.cfg.PublishTools.BundleDir, Bundletool: e.cfg.PublishTools.Bundletool, DataDir: e.cfg.DataDir, CredentialFile: credential, AppIdentifier: input.Step.AppIdentifier, VersionName: version, UploadCertificateSHA256: binding.UploadCertificateSHA256, Number: e.task.Number, ArtifactPath: path, ArtifactSHA256: input.Artifact.SHA256, ArtifactSize: input.Artifact.Size})
 		if err != nil {
-			if strings.Contains(err.Error(), "cleanup") {
+			if errors.Is(err, distribute.ErrCleanup) {
 				receipt.CleanupFailed = true
 				receipt.StopConfirmed = false
 			}
@@ -211,7 +249,7 @@ func (e *taskExecution) publish(ctx context.Context, input pipeline.PublishInput
 	if input.Step.Target == "app_store" {
 		prepared, err := distribute.PrepareApple(ctx, distribute.AppleOptions{BundleDir: e.cfg.PublishTools.BundleDir, DataDir: e.cfg.DataDir, CredentialFile: credential, AppIdentifier: input.Step.AppIdentifier, VersionName: version, DistributionTeamID: input.DistributionTeamID, Number: e.task.Number, ArtifactPath: path, ArtifactSHA256: input.Artifact.SHA256, ArtifactSize: input.Artifact.Size})
 		if err != nil {
-			if strings.Contains(err.Error(), "cleanup") {
+			if errors.Is(err, distribute.ErrCleanup) {
 				receipt.CleanupFailed = true
 				receipt.StopConfirmed = false
 			}

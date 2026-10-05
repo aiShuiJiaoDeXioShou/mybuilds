@@ -22,26 +22,30 @@ type DatabaseConfig struct {
 	DSN    string `yaml:"dsn" mapstructure:"dsn" json:"-"`
 }
 type ServerConfig struct {
-	Retention         Retention      `yaml:"retention" mapstructure:"retention" json:"retention"`
-	Listen            string         `yaml:"listen" mapstructure:"listen"`
-	DataDir           string         `yaml:"data_dir" mapstructure:"data_dir"`
-	SecretsFile       string         `yaml:"secrets_file" mapstructure:"secrets_file" json:"-"`
-	Concurrency       int            `yaml:"concurrency" mapstructure:"concurrency"`
-	Database          DatabaseConfig `yaml:"database" mapstructure:"database"`
-	HeartbeatInterval time.Duration  `yaml:"heartbeat_interval" mapstructure:"heartbeat_interval"`
-	LeaseDuration     time.Duration  `yaml:"lease_duration" mapstructure:"lease_duration"`
+	Defaults          ServerDefaults          `yaml:"defaults,omitempty" mapstructure:"defaults"`
+	BuildProfiles     map[string]BuildProfile `yaml:"build_profiles,omitempty" mapstructure:"build_profiles" json:"-"`
+	Retention         Retention               `yaml:"retention" mapstructure:"retention" json:"retention"`
+	Listen            string                  `yaml:"listen" mapstructure:"listen"`
+	DataDir           string                  `yaml:"data_dir" mapstructure:"data_dir"`
+	SecretsFile       string                  `yaml:"secrets_file" mapstructure:"secrets_file" json:"-"`
+	Concurrency       int                     `yaml:"concurrency" mapstructure:"concurrency"`
+	Database          DatabaseConfig          `yaml:"database" mapstructure:"database"`
+	HeartbeatInterval time.Duration           `yaml:"heartbeat_interval" mapstructure:"heartbeat_interval"`
+	LeaseDuration     time.Duration           `yaml:"lease_duration" mapstructure:"lease_duration"`
 }
 
 // serverFile保留duration的严格YAML字符串类型，合并后再转换为time.Duration。
 type serverFile struct {
-	Retention         Retention      `yaml:"retention"`
-	Listen            string         `yaml:"listen"`
-	DataDir           string         `yaml:"data_dir"`
-	SecretsFile       string         `yaml:"secrets_file"`
-	Concurrency       int            `yaml:"concurrency"`
-	Database          DatabaseConfig `yaml:"database"`
-	HeartbeatInterval string         `yaml:"heartbeat_interval"`
-	LeaseDuration     string         `yaml:"lease_duration"`
+	Defaults          ServerDefaults          `yaml:"defaults,omitempty"`
+	BuildProfiles     map[string]BuildProfile `yaml:"build_profiles,omitempty"`
+	Retention         Retention               `yaml:"retention"`
+	Listen            string                  `yaml:"listen"`
+	DataDir           string                  `yaml:"data_dir"`
+	SecretsFile       string                  `yaml:"secrets_file"`
+	Concurrency       int                     `yaml:"concurrency"`
+	Database          DatabaseConfig          `yaml:"database"`
+	HeartbeatInterval string                  `yaml:"heartbeat_interval"`
+	LeaseDuration     string                  `yaml:"lease_duration"`
 }
 type ServerOverrides struct {
 	Listen, DataDir, SecretsFile, DatabaseDriver, DatabaseDSN *string
@@ -116,6 +120,9 @@ func LoadServer(options ServerLoadOptions) (ServerConfig, error) {
 	if !validLeasePolicy(cfg.HeartbeatInterval, cfg.LeaseDuration) {
 		return ServerConfig{}, invalid("服务端策略", "心跳或租约不合法")
 	}
+	if err := validateNotifications(cfg.Defaults.Notifications, "defaults.notifications"); err != nil {
+		return ServerConfig{}, err
+	}
 	if err := ValidateRetention(cfg.Retention); err != nil {
 		return ServerConfig{}, err
 	}
@@ -134,6 +141,18 @@ func LoadServer(options ServerLoadOptions) (ServerConfig, error) {
 		return ServerConfig{}, invalid("database.driver", "仅支持sqlite/postgres")
 	}
 	base := filepath.Dir(filename)
+	if err := validateBuildProfiles(cfg.BuildProfiles); err != nil {
+		return ServerConfig{}, err
+	}
+	for name, profile := range cfg.BuildProfiles {
+		if profile.File != "" {
+			profile.File, err = expandConfigurationPath(profile.File, base)
+			if err != nil {
+				return ServerConfig{}, err
+			}
+			cfg.BuildProfiles[name] = profile
+		}
+	}
 	cfg.DataDir, err = expandConfigurationPath(cfg.DataDir, base)
 	if err != nil {
 		return ServerConfig{}, err

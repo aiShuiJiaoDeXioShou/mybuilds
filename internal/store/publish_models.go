@@ -7,15 +7,17 @@ import (
 
 // 材料引用仅留在私有绑定；公开DTO不含凭据内容或路径。
 type BindApplicationInput struct {
-	ProjectID               string   `json:"project_id"`
-	NodeID                  string   `json:"node_id"`
-	Store                   string   `json:"store"`
-	AppIdentifier           string   `json:"app_identifier"`
-	CredentialRef           string   `json:"credential_ref"`
-	UploadCertificateSHA256 string   `json:"upload_certificate_sha256,omitempty"`
-	AllowedTracks           []string `json:"allowed_tracks"`
+	Custom                  *protocol.CustomBindingEvidence `json:"custom,omitempty"`
+	ProjectID               string                          `json:"project_id"`
+	NodeID                  string                          `json:"node_id"`
+	Store                   string                          `json:"store"`
+	AppIdentifier           string                          `json:"app_identifier"`
+	CredentialRef           string                          `json:"credential_ref"`
+	UploadCertificateSHA256 string                          `json:"upload_certificate_sha256,omitempty"`
+	AllowedTracks           []string                        `json:"allowed_tracks"`
 }
 type ApplicationView struct {
+	VerificationSource      string     `json:"verification_source,omitempty"`
 	ID                      string     `json:"id"`
 	ProjectID               string     `json:"project_id"`
 	NodeID                  string     `json:"node_id"`
@@ -92,6 +94,7 @@ type applicationRecord struct {
 	Store                                                      string        `gorm:"not null;uniqueIndex:application_identity;size:32"`
 	AppIdentifier                                              string        `gorm:"not null;uniqueIndex:application_identity;size:255"`
 	CredentialRef, UploadCertificateSHA256, TracksJSON, Status string
+	VerificationSource, CustomEvidenceJSON                     string
 	VerifiedAt                                                 *time.Time
 	CreatedAt, UpdatedAt                                       time.Time
 }

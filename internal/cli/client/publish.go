@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"mybuilds/internal/config"
+	"mybuilds/internal/protocol"
 	"mybuilds/internal/store"
 )
 
@@ -109,10 +110,42 @@ func newProjectAppCommand() *cobra.Command {
 		env, _ := cmd.Flags().GetString("credentials-env")
 		cert, _ := cmd.Flags().GetString("upload-cert-sha256")
 		tracks, _ := cmd.Flags().GetStringSlice("track")
-		if target == "" || app == "" || node == "" || env == "" {
+		if target == "" || app == "" || node == "" || target != "custom" && env == "" {
 			return errors.New("需要store、app-id、node和credentials-env")
 		}
-		input := store.BindApplicationInput{NodeID: node, Store: target, AppIdentifier: app, CredentialRef: "${" + env + "}", UploadCertificateSHA256: cert, AllowedTracks: tracks}
+		input := store.BindApplicationInput{NodeID: node, Store: target, AppIdentifier: app, UploadCertificateSHA256: cert, AllowedTracks: tracks}
+		if env != "" {
+			input.CredentialRef = "${" + env + "}"
+		}
+		verification, _ := cmd.Flags().GetString("verification-file")
+		if target == "custom" {
+			if verification == "" || cert != "" || cmd.Flags().Changed("track") {
+				return errors.New("custom需要verification-file且不允许商店轨道或证书设置")
+			}
+			input.AllowedTracks = []string{}
+			raw, e := readPublishDecision(verification)
+			if e != nil {
+				return e
+			}
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(raw, &fields) != nil || len(fields) != 4 {
+				return errors.New("归属证据文件无效")
+			}
+			for key := range fields {
+				if key != "source" && key != "evidence_code" && key != "note" && key != "evidence_sha256" {
+					return errors.New("归属证据文件无效")
+				}
+			}
+			var evidence protocol.CustomBindingEvidence
+			d := json.NewDecoder(bytes.NewReader(raw))
+			d.DisallowUnknownFields()
+			if d.Decode(&evidence) != nil || d.Decode(new(any)) != io.EOF {
+				return errors.New("归属证据文件无效")
+			}
+			input.Custom = &evidence
+		} else if verification != "" {
+			return errors.New("商店绑定不允许人工归属证据")
+		}
 		var out store.ApplicationView
 		if err := remoteRequest(cmd, http.MethodPost, "/api/projects/"+url.PathEscape(args[0])+"/applications", input, &out, ""); err != nil {
 			return err
@@ -123,6 +156,7 @@ func newProjectAppCommand() *cobra.Command {
 		bind.Flags().String(name, "", "明确绑定设置")
 	}
 	bind.Flags().StringSlice("track", []string{"internal"}, "允许的Google Play轨道")
+	bind.Flags().String("verification-file", "", "custom自有0600人工归属证据JSON")
 	bind.Flags().Bool("json", false, "输出JSON")
 	list := &cobra.Command{Use: "ls <project>", Short: "列出安全应用绑定", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		var items []store.ApplicationView

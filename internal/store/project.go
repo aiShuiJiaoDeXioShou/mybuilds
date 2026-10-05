@@ -208,12 +208,17 @@ func (s *Store) SetProjectSettings(ctx context.Context, actor Actor, name string
 		if err := tx.Preload("Group").First(&row, "name = ?", name).Error; err != nil {
 			return err
 		}
-		if settings.Pipeline == nil {
+		if settings.Pipeline == nil || settings.Notifications == nil {
 			var previous config.ProjectSettings
 			if json.Unmarshal([]byte(row.SettingsJSON), &previous) != nil {
 				return errDatabase
 			}
-			settings.Pipeline = previous.Pipeline
+			if settings.Pipeline == nil {
+				settings.Pipeline = previous.Pipeline
+			}
+			if settings.Notifications == nil {
+				settings.Notifications = previous.Notifications
+			}
 		}
 		if config.ValidateProjectSettings(settings) != nil {
 			return ErrInvalid

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -65,6 +66,15 @@ func (s *Store) RequestPublishQuery(ctx context.Context, actor Actor, id string)
 		if err := tx.First(&binding, "id = ?", intent.BindingID).Error; err != nil {
 			return err
 		}
+		if binding.Store == "custom" {
+			var grant protocol.PublishGrant
+			if json.Unmarshal([]byte(intent.GrantJSON), &grant) != nil {
+				return errDatabase
+			}
+			if _, err := customQueryContext(tx, intent, grant); err != nil {
+				return err
+			}
+		}
 		if err := createPublishQuery(tx, actor, binding, &intent, "query"); err != nil {
 			return err
 		}
@@ -93,6 +103,9 @@ func (s *Store) RequestApplicationDoctor(ctx context.Context, actor Actor, id st
 		var binding applicationRecord
 		if err := tx.First(&binding, "id = ?", id).Error; err != nil {
 			return err
+		}
+		if binding.Store == "custom" {
+			return ErrInvalid
 		}
 		if err := createPublishQuery(tx, actor, binding, nil, "doctor"); err != nil {
 			return err
@@ -183,6 +196,16 @@ func (s *Store) ClaimPublishQuery(ctx context.Context, actor NodeActor, sessionI
 			}
 			task.Apple = remote.Apple
 			task.AppleAuthorization = grant.Apple
+			if binding.Store == "custom" {
+				task.Custom, err = customQueryContext(tx, intent, grant)
+				if err != nil {
+					return err
+				}
+			}
+			data, e := json.Marshal(task)
+			if e != nil || len(data) > 64<<10 {
+				return ErrInvalid
+			}
 		}
 		return nil
 	})
@@ -200,7 +223,7 @@ func validPublishQueryResult(in protocol.PublishQueryResult) bool {
 		return false
 	}
 	for _, m := range in.Matches {
-		if len(m.VersionCodes) > 64 || m.VersionCodes == nil || !boundedPublishEvidence(protocol.PublishRemoteEvidence{ReleaseName: m.ReleaseName, Track: m.Track, Lifecycle: m.Lifecycle, Apple: m.Apple}) {
+		if len(m.VersionCodes) > 64 || m.VersionCodes == nil || !boundedPublishEvidence(protocol.PublishRemoteEvidence{ReleaseName: m.ReleaseName, Track: m.Track, Lifecycle: m.Lifecycle, Apple: m.Apple, Custom: m.Custom}) {
 			return false
 		}
 		for _, code := range m.VersionCodes {
@@ -277,13 +300,31 @@ func (s *Store) CompletePublishQuery(ctx context.Context, actor NodeActor, in pr
 			}
 			if passed {
 				now := time.Now().UTC()
-				if err = tx.Model(&binding).Updates(map[string]any{"status": "verified", "verified_at": now}).Error; err != nil {
+				if err = tx.Model(&binding).Updates(map[string]any{"status": "verified", "verified_at": now, "verification_source": "doctor_verified"}).Error; err != nil {
 					return err
 				}
 			}
 		}
-		// GET的部分远端事实只保存观察，绝不把空结果或同版本推为授权动作已确认。
-		if in.Kind == "query" && binding.Store == "app_store" && in.Reason == "" && len(in.Matches) == 1 {
+		if in.Kind == "query" && binding.Store == "custom" && in.Reason == "" {
+			var intent publishIntentRecord
+			if err = tx.First(&intent, "id = ?", in.IntentID).Error; err != nil {
+				return err
+			}
+			var grant protocol.PublishGrant
+			if json.Unmarshal([]byte(intent.GrantJSON), &grant) != nil {
+				return errDatabase
+			}
+			if !exactCustomQuery(in.Custom, grant) || len(in.Matches) != 1 || !slices.Equal(in.Matches[0].VersionCodes, []int64{grant.VersionCode}) || in.Matches[0].Custom == nil || !reflect.DeepEqual(*in.Matches[0].Custom, in.Custom.Remote) || in.Matches[0].Lifecycle != in.Custom.Remote.Lifecycle || in.Matches[0].Apple != nil {
+				return ErrConflict
+			}
+			if intent.Status == "unknown" {
+				if err = confirmObservedPublish(tx, query, intent, in.Custom.Remote.Lifecycle, protocol.PublishRemoteEvidence{Custom: &in.Custom.Remote}); err != nil {
+					return err
+				}
+			}
+		} else if in.Custom != nil {
+			return ErrInvalid
+		} else if in.Kind == "query" && binding.Store == "app_store" && in.Reason == "" && len(in.Matches) == 1 {
 			var intent publishIntentRecord
 			if err = tx.First(&intent, "id = ?", in.IntentID).Error; err != nil {
 				return err
@@ -299,7 +340,7 @@ func (s *Store) CompletePublishQuery(ctx context.Context, actor NodeActor, in pr
 				}
 			}
 		}
-
+		// 缺充分原授权证据的GET只保存观察，不把空结果或同版本推为已确认。
 		query.Status = "completed"
 		if in.Reason != "" {
 			query.Status = "failed"
@@ -378,7 +419,11 @@ func (s *Store) ConfirmPublish(ctx context.Context, actor Actor, in ConfirmPubli
 		}
 		remote := in.RemoteEvidence
 		if in.Outcome != "failed" {
-			if grant.Apple == nil {
+			if grant.Custom != nil {
+				if remote.Custom == nil || !validCustomEvidence(remote.Custom) || !remote.Custom.ActionConfirmed || remote.Custom.RemoteID == "" || remote.Custom.Lifecycle != in.Outcome || remote.Apple != nil {
+					return ErrInvalid
+				}
+			} else if grant.Apple == nil {
 				if remote.BundleSHA256 != grant.ArtifactSHA256 || remote.VersionCode != grant.VersionCode || remote.Track != grant.Track || remote.ReleaseName != grant.ReleaseName || !remote.CommitAccepted {
 					return ErrInvalid
 				}

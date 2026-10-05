@@ -12,7 +12,7 @@ import (
 // 不以版本列表猜原写动作。每个可核对动作都要求原授权的具体ID及真实GET关联。
 func exactAppleQuery(g protocol.PublishGrant, original *protocol.AppleRemoteEvidence, m protocol.PublishMatch) bool {
 	a, r := g.Apple, m.Apple
-	if a == nil || r == nil || !r.ActionConfirmed || r.AppID == "" || r.RequestSHA256 != a.RequestSHA256 || !validDigest(r.ResponseSHA256) || !slices.Equal(m.VersionCodes, []int64{g.VersionCode}) {
+	if a == nil || r == nil || m.Custom != nil || !r.ActionConfirmed || r.AppID == "" || r.RequestSHA256 != a.RequestSHA256 || !validDigest(r.ResponseSHA256) || !slices.Equal(m.VersionCodes, []int64{g.VersionCode}) {
 		return false
 	}
 	switch a.Action {

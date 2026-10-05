@@ -168,4 +168,18 @@ mybuilds --config client.yml build ls --project flutter-demo --json
 
 安全反例：将**独立Hook策略副本**的`allow_upload`改为`false`后显式`project set --settings ... --json`，提交一个新改动并使用新的投递ID。当前两个定义含upload，即使默认channel=internal也应窗口`failed/hook_forbidden`、无新编号、无商店动作；重投旧已接收ID仍只查询原归属。完成反例后重新应用上面的true策略，不修改已有构建或未知发布保护。
 
-可复用profile/custom集中案例在012整合后补充。验收记录逐项保存UTC、Git SHA、build/number/node、artifact/report摘要、approval/intent/远端ID与通过或失败结果；机密材料只存节点私有文件，不收录到验收记录。
+## 可复用方案与custom（012）
+
+`profile-settings.yml`为同一个项目绑定内置`flutter-android`与`flutter-ios`。先同步其中的应用标识/参数，然后显式切换：
+
+```bash
+mybuilds --config client.yml project set flutter-demo --settings ./profile-settings.yml --json
+mybuilds --config client.yml trigger flutter-demo --all --idempotency-key flutter-profile-001 --json
+mybuilds --config client.yml build show BUILD_ID --json
+```
+
+这轮强制使用两个完整内置方案，仓库原`mybuilds.yml`仍存在也不会合并；详情中的origin显示profile与定义摘要，Git仍固定原SHA。内置模板不包含此案例后加的测试/审批/商店步骤，不能把此轮当完整发布验收。需要这些步骤时，管理员注册自己维护的单build完整YAML方案。切回原案例用`project set ... --settings ./settings.yml`；配置变更不重置项目ID、已有编号或历史。
+
+`source=auto`仅在指定仓库配置确实不存在时回退到绑定方案，非法YAML/权限错误不能回退；`repo`要求仓库文件，`profile`强制方案且不读取该文件。另取独立Git版本与settings副本验这些负例，不修改已排队快照。custom的实际一次上传/metadata GET、manual_attested归属与unknown保护见[用户脚本案例](../custom/README.md)；它沿同一Run/Collector/发布授权与应用保护。
+
+验收记录逐项保存UTC、Git SHA、build/number/node、artifact/report摘要、approval/intent/远端ID与通过或失败结果；机密材料只存节点私有文件，不收录到验收记录。

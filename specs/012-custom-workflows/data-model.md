@@ -1,0 +1,43 @@
+# 012 数据模型与兼容边界
+
+## 1. 配置与内存方案
+
+ServerConfig增加BuildProfiles map[string]BuildProfile，BuildProfile仅Template或私有File二选一。config读取严格Node后局部Viper合并；文件相对server.yml，private路径不公开。LoadedProfile启动时含深复制完整Build、公共通知（仍现有unsupported限制）、Profile/Template/ContentDigest及原字节私有副本。数量≤64、每项≤1MiB、总≤16MiB；builtin内容由四模板实际函数生成，同限制。没有profile表/热重载/继承/插件。
+
+BuildSettings增加Profile字符串，PipelineSettings增加旧Profile字符串；旧Params同default保留。settings存现有项目JSON，Project.PolicyVersion在明确修改块时递增，未提供块不变；不改Repository/NextNumber/AllowedNodes，通知以后模块独立。仅profile源须完整profile绑定，repo源允许params-only。所有方案/绑定名称safeName且≤64。
+
+## 2. Origin真实快照
+
+BuildSnapshot增加Origin *PipelineOrigin，json origin,omitempty，旧记录nil保持未知。不增加Task二次source读取字段：Agent实际只要既有完整Definition+Params+Facts与SHA。Origin字段Mode请求auto/repo/profile、Kind实际repo/profile、SHA、File仅仓库相对路径、Profile名、Template名、ContentDigest、DefinitionDigest；profile的文件绝对路径从不写数据库/网络Origin。
+
+repo ContentDigest是原固定SHA blob字节SHA256；profile ContentDigest是对应已加载单build原字节SHA256（内置模板用真实原bytes），Template仅四builtin/alias才有。DefinitionDigest是经现有严格校验/缺省步骤名与disabled通知合法规范化后最终完整Definition、不含运行Facts/参数覆盖的canonical JSON SHA256；结合最终Definition/Params/Facts保存实际expanded snapshot。Origin.SHA必须batch.SHA，Mode=batch.Source；Kind=repo时File=batch.File、Profile/Template空；Kind=profile时Profile存在、File空，模板摘要对应实际loaded内容。
+
+batch.Source保持请求模式以兼容已有auto/repo，新增profile；repo SourceDigest保持旧raw blob摘要，profile SourceDigest是所有展开name→Origin的字典序canonical JSON SHA256、File沿安全pipeline.file但不被当执行内容，实际来源由各Origin.Kind判定。全部展开集合在选择前生成，batch hash可覆盖未选定义；server对完整展开集合计算此摘要，与旧repo raw blob摘要相同由实际读取消费者提供；Store校验有效64hex、所选Origin一致性及DefinitionDigest，不从selected子集伪重建完整源hash、不增加未消费的源注册表或输入字段。未选定义不制造build记录；Store只数据验证与短事务，不读文件/Git。
+
+Enqueue沿originalProjectVersion、actor、节点范围、upload权限、编号CAS/idempotency及末尾权限复查。validatePrepared严格验证Origin字段和DefinitionDigest、SHA/Mode关系；Recover验证新queued/running Origin，旧nil不猜。008Retry深复制Origin与原SourceDigest/Definition，允许原名字/原模板即使当前已删除；只更新新build.id/build.number和授权交集，新报告/发布意图均空。
+
+公开BuildView可增加Origin *PipelineOriginView（同安全字段，无rawBuild/params/源私有path），原Source/File/SourceDigest保留含义；旧origin省略，不能把nil当repo断言。审计仅有限名/摘要与操作，参数值和完整方案内容不公开。
+
+## 3. custom共同发布状态
+
+复用010 ApplicationBinding和PublishIntent/guard/receipt/query/slot，Store字段与协议由root串行加optional Custom具体variant。唯一(store=custom,app_identifier)绑定project/node及CredentialRef（内部引用），不跨项目重绑改变计数。CustomBindingEvidence含来源manual_attested、当前admin、有限EvidenceCode/Note/EvidenceSHA256与时间，只确认明确归属和互斥，不宣称remote真实性/GET verified。商店doctor_verified来源不变；同node当前凭据仍执行前重查。
+
+只有一个custom_upload动作，PreviousIntentID空；命令执行中的多远端步骤是用户脚本信任范围，系统不会把它们拆为第二执行器或自动重发。CustomAuthorization含CommandDigest（冻结argv+working_dir+result_file+可选query_argv+原artifact/app/version上下文的非秘密描述）、ResultSchemaVersion=1；与共同AuthorizationDigest绑定。IntentID网络前私有journal fsync，Authorize事务保存unknown+应用guard后给一次grant。
+
+状态：prepared未授可失败；授权可能已提交→unknown保护；有效精确结果且真实停止→record uploaded/processing/submitted/published或有证据failed；upload.finished关闭slot后精确lookup候选组成完整PublishIntents，已知结果/真实停止可release应用保护，任何unknown仍保。租约失效或CleanupFailed不伪回执；物理stop只解执行guard，不解发布guard。任意已授意图终态集合必须与Store一致，旧无custom消息omitempty不改digest。
+
+结果与query只有限schema，CustomEvidence{RemoteID,Lifecycle,RequestSHA256,ResponseSHA256,ActionConfirmed}可选hash；未给hash不能伪装artifact内容证明。状态只是脚本实际证据主张，中央核对Ref/intent/artifact/application/version/授权及绑定后接受管理员信任consumer；不承诺系统自动证明任意remote语义。相同receipt摘要幂等、冲突拒绝，不能用后续query授第二次执行。
+
+## 4. 本次私有资源
+
+PrepareCustom在现有process.TemporaryDirectory(workspace,prefix)的自有0700目录，保存原artifact安全copy/输入0600/有限raw诊断，保存目录与叶文件identity；返回具体PreparedCustom，Close独立15s只删除SameFile/自产目录，不defaultkeychain/未知工作区文件。credentials从声明ref仅本次读取注入，不继承完整env。
+
+result_file原配置仓库内相对working_dir已一次模板渲染，Prepare必须拒已有结果叶，不能先删unknown文件。父目录安全真实路径受workspace约束；运行后原生非阻塞open+fstat/SameFile/size/parent验证，不跟symlink/FIFO，读取后再次身份检查。Close只清自己输入/副本与确定本次结果，任意替换或保存失败保CleanupFailed；失败证据保journal，不因unknown删除证明材料。
+
+query使用原frozenQueryArgv/原SHA及明确过期管理Task，既有安全Checkout创建自有隔离工作区（不读当前profile或原用户PID），仅调用这一命令，不Run原普通/收尾步骤。当前NodeActor/session+Task.ID/Nonce/ExpiresAt绑定；30s、更早ctx，取消真实process组，失权闭锁，不借原已过期Lease。缺query_argv返回not_supported，不启动命令、unknown保持；不能把query声称只读变为系统保证。
+
+管理Task仅custom/query增加可选私有CustomQueryContext，具体字段单点定义于[go-api.md](contracts/go-api.md)。Store从原intent/原BuildSnapshot派生原仓库/SHA/查询数组/参数/声明env/有限事实及结果关联元数据，不从admin自由输入或旧journal读取；原Ref仅证据。query artifact为metadata-only、无path和旧下载权。原冻结事实与当前查询node.name/workspace明确分开；秘密只当前显式引用，越限task拒绝不截断，任何SafeDTO不含context。
+
+## 5. 保护与后续
+
+014负责审批挂起/恢复，012不制造approval result；019原seal/中央XML保护必须完整；015沿同名build条件选择，手动changes仍忽略、retry冻结。020保留策略必须保护原意图/unknown/待审批/stop/download及RetryOf父依赖，本功能不新增GC或改FK。跨功能公共字段只能在各正式已提交基线上最少调整，不能将规划版本当已实现。

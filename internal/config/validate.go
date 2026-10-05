@@ -63,7 +63,7 @@ func validateBuild(b *Build, field string) error {
 	}
 	if b.Runner != nil {
 		if b.Runner.Framework != "" && b.Runner.Framework != "native" && b.Runner.Framework != "flutter" {
-			return invalid(field+".runner.framework", "仅支持 native/flutter")
+			return invalid(field+".runner.framework", "只允许native/flutter")
 		}
 		if b.Runner.Platform != "android" && b.Runner.Platform != "ios" {
 			return invalid(field+".runner.platform", "仅支持 android/ios")
@@ -257,6 +257,25 @@ func validateStep(s *Step, params map[string]Parameter, field, defaultName strin
 			}
 		}
 		if s.Target == "custom" {
+			if s.File == "" || s.AppIdentifier == "" {
+				return invalid(field, "custom需要唯一产物模式和应用标识")
+			}
+			if s.Credentials != "" && !secretReference.MatchString(s.Credentials) {
+				return invalid(field+".credentials", "需要完整节点环境引用")
+			}
+			for _, argv := range [][]string{s.Argv, s.QueryArgv} {
+				if len(argv) > 128 {
+					return invalid(field+".argv", "超过命令项上限")
+				}
+				total := 0
+				for _, arg := range argv {
+					total += len(arg)
+					if len(arg) > 4096 || strings.ContainsRune(arg, 0) || total > 64<<10 {
+						return invalid(field+".argv", "命令超过限额或含NUL")
+					}
+				}
+			}
+
 			if len(s.Argv) == 0 || strings.TrimSpace(s.Argv[0]) == "" {
 				return invalid(field+".argv", "需要非空命令列表")
 			}

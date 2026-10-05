@@ -76,4 +76,4 @@ func publicationArtifact(tx *gorm.DB, row buildRecord, task protocol.TaskSnapsho
 }
 
 var publishEvidenceCodes = []string{"", "remote_receipt", "remote_state", "confirmed_not_sent", "remote_rejected", "result_unconfirmed", "transport_unconfirmed", "query_only"}
-var publishMutationStages = []string{"", "not_started", "upload", "edit", "bundle", "track", "commit", "upload_binary", "select_build", "set_release_policy", "create_review", "add_review_item", "submit_review"}
+var publishMutationStages = []string{"", "not_started", "upload", "edit", "bundle", "track", "commit", "upload_binary", "select_build", "set_release_policy", "create_review", "add_review_item", "submit_review", "custom_upload"}

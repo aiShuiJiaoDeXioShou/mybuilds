@@ -117,6 +117,9 @@ func validatePrepared(prepared PreparedBuild) (PreparedBuild, bool, error) {
 		}
 		definition.Notifications = nil
 	}
+	if !validateOrigin(prepared.Snapshot.Origin, *definition) {
+		return prepared, false, ErrInvalid
+	}
 	if len(prepared.Snapshot.Params) > 128 {
 		return prepared, false, ErrInvalid
 	}
@@ -241,7 +244,7 @@ func (s *Store) Enqueue(ctx context.Context, input EnqueueInput) (BatchResult, e
 		if project.PolicyVersion != input.ProjectVersion {
 			return ErrConflict
 		}
-		if !validHex(input.SHA, 40, 64) || !validHex(input.SourceDigest, 64) || !validBranchPattern(input.Branch) || strings.ContainsAny(input.Branch, "*?[") || !slices.Contains([]string{"auto", "repo"}, input.Source) || !sourceFileValid(input.File) || len(input.Builds) == 0 || len(input.Builds) > 64 {
+		if !validHex(input.SHA, 40, 64) || !validHex(input.SourceDigest, 64) || !validBranchPattern(input.Branch) || strings.ContainsAny(input.Branch, "*?[") || !slices.Contains([]string{"auto", "repo", "profile"}, input.Source) || !sourceFileValid(input.File) || len(input.Builds) == 0 || len(input.Builds) > 64 {
 			return ErrInvalid
 		}
 		prepared := make([]PreparedBuild, len(input.Builds))
@@ -254,6 +257,9 @@ func (s *Store) Enqueue(ctx context.Context, input EnqueueInput) (BatchResult, e
 			}
 			names[b.Name] = true
 			validated, upload, err := validatePrepared(b)
+			if !originBatchMatches(b.Snapshot.Origin, input.SHA, input.Source, input.File) {
+				return ErrInvalid
+			}
 			if err != nil {
 				return err
 			}

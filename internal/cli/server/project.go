@@ -19,19 +19,27 @@ func projectInputFlags(cmd *cobra.Command) {
 	cmd.Flags().Int64("build-number-start", 1, "首次构建编号")
 	cmd.Flags().String("settings", "", "本地settings文件")
 	cmd.Flags().String("file", "", "仓库相对流水线文件")
-	for _, name := range []string{"framework", "platform", "poll", "schedule"} {
+	for _, name := range []string{"poll", "schedule"} {
 		cmd.Flags().String(name, "", "当前未实现")
 	}
+	cmd.Flags().String("framework", "", "构建框架native/flutter")
+	cmd.Flags().String("platform", "", "android/ios或android,ios")
 	cmd.Flags().Bool("hook", false, "当前未实现")
 }
 func localProjectInput(cmd *cobra.Command, name string) (store.ProjectInput, error) {
-	for _, flag := range []string{"framework", "platform", "hook", "poll", "schedule"} {
+	for _, flag := range []string{"hook", "poll", "schedule"} {
 		if cmd.Flags().Changed(flag) {
 			return store.ProjectInput{}, errors.New("项目绑定方案与自动触发尚未支持")
 		}
 	}
 	if cmd.Flags().Changed("file") && cmd.Flags().Changed("settings") {
 		return store.ProjectInput{}, errors.New("file与settings不能同时指定")
+	}
+	if (cmd.Flags().Changed("framework") || cmd.Flags().Changed("platform")) && (cmd.Flags().Changed("file") || cmd.Flags().Changed("settings")) {
+		return store.ProjectInput{}, errors.New("框架平台不能与file/settings混用")
+	}
+	if cmd.Flags().Changed("framework") && !cmd.Flags().Changed("platform") {
+		return store.ProjectInput{}, errors.New("framework需要platform")
 	}
 	var input store.ProjectInput
 	input.Name = name
@@ -62,6 +70,18 @@ func localProjectInput(cmd *cobra.Command, name string) (store.ProjectInput, err
 			return input, errors.New("需要仓库相对file")
 		}
 		input.Settings = config.ProjectSettings{Pipeline: &config.PipelineSettings{Source: "repo", File: file}}
+	}
+	if cmd.Flags().Changed("platform") {
+		framework, _ := cmd.Flags().GetString("framework")
+		platform, _ := cmd.Flags().GetString("platform")
+		if cmd.Flags().Changed("framework") && framework == "" {
+			return input, errors.New("framework不能为空")
+		}
+		binding, err := config.BindProfiles(framework, platform)
+		if err != nil {
+			return input, err
+		}
+		input.Settings.Pipeline = binding
 	}
 	return input, config.ValidateProjectSettings(input.Settings)
 }
