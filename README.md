@@ -6,7 +6,7 @@
 
 内置构建方案 · 多节点调度 · 发布审批 · 纯 CLI
 
-[功能](#功能概览) · [安装](#安装) · [接入项目](#接入项目) · [构建与发布](#管理构建与发布) · [工作方式](#工作方式) · [平台与限制](#平台与限制) · [文档与贡献](#文档与贡献)
+[功能](#功能概览) · [安装](#安装) · [首次部署](#首次部署控制端客户端与同机-agent) · [接入项目](#接入项目) · [构建与发布](#管理构建与发布) · [工作方式](#工作方式) · [平台与限制](#平台与限制) · [命令速查](docs/CLI.md) · [文档与贡献](#文档与贡献)
 
 </div>
 
@@ -50,24 +50,146 @@ go build -o bin/mybuilds-server ./cmd/mybuilds-server
 go build -o bin/mybuilds-agent ./cmd/mybuilds-agent
 ```
 
-<details>
-<summary>先试运行：无需移动 SDK 或控制端</summary>
+## 首次部署：控制端、客户端与同机 Agent
 
-安装客户端后，在同一终端创建一个空目录，生成并执行最小流水线：
+**服务端不会自动启动 Agent，也没有内置的默认构建节点。** 最小部署是在同一台机器上分别运行 `mybuilds-server` 和 `mybuilds-agent`，用 `mybuilds` 连接控制端。下面创建的 `local` 是普通节点名称；项目的 `--default-node local` 只指定任务执行位置，不会创建节点。
+
+| 程序 | 默认配置文件 | 职责 |
+|---|---|---|
+| `mybuilds-server` | `~/.mybuilds/server.yml` | 管理身份、项目、队列与记录 |
+| `mybuilds` | `~/.mybuilds/client.yml` | 连接控制端，提交构建、查询和下载结果 |
+| `mybuilds-agent` | `~/.mybuilds/agent.yml` | 连接控制端，在本机执行构建 |
+
+下面按**首次安装、三个终端、同一用户**演示。已有配置请复用，不要覆盖。每个终端都需将安装得到的 `bin` 绝对路径加入 PATH；配置保存在默认位置后，后续命令无需 `--config`。
+
+### 1. 终端一：初始化并启动控制端
 
 ```bash
-mkdir mybuilds-demo
-cd mybuilds-demo
-mybuilds init
-mybuilds run --dry-run
-mybuilds run > result.json
+umask 077
+mkdir -p "$HOME/.mybuilds"
+chmod 0700 "$HOME/.mybuilds"
+
+cat > "$HOME/.mybuilds/server.yml" <<'YAML'
+listen: 127.0.0.1:8787
+data_dir: ~/.mybuilds/server
+concurrency: 1
+database:
+  driver: sqlite
+YAML
+
+mybuilds-server token create --role admin
 ```
 
-默认流水线只打印“请编辑 mybuilds.yml 配置构建步骤”。执行日志写入 stderr，结果 JSON 写入 stdout；`result.json` 的 `builds[0].status` 应为 `succeeded`。`--dry-run` 只校验并预览，不执行脚本或检查实际 SDK。
+`token create` 会初始化数据库并创建管理员身份，输出 `ID`、`ROLE`、`TOKEN`。保存这次返回的 **TOKEN**，下一步配置客户端时使用；明文只返回一次。无需另行执行 `migrate`。
 
-继续体验[参数与条件](examples/local-run.yml)、[制品收集](examples/local-artifacts.yml)或[JUnit 报告](examples/local-reports.yml)。
+然后启动控制端，并保持此终端运行：
 
-</details>
+```bash
+mybuilds-server serve
+```
+
+### 2. 终端二：连接客户端并登记节点
+
+将下面的 `PASTE_ADMIN_TOKEN_HERE` 替换为上一步返回的管理员 TOKEN，再执行：
+
+```bash
+umask 077
+cat > "$HOME/.mybuilds/client.yml" <<'YAML'
+server: http://127.0.0.1:8787
+token: 'PASTE_ADMIN_TOKEN_HERE'
+timeout: 30s
+YAML
+chmod 0600 "$HOME/.mybuilds/client.yml"
+
+mybuilds status --json
+mybuilds node create local --capacity 1
+```
+
+`status` 成功表示客户端连接和身份验证通过。`node create` 登记名为 `local` 的节点，返回它专用的 **TOKEN**；将其用于下一步的 Agent 配置，不能使用管理员 TOKEN 替代。登记节点不会自动启动 Agent。
+
+### 3. 终端三：启动同机 Agent
+
+将 `PASTE_NODE_TOKEN_HERE` 替换为 `node create` 返回的节点 TOKEN：
+
+```bash
+umask 077
+cat > "$HOME/.mybuilds/agent.yml" <<'YAML'
+server: http://127.0.0.1:8787
+node: local
+token: 'PASTE_NODE_TOKEN_HERE'
+capacity: 1
+data_dir: ~/.mybuilds/agent
+YAML
+chmod 0600 "$HOME/.mybuilds/agent.yml"
+
+mybuilds-agent serve
+```
+
+保持终端三运行，回到终端二检查：
+
+```bash
+mybuilds node show local --json
+```
+
+等待 `session_active` 为 `true`。本例只需要 shell 和 Git，可先运行通用脚本；缺少 Android / Xcode / Flutter 时，不能用该节点构建对应移动工程。移动节点还需匹配[模板的工具与标签要求](docs/USAGE.md#独立节点日志与制品)。
+
+### 4. 终端二：完成第一次构建并下载产物
+
+创建独立的演示 Git 仓库，无需移动 SDK：
+
+```bash
+demo_repo="$(mktemp -d)"
+cat > "$demo_repo/mybuilds.yml" <<'YAML'
+version: 1
+steps:
+  - kind: run
+    name: build
+    run: |
+      mkdir -p output
+      printf 'hello mybuilds\n' > output/hello.txt
+  - kind: artifact
+    name: collect
+    paths: [output/hello.txt]
+YAML
+
+git -C "$demo_repo" init --initial-branch=main
+git -C "$demo_repo" add mybuilds.yml
+git -C "$demo_repo" -c user.name=Example -c user.email=example@example.test \
+  commit -m '添加演示流水线'
+
+mybuilds project init demo --repo "$demo_repo" \
+  --nodes local --default-node local --file mybuilds.yml
+mybuilds trigger demo --json
+```
+
+这里没有声明移动平台 `runner`，因此用 `--default-node local` 指定通用脚本的执行节点；它必须也在项目的 `--nodes` 授权列表中。
+
+从触发结果的 `builds[].id` 取得构建 ID，替换下面的 `BUILD_ID`：
+
+```bash
+mybuilds logs BUILD_ID --follow
+mybuilds build show BUILD_ID --json
+mybuilds artifact ls BUILD_ID --json
+```
+
+构建状态应为 `succeeded`，制品列表包含 `output/hello.txt`。用列表返回的制品 ID 替换 `ARTIFACT_ID`：
+
+```bash
+mybuilds artifact download ARTIFACT_ID --output ./hello.txt
+cat ./hello.txt
+```
+
+文件内容应为 `hello mybuilds`。下载校验大小与 SHA-256，并拒绝覆盖已有文件；无需再次创建项目或节点即可继续触发构建。
+
+### 后续启动与跨机器部署
+
+后续分别运行 `mybuilds-server serve` 和 `mybuilds-agent serve` 即可，客户端直接使用 `mybuilds …`。身份、节点和项目已持久化，不要重复初始化 token。上述服务均为前台进程，Ctrl-C 停止；没有自动安装系统服务。
+
+服务在线时，同一数据库被控制端独占。日常管理使用客户端；需要执行 `mybuilds-server token …`、`migrate` 等本机管理命令时，应先停控制端。
+
+跨机器部署时，客户端与 Agent 的 `server` 都改为控制端的 **HTTPS 地址**；`127.0.0.1` 只适合同机连接。控制端提供 HTTP 监听，HTTPS 可由反向代理提供；私有 CA 使用 `ca_file` 配置。各 Agent 独立登记、使用自己的 token 和数据目录，控制端与节点都需能读取项目 Git 仓库，详见[多机部署](docs/USAGE.md#独立节点日志与制品)。
+
+指定其他配置用 `--config /path/to/config.yml`。配置支持环境变量引用；已设置的 `MYBUILDS_CLIENT_TOKEN`、`MYBUILDS_AGENT_TOKEN` 等会优先于文件，完整规则见[命令速查](docs/CLI.md#选择程序与配置)。
 
 ## 接入项目
 
@@ -77,17 +199,17 @@ mybuilds run > result.json
 
 适合统一管理构建规则，或希望直接使用内置移动构建流程的团队。
 
-先按[控制端部署](docs/USAGE.md#控制端与远程排队)和[Agent 部署](docs/USAGE.md#独立节点日志与制品)完成服务配置，准备管理员客户端配置 `client.yml`。构建节点需安装对应 SDK，并通过 Agent 的 `secrets_file` 配置签名所需的秘密引用。
+先完成[首次部署](#首次部署控制端客户端与同机-agent)，或连接已有控制端。下面的命令使用默认 `~/.mybuilds/client.yml`。构建节点需安装对应 SDK，并通过 Agent 的 `secrets_file` 配置签名所需的秘密引用。
 
 以下以原生 Android 为例。将仓库地址与 `android-builder` 替换为自己的 Git 仓库和已登记节点；示例使用 `main` 分支：
 
 ```bash
-mybuilds --config ./client.yml project init mobile \
+mybuilds project init mobile \
   --repo git@github.com:your-org/your-app.git \
   --nodes android-builder \
   --framework native --platform android
 
-mybuilds --config ./client.yml trigger mobile \
+mybuilds trigger mobile \
   --build android --param version=1.2.3 --json
 ```
 
@@ -130,7 +252,7 @@ pipeline:
 应用到刚才登记的项目：
 
 ```bash
-mybuilds --config ./client.yml project set mobile --settings ./settings.yml
+mybuilds project set mobile --settings ./settings.yml
 ```
 
 `settings.yml` 是导入控制端的项目管理设置，无需提交到应用仓库。这里会替换项目原有的整个 `pipeline` 设置块；多构建项目需保留所需的全部绑定。
@@ -171,11 +293,11 @@ mybuilds run --build android --param version=1.2.3 --param build_number=42
 需要远程执行时，将配置提交到 Git，再登记项目。以下使用另一项目名 `mobile-repo`，仓库地址和节点名同样需替换：
 
 ```bash
-mybuilds --config ./client.yml project init mobile-repo \
+mybuilds project init mobile-repo \
   --repo git@github.com:your-org/your-app.git \
   --nodes android-builder --file mybuilds.yml
 
-mybuilds --config ./client.yml trigger mobile-repo --build android --json
+mybuilds trigger mobile-repo --build android --json
 ```
 
 这里的 `project init --file` 指定**仓库内的相对路径**，并选择 `repo` 模式。本地 `run --file /absolute/path/pipeline.yml` 则允许读取仓库外的配置，脚本仍以当前目录为工作目录；本地运行不会自动读取控制端方案。
@@ -187,10 +309,10 @@ mybuilds --config ./client.yml trigger mobile-repo --build android --json
 从 `trigger --json` 返回值的 `builds[].id` 取得 `BUILD_ID`，从制品列表取得 `ARTIFACT_ID`：
 
 ```bash
-mybuilds --config ./client.yml build show BUILD_ID --json
-mybuilds --config ./client.yml logs BUILD_ID --follow
-mybuilds --config ./client.yml artifact ls BUILD_ID --json
-mybuilds --config ./client.yml artifact download ARTIFACT_ID --output ./app.apk
+mybuilds build show BUILD_ID --json
+mybuilds logs BUILD_ID --follow
+mybuilds artifact ls BUILD_ID --json
+mybuilds artifact download ARTIFACT_ID --output ./app.apk
 ```
 
 本地 `doctor` 检查构建环境，`doctor --node NODE` 查看节点最近的实际诊断报告。取消、原快照重试与节点维护见[使用指南](docs/USAGE.md)。
@@ -230,6 +352,7 @@ flowchart LR
 
 | 入口 | 内容 |
 |---|---|
+| [命令速查](docs/CLI.md) | 三个程序的命令、常用选项、权限与操作示例 |
 | [使用指南](docs/USAGE.md) | 完整部署、配置、命令与故障恢复 |
 | [示例目录](examples/) | 移动工程、本地流水线、报告和自定义发布 |
 | [验收指南](docs/ACCEPTANCE.md) | 真实构建、签名与发布的验证步骤 |
