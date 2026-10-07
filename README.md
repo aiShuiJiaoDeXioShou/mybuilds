@@ -2,36 +2,39 @@
 
 # mybuilds
 
-**在自己的构建机上，构建和发布移动应用。**
+**面向 Android、iOS 和 Flutter 的自托管构建与发布工具。**
 
-Android · iOS · Flutter ｜ YAML 流水线 ｜ 自托管 ｜ 纯 CLI
+内置构建方案 · 多节点调度 · 发布审批 · 纯 CLI
 
-[快速开始](#快速开始) · [移动工程接入](#移动工程接入) · [使用文档](docs/USAGE.md) · [参与贡献](#参与贡献)
+[功能](#功能概览) · [安装](#安装) · [接入项目](#接入项目) · [构建与发布](#管理构建与发布) · [工作方式](#工作方式) · [平台与限制](#平台与限制) · [文档与贡献](#文档与贡献)
 
 </div>
 
 ---
 
-mybuilds 是面向移动开发团队的构建与发布工具。把构建流程写进仓库中的 `mybuilds.yml`，先在本地调通，再交给自己的 Linux 或 macOS 构建机执行。构建参数、任务排队、日志、制品和发布审批都通过命令行管理。
+mybuilds 让移动开发团队通过命令行管理自己的构建机：注册 Git 项目，选择构建方案，触发构建，查看日志、下载安装包，再审批发布。
 
-工程继续使用已有的 Gradle、Xcode、Flutter 和 shell 脚本；商店发布集成 fastlane，也支持接入自己的发布脚本。
+**应用仓库无需包含 `mybuilds.yml`。** 你可以直接绑定内置构建方案，或使用管理员在控制端维护的自定义方案；也可以把流水线放进仓库，随代码一起管理。
 
-> **项目状态**：核心构建与调度流程已实现，当前从源码安装。iOS / Flutter 签名、商店发布和外部 Git 平台 Webhook 投递尚未完成真实环境验收，详见[平台与限制](#平台与限制)。
+构建继续使用工程已有的 Gradle、Xcode、Flutter 和 shell 脚本。Google Play / App Store 发布集成 fastlane，已有 Fastfile 或其他分发服务可通过自定义发布接入。
 
-## 为什么用 mybuilds
+> 当前从源码安装。核心流程及必要自动检查已完成；真实 iOS / Flutter 签名、商店发布和外部 Git 平台投递仍有人工待验项，见[平台与限制](#平台与限制)。
 
-- **本地调通，再交给构建机** — 本地与 Agent 共用流水线引擎，支持执行前预览配置。
-- **围绕移动工程组织构建** — 内置原生 Android、iOS 和 Flutter 模板，通过参数传入版本、构建号和渠道。
-- **管理自己的构建资源** — 按平台、标签和容量选择 Linux / macOS 节点；默认 SQLite，也可使用 PostgreSQL。
-- **保留每次构建的依据** — 远程构建固定 Git 提交，集中保存日志、制品和 JUnit 报告，制品下载校验 SHA-256。
-- **把审批放进发布流程** — 审批通过后在原节点继续执行，集成 Google Play、App Store 和自定义发布流程。
-- **从代码推送触发构建** — 接收 GitHub、GitLab、Gitee 和通用 Webhook，支持去重、变更路径筛选和触发等待窗口。
+## 功能概览
 
-适合已有移动工程、希望复用自有构建机，并通过 CLI 管理团队构建的开发者。已有 Fastfile 可以通过[自定义发布](examples/custom/README.md)接入。
+| 你要做的事 | mybuilds 提供的能力 |
+|---|---|
+| 接入移动工程 | 原生 Android / iOS、Flutter Android / iOS 四套模板与构建方案；`doctor` 检查工具链与签名准备情况 |
+| 管理多个项目 | Git 仓库注册、项目分组、可复用方案；一个仓库定义多个命名构建，按项目分配构建号 |
+| 调度自有构建机 | 一个控制端管理多个 Linux / macOS Agent，按平台、标签和容量调度；支持节点停接新任务与停用 |
+| 控制构建过程 | 参数约束、条件执行、超时与成功 / 失败 / 始终收尾；支持取消、重启状态核对和原快照重试 |
+| 查看与保留结果 | 实时日志、制品下载与 SHA-256 校验、JUnit 报告；按构建数量和天数清理历史 |
+| 审批并发布 | 审批后在原节点继续；已配置的测试报告失败时阻止发布；支持 Google Play、App Store 和自定义发布结果核对 |
+| 自动触发构建 | GitHub、GitLab、Gitee 和通用 Webhook，支持去重、变更路径筛选和触发等待窗口 |
 
 ## 安装
 
-准备 **Go 1.25.0+** 和 **Git**，下载仓库源码后，在包含 `go.mod` 的根目录执行：
+准备 **Go 1.25.0+** 和 **Git**。下载源码后，在包含 `go.mod` 的仓库根目录执行：
 
 ```bash
 mkdir -p bin
@@ -40,157 +43,209 @@ export PATH="$PWD/bin:$PATH"
 mybuilds --help
 ```
 
-以上命令适用于 macOS / Linux，PATH 设置仅对当前终端生效。运行下面的本地示例只需要客户端，无需部署控制端或安装移动 SDK。
-
-<details>
-<summary>部署远程构建：编译控制端和 Agent</summary>
-
-在对应机器的源码根目录执行：
+以上命令适用于 macOS / Linux，PATH 设置仅对当前终端生效。本地调试只需要客户端；远程构建还需在对应机器上编译控制端和 Agent：
 
 ```bash
 go build -o bin/mybuilds-server ./cmd/mybuilds-server
 go build -o bin/mybuilds-agent ./cmd/mybuilds-agent
 ```
 
-控制端与 Agent 可以部署在同一台机器。启动、身份配置和节点登记见[部署指南](docs/USAGE.md#控制端与远程排队)。
+<details>
+<summary>先试运行：无需移动 SDK 或控制端</summary>
 
-</details>
-
-## 快速开始
-
-下面的例子执行一个 shell 脚本，再把生成的文件保存为构建制品。无需移动工程或 SDK。
-
-### 1. 创建工作目录
-
-完成安装后，在同一终端执行：
+安装客户端后，在同一终端创建一个空目录，生成并执行最小流水线：
 
 ```bash
 mkdir mybuilds-demo
 cd mybuilds-demo
-```
-
-### 2. 定义流水线
-
-新建 `mybuilds.yml`：
-
-```yaml
-version: 1
-steps:
-  - kind: run
-    name: build
-    run: |
-      mkdir -p output
-      printf 'hello mybuilds\n' > output/hello.txt
-  - kind: artifact
-    name: collect
-    paths: [output/hello.txt]
-```
-
-`run` 执行脚本，`artifact` 收集文件并保存独立快照。这个配置简化自[制品示例](examples/local-artifacts.yml)。
-
-### 3. 预览并执行
-
-```bash
+mybuilds init
 mybuilds run --dry-run
 mybuilds run > result.json
-cat output/hello.txt
 ```
 
-输出：
+默认流水线只打印“请编辑 mybuilds.yml 配置构建步骤”。执行日志写入 stderr，结果 JSON 写入 stdout；`result.json` 的 `builds[0].status` 应为 `succeeded`。`--dry-run` 只校验并预览，不执行脚本或检查实际 SDK。
 
-```text
-hello mybuilds
+继续体验[参数与条件](examples/local-run.yml)、[制品收集](examples/local-artifacts.yml)或[JUnit 报告](examples/local-reports.yml)。
+
+</details>
+
+## 接入项目
+
+两种方式使用同一套流水线引擎。**`init` 在本地生成文件，`project init` 向控制端登记项目。**
+
+### 方式一：使用构建方案，仓库不放 YAML
+
+适合统一管理构建规则，或希望直接使用内置移动构建流程的团队。
+
+先按[控制端部署](docs/USAGE.md#控制端与远程排队)和[Agent 部署](docs/USAGE.md#独立节点日志与制品)完成服务配置，准备管理员客户端配置 `client.yml`。构建节点需安装对应 SDK，并通过 Agent 的 `secrets_file` 配置签名所需的秘密引用。
+
+以下以原生 Android 为例。将仓库地址与 `android-builder` 替换为自己的 Git 仓库和已登记节点；示例使用 `main` 分支：
+
+```bash
+mybuilds --config ./client.yml project init mobile \
+  --repo git@github.com:your-org/your-app.git \
+  --nodes android-builder \
+  --framework native --platform android
+
+mybuilds --config ./client.yml trigger mobile \
+  --build android --param version=1.2.3 --json
 ```
 
-`--dry-run` 只校验并预览配置。实际执行时，日志写入 stderr，结果 JSON 写入 stdout。本例的 `result.json` 中，`builds[0].status` 应为 `succeeded`，`result_dir` 指向日志与制品快照目录。
+第一条命令绑定内置 `native-android` 方案，不往仓库写入文件。第二条命令固定 Git 提交并提交构建任务；无合格 Agent 时保持排队。
 
-接下来可以把脚本换成自己的构建命令，或参考[参数与条件](examples/local-run.yml)、[JUnit 报告](examples/local-reports.yml)和[多构建配置](examples/pipeline-preview.yml)示例。
-
-## 移动工程接入
-
-在**已有移动工程根目录**选择对应命令，生成可编辑的 `mybuilds.yml`：
-
-| 工程 | 初始化命令 | 接入指南 |
+| 工程 | 创建项目时选择 | 绑定的内置方案 |
 |---|---|---|
-| 原生 Android | `mybuilds init --platform android` | [Android 示例](examples/android/README.md) |
-| 原生 iOS | `mybuilds init --platform ios` | [iOS 指南](specs/005-ios-build/quickstart.md) |
-| Flutter 双平台 | `mybuilds init --framework flutter --platform android,ios` | [Flutter 示例](examples/flutter/README.md) |
+| 原生 Android | `--framework native --platform android` | `native-android` |
+| 原生 iOS | `--framework native --platform ios` | `native-ios` |
+| Flutter Android | `--framework flutter --platform android` | `flutter-android` |
+| Flutter iOS | `--framework flutter --platform ios` | `flutter-ios` |
+| Flutter 双平台 | `--framework flutter --platform android,ios` | 同时绑定两个 Flutter 方案 |
 
-按工程实际情况修改模板中的应用标识、工程路径、签名环境引用和制品路径。然后预览配置并执行构建。以 Android 为例：
+内置方案使用约定的构建任务和制品路径，工程需按[Android](examples/android/README.md)、[iOS](specs/005-ios-build/quickstart.md)或[Flutter](examples/flutter/README.md)指南准备参数、版本与签名接入。默认方案只构建并收集制品，不会自动上传商店。
+
+#### 配置从哪里来
+
+上面的快捷创建方式使用 `auto` 模式。三种来源的行为如下：
+
+| `pipeline.source` | 使用哪份流水线 |
+|---|---|
+| `auto`（默认） | 优先使用仓库配置；仅当文件不存在时，使用已绑定的构建方案 |
+| `repo` | 始终使用仓库配置，文件不存在时报错 |
+| `profile` | 始终使用绑定方案，不读取仓库配置文件 |
+
+`auto` 不会因为 YAML 写错或 Git 读取失败而回退；仓库定义与方案定义也不会合并。`profile` 仍需读取应用代码并固定 Git 提交。
+
+如果希望始终使用控制端方案，在仓库外保存 `settings.yml`：
+
+```yaml
+pipeline:
+  source: profile
+  builds:
+    android:
+      profile: native-android
+      params:
+        version: "1.2.3"
+```
+
+应用到刚才登记的项目：
+
+```bash
+mybuilds --config ./client.yml project set mobile --settings ./settings.yml
+```
+
+`settings.yml` 是导入控制端的项目管理设置，无需提交到应用仓库。这里会替换项目原有的整个 `pipeline` 设置块；多构建项目需保留所需的全部绑定。
+
+<details>
+<summary>使用团队自定义构建方案</summary>
+
+管理员可在控制端的 `server.yml` 中注册方案：
+
+```yaml
+build_profiles:
+  company-android:
+    file: ./profiles/company-android.yml
+```
+
+方案文件是一份带 `version: 1`、`steps` 等字段的完整单构建 YAML，不包含 `builds` 外层。移动构建方案需保留相应的 `runner`、参数和签名配置；未声明 `runner` 的通用脚本方案，需在登记项目时指定 `--default-node`。文件路径相对 `server.yml`，由控制端启动时加载，修改后需重启控制端。
+
+在项目设置中把 `profile: native-android` 改为 `profile: company-android`，再导入即可。多个项目可以绑定同一个方案，各自保留独立构建记录。排队任务和重试使用已冻结的定义，不会被后续方案修改替换。
+
+</details>
+
+### 方式二：在仓库中维护流水线
+
+适合需要随代码评审构建脚本、步骤和参数的项目。在已有移动工程根目录生成可编辑配置：
+
+```bash
+# 原生 Android；已有 mybuilds.yml 时拒绝覆盖
+mybuilds init --framework native --platform android
+```
+
+iOS 使用 `--platform ios`，Flutter 双平台使用 `--framework flutter --platform android,ios`。按工程修改生成的 `mybuilds.yml`，然后预览并执行：
 
 ```bash
 mybuilds run --build android --param version=1.2.3 --param build_number=42 --dry-run
 mybuilds run --build android --param version=1.2.3 --param build_number=42
 ```
 
-初始化不会覆盖已有配置，也不会创建移动工程或安装 SDK。Android 模板默认收集 APK、AAB 和 R8 mapping，需按工程实际输出调整。
+需要远程执行时，将配置提交到 Git，再登记项目。以下使用另一项目名 `mobile-repo`，仓库地址和节点名同样需替换：
 
-一份配置可以包含多个命名构建，例如 `android` 和 `ios`。使用 `--build android,ios` 选择多个构建，或用 `--all` 选择全部；本地依次执行，远程按节点容量调度。
+```bash
+mybuilds --config ./client.yml project init mobile-repo \
+  --repo git@github.com:your-org/your-app.git \
+  --nodes android-builder --file mybuilds.yml
 
-## 远程构建
+mybuilds --config ./client.yml trigger mobile-repo --build android --json
+```
 
-需要团队共用构建机时，部署控制端和 Agent：
+这里的 `project init --file` 指定**仓库内的相对路径**，并选择 `repo` 模式。本地 `run --file /absolute/path/pipeline.yml` 则允许读取仓库外的配置，脚本仍以当前目录为工作目录；本地运行不会自动读取控制端方案。
+
+## 管理构建与发布
+
+一个项目可以包含 `android`、`ios` 或不同变体等命名构建。`--build android,ios` 选择多个，`--all` 选择全部；本地依次执行，远程按节点容量调度。远程同项目同名构建串行，一次批量触发使用同一个 Git 提交。
+
+从 `trigger --json` 返回值的 `builds[].id` 取得 `BUILD_ID`，从制品列表取得 `ARTIFACT_ID`：
+
+```bash
+mybuilds --config ./client.yml build show BUILD_ID --json
+mybuilds --config ./client.yml logs BUILD_ID --follow
+mybuilds --config ./client.yml artifact ls BUILD_ID --json
+mybuilds --config ./client.yml artifact download ARTIFACT_ID --output ./app.apk
+```
+
+本地 `doctor` 检查构建环境，`doctor --node NODE` 查看节点最近的实际诊断报告。取消、原快照重试与节点维护见[使用指南](docs/USAGE.md)。
+
+发布流程使用 `approval` / `upload` 步骤，由远程 Agent 执行。管理员需绑定应用、准备渠道凭据，并在触发时显式传入 `--allow-upload`。审批后继续使用原构建产物；上传结果未知时保留保护，需核对结果，不会自动重发。详见[审批指南](docs/USAGE.md#审批与webhook)、[Google Play](specs/010-google-play/quickstart.md)、[App Store](specs/011-app-store/quickstart.md)和[自定义发布](examples/custom/README.md)。
+
+## 工作方式
 
 ```mermaid
 flowchart LR
-    CLI[开发者 CLI] --> Server[控制端：排队与审批]
+    CLI[开发者 CLI] --> Server[控制端：项目、队列与审批]
     Git[Git Webhook] --> Server
-    Server --> Android[Linux / macOS Agent<br/>Android · Flutter Android]
-    Server --> Apple[macOS Agent<br/>iOS · Flutter iOS]
-    Android --> Results[日志 · 制品 · 发布记录]
-    Apple --> Results
+    Repo[仓库流水线] -.-> Server
+    Profiles[控制端构建方案] -.-> Server
+    Server --> Linux[Linux / macOS Agent<br/>Android · Flutter Android]
+    Server --> Mac[macOS Agent<br/>iOS · Flutter iOS]
+    Linux --> Results[日志 · 制品 · 报告 · 发布记录]
+    Mac --> Results
 ```
 
-三个程序各有职责：
-
-| 程序 | 职责 |
-|---|---|
-| `mybuilds` | 生成配置、本地调试、提交远程任务、查看日志和下载制品 |
-| `mybuilds-server` | 管理项目、权限、队列、审批和构建记录 |
-| `mybuilds-agent` | 主动连接控制端，在构建机上执行任务并回传结果 |
-
-从[部署指南](docs/USAGE.md#控制端与远程排队)开始，配置控制端、登记 Agent 和项目并授权节点，再通过 CLI 提交构建。没有合格 Agent 时，任务保持排队；同项目同名构建串行，不同构建可按容量并行。
-
-商店发布由远程 Agent 执行。发布前需准备渠道工具和凭据，管理员触发构建时需显式传入 `--allow-upload`，详见[发布与审批](docs/USAGE.md#审批与webhook)。
+`mybuilds` 是开发者客户端；`mybuilds-server` 管理项目、权限和队列；`mybuilds-agent` 主动连接控制端，在构建机上执行任务。控制端与 Agent 可以同机部署，也可以分开部署。默认使用 SQLite，支持 PostgreSQL。
 
 ## 平台与限制
 
-| 运行环境 | 客户端 | 本地执行 / 控制端 / Agent | 移动构建目标 |
+| 运行环境 | 客户端远程操作 / 配置生成与预览 | 本地执行 / 控制端 / Agent | 移动构建目标 |
 |---|---|---|---|
 | macOS | 支持 | 支持 | Android、iOS、Flutter Android / iOS |
 | Linux | 支持 | 支持 | Android、Flutter Android |
-| Windows | 远程操作、配置生成与预览 | 暂不支持 | 交给远程节点执行 |
+| Windows | 支持 | 暂不支持 | 由远程节点执行 |
 
-移动构建需要自行准备工具链：Android 使用 Java 17+、Android SDK 和工程 Gradle wrapper；Flutter 另需 Flutter SDK；iOS 签名需要 macOS 15+、Xcode、有效签名材料，以及启用 cgo 编译的程序。
+- **工具链自备**：Android 需要 Java 17+、Android SDK 和工程 Gradle wrapper；Flutter 另需 Flutter SDK；iOS 签名需要 macOS 15+、Xcode、有效签名材料，以及启用 cgo 编译的程序。
+- **宿主机执行**：Agent 直接执行可信仓库的脚本，应使用独立构建账户。跨主机连接需要验证证书的 HTTPS。
+- **验证范围**：原生 Android 已有真实签名构建记录；iOS / Flutter 签名、Apple / Google 商店操作及外部 Git 平台投递仍有人工待验项。已完成的自动与集成验证见[实施历史](docs/IMPLEMENTATION_HISTORY.md)和[验证记录](examples/mvp/validation.md)。
+- **当前范围**：采用纯 CLI 形态；机器人通知发送、轮询 / cron 触发及更多内置分发渠道尚未实现。自定义方案仍用 YAML 描述，暂不支持通过 CLI 逐步添加任意流水线步骤。
 
-当前已有原生 Android 真实签名构建验证；真实 iOS / Flutter 签名、Apple / Google 商店发布和外部 Git 平台 push 仍需按[验收指南](docs/ACCEPTANCE.md)验证。完整验证范围见[验证记录](examples/mvp/validation.md)。
+## 文档与贡献
 
-mybuilds 采用纯 CLI 形态。机器人通知发送、轮询 / cron 触发尚未实现。Agent 直接在宿主机执行脚本，应使用可信仓库和独立构建账户；跨主机连接需要验证证书的 HTTPS。
-
-## 文档
-
-| 想做什么 | 从这里开始 |
+| 入口 | 内容 |
 |---|---|
-| 配置流水线、部署服务、查阅命令 | [使用指南](docs/USAGE.md) |
-| 接入工程或复用流水线 | [示例目录](examples/) |
-| 验证真实构建、签名与发布 | [验收指南](docs/ACCEPTANCE.md) |
-| 了解代码结构、测试和版本构建 | [开发指南](docs/DEVELOPMENT.md) |
-| 了解设计与后续计划 | [产品规划](docs/plans/PLAN.md) · [实施历史](docs/IMPLEMENTATION_HISTORY.md) |
+| [使用指南](docs/USAGE.md) | 完整部署、配置、命令与故障恢复 |
+| [示例目录](examples/) | 移动工程、本地流水线、报告和自定义发布 |
+| [验收指南](docs/ACCEPTANCE.md) | 真实构建、签名与发布的验证步骤 |
+| [开发指南](docs/DEVELOPMENT.md) | 代码结构、测试与版本构建 |
+| [产品方案](docs/plans/PLAN.md) | 项目定位与设计决策；实际交付状态以实施历史为准 |
 
-## 参与贡献
+欢迎通过 GitHub Issues 报告问题、讨论需求，或提交 Pull Request 改进代码、文档和示例。问题报告请附运行环境、复现步骤和脱敏后的配置与日志。
 
-欢迎通过 GitHub Issues 报告问题、讨论需求，或提交 Pull Request 改进代码、文档和示例。报告问题时，请附上运行环境、复现步骤和脱敏后的配置与日志。
-
-开发前阅读 [开发指南](docs/DEVELOPMENT.md) 和 [AGENTS.md](AGENTS.md)。程序入口位于 `cmd/`，实现位于 `internal/`，功能规范与验证记录位于 `specs/`。注释与文档使用中文，功能开发遵循项目内的 Spec Kit 流程。
-
-在仓库根目录运行检查：
+程序入口在 `cmd/`，实现在 `internal/`，功能规范与验证记录在 `specs/`。贡献前阅读 [AGENTS.md](AGENTS.md) 和开发指南；注释与文档使用中文，开发遵循项目内的 Spec Kit 流程。代码检查命令：
 
 ```bash
 go test -p 1 ./...
 go vet ./...
 ```
 
-全套测试使用 `-p 1` 隔离跨包故障注入，不与真实应用验收同时运行。
+`-p 1` 用于隔离跨包故障注入，全套测试不与真实应用验收同时运行。
 
 ## 许可证
 
