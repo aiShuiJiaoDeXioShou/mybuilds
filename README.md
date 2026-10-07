@@ -18,7 +18,7 @@ mybuilds 让移动开发团队通过命令行管理自己的构建机：注册 G
 
 构建继续使用工程已有的 Gradle、Xcode、Flutter 和 shell 脚本。Google Play / App Store 发布集成 fastlane，已有 Fastfile 或其他分发服务可通过自定义发布接入。
 
-> 当前从源码安装。核心流程及必要自动检查已完成；真实 iOS / Flutter 签名、商店发布和外部 Git 平台投递仍有人工待验项，见[平台与限制](#平台与限制)。
+> 提供 macOS / Linux / Windows 客户端安装包，服务端支持 macOS / Linux（Windows 使用 WSL）。核心流程及必要自动检查已完成；真实 iOS / Flutter 签名、商店发布和外部 Git 平台投递仍有人工待验项，见[平台与限制](#平台与限制)。
 
 ## 功能概览
 
@@ -33,6 +33,29 @@ mybuilds 让移动开发团队通过命令行管理自己的构建机：注册 G
 | 自动触发构建 | GitHub、GitLab、Gitee 和通用 Webhook，支持去重、变更路径筛选和触发等待窗口 |
 
 ## 安装
+
+从 [GitHub Releases](https://github.com/aiShuiJiaoDeXioShou/mybuilds/releases) 安装预编译程序，无需 Go。macOS / Linux 客户端：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aiShuiJiaoDeXioShou/mybuilds/v0.1.0/scripts/install-client.sh -o install-client.sh
+bash install-client.sh
+```
+
+服务端和同机 Agent：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aiShuiJiaoDeXioShou/mybuilds/v0.1.0/scripts/install-server.sh -o install-server.sh
+bash install-server.sh --with-agent
+```
+
+脚本校验下载包，初始化私有配置，安装系统服务及两个 AI skills。Unix 需要 Python 3/curl，服务端另需 Git；新终端可使用 `mybuilds`。SSH 专用服务器可加 `--service system`，以普通用户通过 sudo 安装开机服务。默认仅监听本机，连接远端需 HTTPS 或 SSH 隧道。
+
+Windows 使用 [客户端 PowerShell 脚本](scripts/install-client.ps1)；[服务端 PowerShell 脚本](scripts/install-server.ps1)通过已有 WSL2 安装。完整参数、客户端连接、权限和服务启停见[安装指南](docs/INSTALL.md)。原生 Windows 暂不支持制品下载，完整流程使用 WSL。
+
+AI 可使用 [mybuilds-deploy](skills/mybuilds-deploy/SKILL.md) 部署技能和 [mybuilds-operate](skills/mybuilds-operate/SKILL.md) 操作技能；安装器默认放入 `~/.codex/skills`。
+
+<details>
+<summary>从源码编译</summary>
 
 准备 **Go 1.25.0+** 和 **Git**。下载源码后，在包含 `go.mod` 的仓库根目录执行：
 
@@ -50,6 +73,8 @@ go build -o bin/mybuilds-server ./cmd/mybuilds-server
 go build -o bin/mybuilds-agent ./cmd/mybuilds-agent
 ```
 
+</details>
+
 ## 首次部署：控制端、客户端与同机 Agent
 
 **服务端不会自动启动 Agent，也没有内置的默认构建节点。** 最小部署是在同一台机器上分别运行 `mybuilds-server` 和 `mybuilds-agent`，用 `mybuilds` 连接控制端。下面创建的 `local` 是普通节点名称；项目的 `--default-node local` 只指定任务执行位置，不会创建节点。
@@ -60,7 +85,7 @@ go build -o bin/mybuilds-agent ./cmd/mybuilds-agent
 | `mybuilds` | `~/.mybuilds/client.yml` | 连接控制端，提交构建、查询和下载结果 |
 | `mybuilds-agent` | `~/.mybuilds/agent.yml` | 连接控制端，在本机执行构建 |
 
-下面按**首次安装、三个终端、同一用户**演示。已有配置请复用，不要覆盖。每个终端都需将安装得到的 `bin` 绝对路径加入 PATH；配置保存在默认位置后，后续命令无需 `--config`。
+安装脚本已完成初始化的用户可直接查看[服务检查](docs/INSTALL.md#服务检查停止与重启)，再从第4步体验构建。以下是手工部署方式，按**首次安装、三个终端、同一用户**演示。已有配置请复用，不要覆盖。每个终端都需将安装得到的 `bin` 绝对路径加入 PATH；配置保存在默认位置后，后续命令无需 `--config`。
 
 ### 1. 终端一：初始化并启动控制端
 
@@ -183,7 +208,7 @@ cat ./hello.txt
 
 ### 后续启动与跨机器部署
 
-后续分别运行 `mybuilds-server serve` 和 `mybuilds-agent serve` 即可，客户端直接使用 `mybuilds …`。身份、节点和项目已持久化，不要重复初始化 token。上述服务均为前台进程，Ctrl-C 停止；没有自动安装系统服务。
+后续分别运行 `mybuilds-server serve` 和 `mybuilds-agent serve` 即可，客户端直接使用 `mybuilds …`。身份、节点和项目已持久化，不要重复初始化 token。上述手工命令均为前台进程，Ctrl-C 停止；安装脚本提供的后台服务按[安装指南](docs/INSTALL.md#服务检查停止与重启)管理。
 
 服务在线时，同一数据库被控制端独占。日常管理使用客户端；需要执行 `mybuilds-server token …`、`migrate` 等本机管理命令时，应先停控制端。
 
@@ -341,7 +366,7 @@ flowchart LR
 |---|---|---|---|
 | macOS | 支持 | 支持 | Android、iOS、Flutter Android / iOS |
 | Linux | 支持 | 支持 | Android、Flutter Android |
-| Windows | 支持 | 暂不支持 | 由远程节点执行 |
+| Windows | 支持；制品下载需 WSL | 原生暂不支持，可用 WSL | 由远程节点执行 |
 
 - **工具链自备**：Android 需要 Java 17+、Android SDK 和工程 Gradle wrapper；Flutter 另需 Flutter SDK；iOS 签名需要 macOS 15+、Xcode、有效签名材料，以及启用 cgo 编译的程序。
 - **宿主机执行**：Agent 直接执行可信仓库的脚本，应使用独立构建账户。跨主机连接需要验证证书的 HTTPS。
@@ -352,6 +377,7 @@ flowchart LR
 
 | 入口 | 内容 |
 |---|---|
+| [安装指南](docs/INSTALL.md) | 跨平台脚本、连接配置、系统服务、升级与卸载 |
 | [命令速查](docs/CLI.md) | 三个程序的命令、常用选项、权限与操作示例 |
 | [使用指南](docs/USAGE.md) | 完整部署、配置、命令与故障恢复 |
 | [示例目录](examples/) | 移动工程、本地流水线、报告和自定义发布 |
@@ -372,4 +398,4 @@ go vet ./...
 
 ## 许可证
 
-项目计划在 GitHub 开源，具体许可证待确定；当前仓库尚未包含 `LICENSE` 文件。
+项目源码已公开在 GitHub，具体许可证待确定；当前仓库尚未包含 `LICENSE` 文件。

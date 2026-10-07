@@ -15,3 +15,8 @@
 .vscode/
 *.swp
 *.tmp
+
+# 发行包与安装器验证产物
+/dist/
+__pycache__/
+*.pyc

@@ -1,0 +1,33 @@
+name: Installers
+on:
+  push:
+    paths: ['scripts/**', 'skills/**', '.github/workflows/installers.yml']
+  pull_request:
+    paths: ['scripts/**', 'skills/**', '.github/workflows/installers.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  install:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: 构建本机发行包
+        run: python scripts/release.py --version v0.1.0 --output dist
+      - name: Unix 安装验收
+        if: runner.os != 'Windows'
+        shell: bash
+        run: python3 scripts/test-install.py --archive "$(find dist -name '*.tar.gz' -print -quit)"
+      - name: Windows 安装验收
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/test-install.ps1 -ReleaseDir ./dist
