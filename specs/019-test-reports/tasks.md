@@ -1,7 +1,7 @@
 # Tasks：019 本次执行的测试报告与发布证据
 
 **输入**：[spec.md](spec.md)、[plan.md](plan.md)、[research.md](research.md)、[data-model.md](data-model.md)、[contracts](contracts/)、[quickstart.md](quickstart.md)。
-**范围**：18FR/6SC/4个P1故事/12AC；沿同一Run与既有中央文件路径，无新增依赖。测试先行、实际红绿；新增边界测试如已通过，只记录现有真实行为，不人为造红或重写正确实现。
+**范围**：原18FR/6SC/4个P1故事/12AC，数量增量增加4FR/1SC/US5；沿同一Run与既有中央文件路径，无新增依赖。测试先行、实际红绿；新增边界测试如已通过，只记录现有真实行为，不人为造红或重写正确实现。
 **状态**：基线008 504dc6已验收，正式analyze零阻塞后正在implement；已完成标记对应validation真实证据，完整双节点/全量与收敛尚待完成。任务与019原18FR/6SC/12AC保持。
 
 ## 文件归属与交接
@@ -155,3 +155,11 @@ A/B/C是能力分区，不锁代理名字。最多root+A+B+C四个slot。下文[
 ## 实施策略
 
 首个MVP增量为真实本地US1，随后在相同执行入口验证US2/3和完整US4远程归属；整个019的四故事都是验收范围，不以首个checkpoint替代完整功能。每轮只修实际缺口，记录真实红/绿及尚未通过的门；双库/两平台和中央原XML完整性/秘密/Authority证明不可用模拟执行或手工状态代替。最终只有一次功能提交。
+## Phase 8：2026-10-08 报告数量增量
+
+- [x] T047 [US5] 根在 internal/config/types.go、validate.go、reports_test.go 增加 max_files 默认256、范围1–1024与严格类型边界。（FR019）
+- [x] T048 [US5] 根在 internal/pipeline/reports.go、reports_checkpoint.go、run.go 传递有效数量并验证默认/自定义扫描、初始基线和恢复；在 reports_limits_test.go 留下真实XML检查。（T047；FR020）
+- [x] T049 [US5] 根在 internal/agent/reports.go、artifact.go、approval.go 与 internal/store/reports.go、artifact.go、retention_protection.go、publish_origin.go 统一报告配额并分开普通制品128份，验证混合上传与发布候选。（T048；FR020）
+- [x] T050 [US5] 根协调 protocol/approval.go、server/agent.go/json.go、agent/http.go/journal及其所有恢复/retention消费者、cli/client/remote.go 的有限元数据容量；验证1024份及长路径消息、journal恢复。（T049；FR021）
+- [x] T051 [US5] 根用真实Run、Store和HTTP验证最大数量收集、上传封存、审批恢复与下载；跑必要全量test、相关race、vet与构建，记录 validation.md。（T047–050；FR022/SC007）
+- [x] T052 [US5] 根同步 README、配置文档、quickstart/contracts/研究/数据模型、实施历史；analyze/converge无缺口后仅暂存相关修改，一次本地提交。（T051；FR022/SC007）

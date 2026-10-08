@@ -485,7 +485,7 @@ post:
 日志默认附带 UTC 时间戳、执行 ID、build 名称、步骤名称和输出流；同时保留 Agent 事件序号及服务端接收时间，跨节点时钟误差不改变事件顺序。
 历史输出、SSE 与 --json 使用同一元数据，先按分段流脱敏再落盘/传输；无需每个项目开关 timestamps。
 
-每个 build 可声明 reports.junit.paths（仓库相对 glob 列表）与 required（默认 true），例如下面的单 build 配置：
+每个 build 可声明 reports.junit.paths（仓库相对 glob 列表）、required（默认 true）和 max_files（默认 256，整数 1–1024），例如下面的单 build 配置：
 
 ```yaml
 version: 1
@@ -497,7 +497,10 @@ reports:
   junit:
     paths: [build/test-results/**/*.xml]
     required: true
+    max_files: 512
 ```
+
+数量配置随构建快照冻结，重试继承；未配置时自动使用 256，显式 0/null/负数/非整数或大于 1024 报配置错误。普通制品最多 128 份，JUnit 报告单独计数；同一 attempt 已上传的历史报告也计入报告配额。仍限制单 XML 8 MiB、报告总计 64 MiB、报告与普通制品合计 4 GiB、10 万测试用例、最多 20 条/20 KiB 诊断、纯报告检查 10 秒。报告消息最多 8 MiB、执行 journal 最多 64 MiB/100 万 JSON 节点，这些独立预算仍然生效；极长路径、诊断或多次审批历史可能先触及元数据预算。大报告列表超过响应预算时用 `--limit 1` 分页。控制端、Agent 和客户端需一并升级。
 
 执行后即使测试命令失败也尝试收集报告，复用产物路径/符号链接/大小/摘要校验；不采集其他 build 或旧工作区文件。
 使用 Go encoding/xml 解析 JUnit testsuite/testsuites，限制输入大小与嵌套深度，不展开外部实体或联网。

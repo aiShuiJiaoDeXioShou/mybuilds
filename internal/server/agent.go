@@ -103,7 +103,7 @@ func (s *Server) agentRoutes(w http.ResponseWriter, r *http.Request, actor store
 		writeJSON(w, 200, result)
 	case "/api/agent/events":
 		var in protocol.ExecutionEvent
-		if err := readJSON(r, &in); err != nil {
+		if err := readJSONLimit(r, &in, protocol.MaxReportMessageBytes); err != nil {
 			writeError(w, err)
 			return
 		}

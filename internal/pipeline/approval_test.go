@@ -89,7 +89,7 @@ func TestApprovalRestoredReportSnapshotRejectsChangedLeaf(t *testing.T) {
 	defer wr.Close()
 	rr, _ := os.OpenRoot(resultDir)
 	defer rr.Close()
-	c, err := newReportCollection(context.Background(), wr, rr, []string{"results/*.xml"}, true, nil)
+	c, err := newReportCollection(context.Background(), wr, rr, []string{"results/*.xml"}, true, nil, config.DefaultJUnitMaxFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestApprovalRestoredReportSnapshotRejectsChangedLeaf(t *testing.T) {
 	leaf := filepath.Join(resultDir, filepath.FromSlash(saved.Current[0].SnapshotPath))
 	os.Remove(leaf)
 	os.Symlink(filepath.Join(workspace, "results", "test.xml"), leaf)
-	if _, err = restoreReportCollection(context.Background(), wr, rr, c.patterns, nil, true, saved); err == nil {
+	if _, err = restoreReportCollection(context.Background(), wr, rr, c.patterns, nil, true, saved, config.DefaultJUnitMaxFiles); err == nil {
 		t.Fatal("替换快照链接被恢复接受")
 	}
 }

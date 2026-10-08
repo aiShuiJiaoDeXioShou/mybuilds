@@ -45,6 +45,7 @@ type preparedBuild struct {
 	timeout, postTimeout     time.Duration
 	reportPatterns           []string
 	reportRequired           bool
+	reportMaxFiles           int
 	iosSigning               *mobile.IOSSigningOptions
 }
 
@@ -444,6 +445,7 @@ func (p *runPreparation) build(name string, build *config.Build, params map[stri
 			b.reportPatterns = append(b.reportPatterns, rendered)
 		}
 		b.reportRequired = build.Reports.JUnit.Required == nil || *build.Reports.JUnit.Required
+		b.reportMaxFiles = build.Reports.JUnit.FileLimit()
 	}
 	if build.Post != nil && (anyActive || p.remote != nil) {
 		for _, phase := range []struct {
@@ -993,7 +995,7 @@ func executeBuild(ctx context.Context, root string, build preparedBuild, logger 
 				}
 				bounded, cancel, e := reportContext(ctx, reportRemaining(build, elapsed, logger.remote), logger.remote, 10*time.Second)
 				if e == nil {
-					reportSet, err = restoreReportCollection(bounded, reportWorkspace, logger.root, build.reportPatterns, secrets, build.reportRequired, build.resume.Local.Collection)
+					reportSet, err = restoreReportCollection(bounded, reportWorkspace, logger.root, build.reportPatterns, secrets, build.reportRequired, build.resume.Local.Collection, build.reportMaxFiles)
 				} else {
 					err = e
 				}
@@ -1067,7 +1069,7 @@ func executeBuild(ctx context.Context, root string, build preparedBuild, logger 
 				for i, value := range logger.secrets {
 					secrets[i] = string(value)
 				}
-				reportSet, err = newReportCollection(checkCtx, reportWorkspace, logger.root, build.reportPatterns, build.reportRequired, secrets)
+				reportSet, err = newReportCollection(checkCtx, reportWorkspace, logger.root, build.reportPatterns, build.reportRequired, secrets, build.reportMaxFiles)
 			}
 			stop()
 			elapsed += time.Since(stepStart)

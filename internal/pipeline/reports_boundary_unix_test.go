@@ -4,6 +4,7 @@ package pipeline
 
 import (
 	"context"
+	"mybuilds/internal/config"
 	"path/filepath"
 	"syscall"
 	"testing"
@@ -20,7 +21,7 @@ func TestReportCollectionRejectsFIFOAndFIFOPrefix(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 			defer cancel()
 			before := time.Now()
-			_, err := newReportCollection(ctx, wr, dr, []string{pattern}, false, nil)
+			_, err := newReportCollection(ctx, wr, dr, []string{pattern}, false, nil, config.DefaultJUnitMaxFiles)
 			if err == nil || time.Since(before) > time.Second {
 				t.Fatalf("FIFO不应被读取或阻塞: %v", err)
 			}

@@ -71,10 +71,10 @@ func pausedJournalForInspection(root *os.Root, name string) bool {
 	}
 	defer f.Close()
 	before, err := f.Stat()
-	if err != nil || !privateInfo(before, false) || before.Size() > 1<<20 {
+	if err != nil || !privateInfo(before, false) || before.Size() > maxJournalBytes {
 		return false
 	}
-	data, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
+	data, err := io.ReadAll(io.LimitReader(f, (maxJournalBytes)+1))
 	after, e := f.Stat()
 	now, n := root.Lstat(filepath.Join("journal", name))
 	if err != nil || e != nil || n != nil || !os.SameFile(before, now) || !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {

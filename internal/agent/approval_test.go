@@ -7,10 +7,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	clientcli "mybuilds/internal/cli/client"
 	"mybuilds/internal/config"
 	"mybuilds/internal/pipeline"
 	"mybuilds/internal/store"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -23,8 +25,38 @@ import (
 
 // 实际HTTP、固定Git、唯一Run与原工作区的完整暂停/批准/恢复，不用模拟执行器。
 func TestServeApprovalActualPauseHTTPResumeReports(t *testing.T) {
+	serveApprovalReports(t, 1)
+}
+
+func TestServeApprovalMaximumReports(t *testing.T) {
+	serveApprovalReports(t, config.MaximumJUnitMaxFiles)
+}
+
+func serveApprovalReports(t *testing.T, count int) {
+	t.Helper()
 	st, admin, cfg, handler := agentControl(t)
-	control := httptest.NewServer(handler)
+	cfg.Capacity = 1
+	idleClaims := make(chan time.Time, 1)
+	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/agent/claim" {
+			handler.ServeHTTP(w, r)
+			return
+		}
+		started := time.Now()
+		reply := httptest.NewRecorder()
+		handler.ServeHTTP(reply, r)
+		for key, values := range reply.Header() {
+			w.Header()[key] = values
+		}
+		w.WriteHeader(reply.Code)
+		w.Write(reply.Body.Bytes())
+		if reply.Code == http.StatusNoContent {
+			select {
+			case idleClaims <- started:
+			default:
+			}
+		}
+	}))
 	defer control.Close()
 	cfg.Server = control.URL
 	repo := t.TempDir()
@@ -45,11 +77,11 @@ func TestServeApprovalActualPauseHTTPResumeReports(t *testing.T) {
 	}
 	runGit("init", "--initial-branch=main", "--template=")
 	source := `version: 1
-reports: {junit: {paths: ['result.xml']}}
+reports: {junit: {paths: ['result*.xml']}}
 steps:
  - kind: run
    name: before
-   run: printf '<testsuite><testcase name="before"/></testsuite>' > result.xml; printf before >> count
+   run: printf '<testsuite><testcase name="before"/></testsuite>' > result.xml; i=1; while [ $i -lt ` + fmt.Sprint(count) + ` ]; do cp result.xml result-$i.xml; i=$((i+1)); done; printf before >> count
  - kind: approval
    name: review
  - kind: run
@@ -61,6 +93,9 @@ post:
     name: cleanup
     run: printf post > post
 `
+	if count > 1 {
+		source = strings.Replace(source, "paths: ['result*.xml']", fmt.Sprintf("paths: ['result*.xml'], max_files: %d", count), 1)
+	}
 	if err = os.WriteFile(filepath.Join(repo, "mybuilds.yml"), []byte(source), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +141,7 @@ post:
 	oldAttempt := ""
 	oldEpoch := int64(0)
 	oldWork := ""
-	deadline := time.Now().Add(18 * time.Second)
+	deadline := time.Now().Add(120 * time.Second)
 	for time.Now().Before(deadline) {
 		view, err := st.GetBuild(context.Background(), batch.Builds[0].ID)
 		if err != nil {
@@ -132,10 +167,10 @@ post:
 				t.Fatal("真实审批无法读取", err)
 			}
 			a := items[0]
-			if a.Reports == nil || a.Reports.Sealed || a.Reports.Outcome != "pending" || a.Reports.Counts.Tests != 1 {
+			if a.Reports == nil || a.Reports.Sealed || a.Reports.Outcome != "pending" || a.Reports.Counts.Tests != int64(count) {
 				t.Fatal("midrun报告伪装final")
 			}
-			files, err := st.ListArtifacts(context.Background(), admin, view.ID, store.Page{})
+			files, err := st.ListArtifacts(context.Background(), admin, view.ID, store.Page{Limit: 1})
 			if err != nil || len(files) != 1 {
 				t.Fatal("原XML在安全审批缺失", err, len(files))
 			}
@@ -155,6 +190,29 @@ post:
 			}
 			if !pausedReady {
 				t.Fatal("真实暂停ACK没有完成")
+			}
+			// 等一次已返回204且本地移除的空claim，再在下一200ms轮询前退出。
+			// 直接取消正在发送的空claim会正确保留unknown journal，不能作为安全重启夹具。
+			for len(idleClaims) > 0 {
+				<-idleClaims
+			}
+			safeIdle := false
+			for until := time.Now().Add(3 * time.Second); time.Now().Before(until) && !safeIdle; {
+				select {
+				case started := <-idleClaims:
+					for time.Since(started) < 100*time.Millisecond {
+						names, _ := filepath.Glob(filepath.Join(cfg.DataDir, "journal", "*.json"))
+						if len(names) == 1 {
+							safeIdle = true
+							break
+						}
+						time.Sleep(time.Millisecond)
+					}
+				case <-time.After(20 * time.Millisecond):
+				}
+			}
+			if !safeIdle {
+				t.Fatal("未确认空claim安全退出窗口")
 			}
 			// 真正退出并重启原Agent，再沿原暂停journal恢复；不复用活内存。
 			cancel()
@@ -176,15 +234,15 @@ post:
 				t.Fatal("退出覆盖了已确认暂停", strict)
 			}
 			time.Sleep(2*cfg.LeaseDuration + 100*time.Millisecond) // 保留007原session更换安全窗口，不靠改租约字段制造重启。
-			deadline = time.Now().Add(18 * time.Second)
+			deadline = time.Now().Add(120 * time.Second)
 			ctx, cancel = context.WithCancel(context.Background())
 			defer cancel()
 			go func() { done <- Serve(ctx, cfg) }()
 			clientFile := filepath.Join(t.TempDir(), "client.yml")
-			if err = os.WriteFile(clientFile, []byte("server: "+control.URL+"\ntoken: ${MYBUILDS_APPROVAL_TEST_TOKEN}\n"), 0600); err != nil {
+			if err = os.WriteFile(clientFile, []byte("server: "+control.URL+"\ntoken: ${MYBUILDS_CLIENT_TOKEN}\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			t.Setenv("MYBUILDS_APPROVAL_TEST_TOKEN", strings.Repeat("a", 32))
+			t.Setenv("MYBUILDS_CLIENT_TOKEN", strings.Repeat("a", 32))
 			cmd := clientcli.NewCommand()
 			var output bytes.Buffer
 			cmd.SetOut(&output)
@@ -196,7 +254,7 @@ post:
 			decided = true
 		}
 		if view.Status == "succeeded" {
-			if !decided || view.AttemptID != oldAttempt || view.LeaseEpoch != oldEpoch+1 || view.Reports == nil || !view.Reports.Sealed || view.Reports.Counts.Tests != 1 {
+			if !decided || view.AttemptID != oldAttempt || view.LeaseEpoch != oldEpoch+1 || view.Reports == nil || !view.Reports.Sealed || view.Reports.Counts.Tests != int64(count) {
 				t.Fatal("恢复真实归属/报告不符", view.Status)
 			}
 			data, _ := os.ReadFile(filepath.Join(oldWork, "count"))

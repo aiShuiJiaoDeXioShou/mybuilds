@@ -20,6 +20,7 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/google/uuid"
+	"mybuilds/internal/config"
 	"mybuilds/internal/protocol"
 	"mybuilds/internal/reports"
 )
@@ -63,6 +64,7 @@ type reportCollection struct {
 	workspace, resultRoot *os.Root
 	patterns, secrets     []string
 	required              bool
+	maxFiles              int
 	directory             string
 	baseline              map[string]reportFingerprint
 	current               map[string]reportEntry
@@ -95,13 +97,13 @@ func reportValidPath(name string) bool {
 	return true
 }
 
-func newReportCollection(ctx context.Context, workspaceRoot, resultRoot *os.Root, patterns []string, required bool, secrets []string) (*reportCollection, error) {
+func newReportCollection(ctx context.Context, workspaceRoot, resultRoot *os.Root, patterns []string, required bool, secrets []string, maxFiles int) (*reportCollection, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if workspaceRoot == nil || resultRoot == nil || len(patterns) > 32 || validateArtifactPatterns(patterns) != nil {
+	if workspaceRoot == nil || resultRoot == nil || maxFiles < 1 || maxFiles > config.MaximumJUnitMaxFiles || len(patterns) > 32 || validateArtifactPatterns(patterns) != nil {
 		return nil, errReportInvalid
 	}
 	for _, pattern := range patterns {
@@ -109,7 +111,7 @@ func newReportCollection(ctx context.Context, workspaceRoot, resultRoot *os.Root
 			return nil, errReportInvalid
 		}
 	}
-	c := &reportCollection{workspace: workspaceRoot, resultRoot: resultRoot, patterns: slices.Clone(patterns), secrets: slices.Clone(secrets), required: required, directory: path.Join("reports", uuid.NewString()), baseline: map[string]reportFingerprint{}, current: map[string]reportEntry{}}
+	c := &reportCollection{workspace: workspaceRoot, resultRoot: resultRoot, patterns: slices.Clone(patterns), secrets: slices.Clone(secrets), required: required, maxFiles: maxFiles, directory: path.Join("reports", uuid.NewString()), baseline: map[string]reportFingerprint{}, current: map[string]reportEntry{}}
 	names, err := c.names(ctx)
 	if err != nil {
 		return nil, err
@@ -240,7 +242,7 @@ func (c *reportCollection) names(ctx context.Context) ([]string, error) {
 				return errReportInvalid
 			}
 			names[name] = true
-			if len(names) > 64 {
+			if len(names) > c.maxFiles {
 				return errReportInvalid
 			}
 			return nil

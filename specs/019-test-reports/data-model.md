@@ -2,7 +2,7 @@
 
 ## 配置与兼容
 
-沿用config.Build.Reports → Reports.JUnit{Paths []string, Required *bool}；nil表示未配置，Required=nil等价true。路径一次模板/渲染后仍须满足既有仓库相对glob边界。入队保留于原BuildSnapshot.Definition，不新建项目报告schema。无reports配置不扫描、不建立事件/报告结果；旧artifact用途为空时仍是artifact，新可选wire字段omitempty不改变原事件digest。
+沿用config.Build.Reports → Reports.JUnit{Paths []string, Required *bool, MaxFiles *int}；nil表示未配置，Required=nil等价true，MaxFiles=nil等价256，显式值只接受1–1024。路径一次模板/渲染后仍须满足既有仓库相对glob边界。入队保留于原BuildSnapshot.Definition，不新建项目报告schema。无reports配置不扫描、不建立事件/报告结果；旧artifact用途为空时仍是artifact，新可选wire字段omitempty不改变原事件digest。
 
 ## 本地执行报告集合（仅私有）
 
@@ -25,7 +25,7 @@ ReportEvidence：Revision、Sealed、Outcome(pending/passed/failed/missing)、Re
 
 原buildRecord增加ReportRevision int64、ReportFinal bool、ReportsJSON（当前完整checked/sealed数据）、ReportSealDigest string、ReportCheckedIndex int（最后被检查ordinary run）；ReportFinal只在最后Index0 checked置true，seal后不可变。未配置旧记录均零值。last_event_seq/receipt仍原同一事务，不新建独立事件cursor。
 
-原artifactRecord增加Purpose、ReportRevision、ReportKey、VerifiedJUnitJSON：Purpose空或artifact按原规则；junit记录server针对稳定stage重新解析的Counts/Diagnostics，Node请求不能填写VerifiedJUnitJSON。artifactID、attempt、内容不可变，StorageID仍私有。junit归属必须原Definition有reports、最后final checked revision中声明的Key/ID、真实ordinary run来源且Stopped/!CleanupFailed。旧artifact总count/size查询不能按purpose分开，128/4GiB合计上限不变；junit独立64/64MiB收紧。
+原artifactRecord增加Purpose、ReportRevision、ReportKey、VerifiedJUnitJSON：Purpose空或artifact按原规则；junit记录server针对稳定stage重新解析的Counts/Diagnostics，Node请求不能填写VerifiedJUnitJSON。artifactID、attempt、内容不可变，StorageID仍私有。junit归属必须原Definition有reports、最后final checked revision中声明的Key/ID、真实ordinary run来源且Stopped/!CleanupFailed。数量按用途分别计算、size仍合计，普通制品最多128份，junit数量按冻结max_files（默认256，1–1024）；总计4GiB与junit累计64MiB不变。
 
 只有final checked的报告文件允许上传；seal事务要求当前Files每ID已CommitArtifact、Ref/Revision/Key/Size/SHA/Source匹配、server解析Counts一致，再由server验证结果重算aggregate。旧revision/缺文件/只有summary/冲突均不能seal成功。失败型错误允许无坏XML文件的固定原因，但永不成为passed；有效Files仍需完整确认。
 
@@ -42,3 +42,5 @@ final checked Index0仅ordinary全部terminal后接受（零动作不接受）�
 ## 与008恢复/重试
 
 008的receipt.Kind/StopKnown只有完整build_finished事务成功后才可信；报告seal/manifest包含在此验证内。尚在checked/传输/不完整seal的journal不清理或重放。retry使用原Definition.Reports/参数/事实和新build.number、新attempt，全部ReportRevision/Files/Seal/seq为空；不复制原报告通过结论。恢复不读取post改写文件，不重置ordinary/post ns。
+
+2026-10-08 数量增量：默认256、max_files=1–1024；普通制品128份单独计数，累计字节/cases/诊断/时间上限不变。报告相关消息8MiB，执行journal64MiB/100万节点；冻结配置、审批与恢复使用同一配额，极端元数据与历史仍可能触及独立预算。

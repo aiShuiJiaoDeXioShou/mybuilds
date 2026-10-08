@@ -35,7 +35,7 @@
 ## 5. 中央确认与同一执行
 
 **Decision**：reports_checked保存当前路径集合声明（逐run及最终边界），只最终revision允许上传；purpose=junit使用既有artifact二进制路由，具体ReportKey/ReportRevision和真实ordinary run index绑定声明。server稳定stage重复解析得到摘要后，沿已有排他发布→短DBfence提交；reports_sealed要求完整文件确认与summary一致，build_finished精确重核。没有新文件路由、没有通用RPC。
-**Rationale**：007 artifact manifest/CommitArtifact只认artifact step；简单把XML加到原ArtifactSteps会虚构步骤。有限purpose分支可复用文件预算、权限、receipt恢复和下载，又给Store真实报告约束。每attempt仍合计128文件/4GiB，junit再限制64文件/64MiB，不能两用途各拿一个总限额。
+**Rationale**：007 artifact manifest/CommitArtifact只认artifact step；简单把XML加到原ArtifactSteps会虚构步骤。有限purpose分支可复用文件预算、权限、receipt恢复和下载，又给Store真实报告约束。每attempt普通制品最多128份，junit使用冻结max_files（默认256，1–1024），合计4GiB与junit累计64MiB不变。
 **Alternatives considered**：单独报告文件存储与下载执行器、仅信任Node自报summary、seal先于原XML完成均拒绝。
 
 ## 6. 预算、失败和008
@@ -49,3 +49,13 @@
 ## 未解决事项
 
 无业务NEEDS CLARIFICATION。46任务与正式analyze已通过；实际parser、collection、Store、Stage、Agent和CLI已逐SHA串行集成，使用标准库和原同一Run，不新增依赖。原失败与后续真实修正、双库/两平台/权限/原XML/预算等证据保留在validation，最终全量及双库20故障验收已通过，正式converge无缺口，待一次整功能提交。
+
+2026-10-08 数量增量：默认256、max_files=1–1024；普通制品128份单独计数，累计字节/cases/诊断/时间上限不变。报告相关消息8MiB，执行journal64MiB/100万节点；冻结配置、审批与恢复使用同一配额，极端元数据与历史仍可能触及独立预算。
+
+## 2026-10-08 规模审计
+
+只读子代理审计实际消费者：1024个ReportFile约14350 JSON节点，旧10000不足；合法1024字节路径经过Go的<>&转义可使证据超过6MiB。一次审批含baseline/current、两份event及原私有artifacts，最坏长路径合成journal约57MiB，无诊断约123082节点。采用事件/claim8MiB、事件65536节点、执行journal64MiB/100万节点，所有相关写读与启动iOS前置扫描同步；小型resource/deletion/secret仍原限制。合成核算不是实际XML上传证明，真实闭环由validation记录。
+
+发布候选原先Limit129后过滤junit会丢失普通制品，改为SQL先排除junit。中央审批完整文件集合上限亦随冻结配置调整；普通制品128份仍保留。
+
+大规模实际恢复另暴露 confirmedReportFiles 在每个候选文件上先计算审批历史摘要，1024报告会重复编码整份证据约百万次。改为先匹配ID并在单次调用内每个Ref核验一次；declareReports同样复用本次核验结果。缓存不跨状态/调用保存，归属、内容摘要与完整文件确认不放宽。实际1024暂停→退出→重启→批准→完整终态案例验证该路径。

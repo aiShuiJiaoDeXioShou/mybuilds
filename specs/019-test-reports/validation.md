@@ -168,3 +168,27 @@ C实际私有verified HTTPS/固定可信Git、自有SQLite与PostgreSQL `mybuild
 ## 正式收敛与提交检查
 
 实际speckit-converge初始化一次、读取唯一意图及原则，36规范验收项/9实施决定/5原则/46原任务全核对，missing/partial/contradicts/unrequested均0；tasks前后字节SHA相同，未追加任务。收敛记录由implement交付保存[convergence.md](convergence.md)。工作区只包含019相关实现与本目标后续规划，提交只暂存019实现、对应规范与例子、README/DELIVERY/实施历史；后续009–012/014–015/020规划不随019暂存。无新依赖、不push。
+
+## 2026-10-08 数量增量验收
+
+基线 main@21116f7；不访问真实凭据、不改用户部署、不执行商店发布。扩展019，默认256份，max_files=1–1024；普通制品128份独立计数，XML/累计字节/cases/诊断/纯检查预算保持。MaxFiles省略时JSON也省略，旧冻结定义编码不因新增nil字段改变。
+
+- 红：TestReportsMaxFiles 在新字段落地前编译失败（缺FileLimit）；默认与1/256/1024、0/负数/1025/null/字符串/小数/bool/重复字段绿。
+- 本地真实XML：256/256、256/257、65/65、64/65、1024/1024、1024/1025，增量扫描、基线超限与checkpoint恢复通过；完整边界组10.06s，其中1024收集+恢复+final共7.58s，非声称单阶段耗时。
+- Store SQLite：128普通制品与256报告共存、4GiB拒绝不推进序号、8MiB/64MiB/10万cases和显式1024证据边界、发布SQL先过滤报告后Limit均通过。未配置MYBUILDS_TEST_POSTGRES_DSN，本次未跑真实PostgreSQL；SQL使用两库支持的COUNT/CASE。
+- 元数据实际HTTP：1024份1024字节路径（含Go HTML转义）事件大于1MiB、完整严格解码/Store接纳和审批摘要通过；超过8MiB返回413。大journal实际原子写读/启动iOS前置解析、超过64MiB不覆盖旧文件、CLI大于1MiB完整响应/超过8MiB拒绝均通过。
+- 首次真实1024上传已达1025文件，但最终确认仍沿普通128-ID上限失败；已改共享ID验证器调用的有效限额，发布报告ID亦同配额。首次大规模审批恢复栈定位到每候选反复计算完整审批摘要，约百万次JSON编码；保留校验、按本次Ref复用结果后重新验证。失败/主动终止定位记录不算通过。
+- 最终实际Run+Git+Store+HTTP：`go test -p 1 ./internal/agent -timeout 8m -run 'TestServeApprovalMaximumReports|TestServeActualJUnitMaximumFiles' -count=1 -v` exit0；审批1024份暂停→退出→重启→批准→封存终态102.82s，普通1024份+普通/post制品→原XML逐份下载97.29s；包202.153s。覆盖原工作区/固定SHA不重跑、审批报告不伪final、终态journal精确清理。
+- `go vet ./...` exit0。全量回归分组执行：上述两个大量真实案例已完成，其余用 `MYBUILDS_CLIENT_TOKEN='' go test -p 1 ./... -timeout 15m -count=1 -skip 'TestServeActualJUnitMaximumFiles|TestServeApprovalMaximumReports'`；隔离客户端token以避免本机已部署服务影响旧doctor测试。全量、必要race与构建结果随后补录，当前不把运行中标为通过。
+
+FR019→config/tests；FR020→pipeline/Agent/Store/manifest/publish/retention与混合文件真实案例；FR021→protocol/server/HTTP/journal全部消费者与长路径案例；FR022/SC007→README/配置/规范/任务及本节最终检查。无新依赖或第二执行器。
+
+### 最终回归与检查结果（2026-10-08 11:16 UTC）
+
+全量按两组覆盖，保留首轮实际非零结果：全量命令的其余包全部通过（client54.578s、pipeline18.472s、server83.527s、store27.031s等）；Agent312.895s首轮两项失败。审批夹具使用的自定义token变量被进程MYBUILDS_CLIENT_TOKEN空值覆盖，已改用标准变量并限定单构建容量；退出时须等真实204空claim已在本地移除，再在下一轮询前取消，不删除unknown证据。普通审批连续两次exit0（37.52s、24.13s）；恢复confirmed_metadata单独exit0（2.24s），未放宽原12秒退出边界。最新完整1024审批案例再跑exit0（93.87s，包96.586s），最大普通构建/逐份原XML下载仍沿上文实际202.153s组合记录。全套测试均有通过记录，首轮字面命令没有被改写为exit0。
+
+必要race按相关真实消费者验证：config2.374s、Agent10.195s（含实际小型Run/HTTP/下载、metadata journal及完整确认反例）、server6.591s、client2.025s通过。首轮将最大案例与race并发运行，1024纯检查在race下超过原10s、Store无续租配额夹具超过租期，该轮非零；不增加生产预算。最大规模独立普通模式实测；pipeline的256/65/64配置收集与恢复race5.349s通过，Store配额夹具每32文件沿真实Renew保留同Ref与原预算，配额/证据/发布筛选race24.137s通过。
+
+最新go vet ./... exit0；CGO_ENABLED=0三CLI在linux/amd64与windows/amd64共六次构建exit0（仅编译，不声明原生Windows Agent支持）。没有新的依赖或发布/部署动作。README、配置与019契约/数据模型/研究/quickstart已同步；diff检查通过。
+
+配额续租夹具修正后的普通Store配额与发布筛选复验exit0（4.413s）。正式speckit-converge核对22FR/7SC/5用户故事、原9项与增量5项plan决定、五项原则及52任务，零缺口；tasks前后SHA256相同，收敛未写入任务。T052的记录、勾选与本地提交属于implement交付收尾，详见[convergence.md](convergence.md)。

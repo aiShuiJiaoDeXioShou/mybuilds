@@ -68,10 +68,14 @@ func (client *agentHTTP) get(parent context.Context, path string, output any) er
 }
 func (client *agentHTTP) request(parent context.Context, method, path string, input, output any) error {
 	var data []byte
+	requestLimit := 1 << 20
+	if path == "/api/agent/events" {
+		requestLimit = protocol.MaxReportMessageBytes
+	}
 	if method == http.MethodPost {
 		var err error
 		data, err = json.Marshal(input)
-		if err != nil || len(data) > 1<<20 {
+		if err != nil || len(data) > requestLimit {
 			return failure("invalid_request")
 		}
 	}
@@ -91,6 +95,9 @@ func (client *agentHTTP) request(parent context.Context, method, path string, in
 	}
 	defer response.Body.Close()
 	limit := 1 << 20
+	if path == "/api/agent/claim" {
+		limit = protocol.MaxReportMessageBytes
+	}
 	if strings.HasPrefix(path, "/api/agent/publishes/") || strings.HasPrefix(path, "/api/agent/publish-queries/") {
 		limit = 64 << 10
 	}
@@ -133,7 +140,7 @@ func (client *agentHTTP) request(parent context.Context, method, path string, in
 	if path == "/api/agent/terminal-receipt" || deletion || strings.HasPrefix(path, "/api/agent/publishes/") || strings.HasPrefix(path, "/api/agent/publish-queries/") {
 		tokens := json.NewDecoder(bytes.NewReader(body))
 		count := 0
-		if journalJSONValue(tokens, 0, &count) != nil {
+		if journalJSONValue(tokens, 0, &count, 10000) != nil {
 			return failure("invalid_response")
 		}
 		if _, err := tokens.Token(); err != io.EOF {

@@ -27,8 +27,8 @@ func TestReportsAndOrdinaryArtifactsShareAttemptQuotas(t *testing.T) {
 				}
 				reportFinished(t, s, a, *g)
 				e, parsed := actualReport(t, `<testsuite><testcase/></testsuite>`)
-				n := 64
-				ordinaryCount := 65
+				n := config.DefaultJUnitMaxFiles
+				ordinaryCount := 128
 				ordinarySize := int64(0)
 				if limit == "size" {
 					n = 1
@@ -71,11 +71,16 @@ func TestReportsAndOrdinaryArtifactsShareAttemptQuotas(t *testing.T) {
 				e.Revision = 2
 				e.Outcome = "passed"
 				accept(t, s, a, checkedEvent(*g, 8, &e, true))
-				allowed := n - 1
+				allowed := n
 				if limit == "size" {
 					allowed = 0
 				}
 				for i, f := range e.Files {
+					if i%32 == 0 {
+						if _, err = s.Renew(testContext, a, g.Ref, policy); err != nil {
+							t.Fatal("配额检查续租", err)
+						}
+					}
 					single := e
 					single.Files = []protocol.ReportFile{f}
 					upload := reportCommit(*g, single, &parsed)

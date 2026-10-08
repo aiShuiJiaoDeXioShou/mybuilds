@@ -128,7 +128,7 @@ func ApprovalCheckpointDigest(ref LeaseRef, seq int64, p ExecutionProgress) (str
 		Seq      int64             `json:"seq"`
 		Progress ExecutionProgress `json:"progress"`
 	}{ref, seq, p})
-	if err != nil || len(data) > 64<<10 {
+	if err != nil || len(data) > MaxReportMessageBytes {
 		return "", errors.New("approval_invalid")
 	}
 	hash := sha256.Sum256(data)

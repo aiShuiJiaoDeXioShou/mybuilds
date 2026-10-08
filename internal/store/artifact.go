@@ -105,11 +105,11 @@ func (s *Store) CommitArtifact(ctx context.Context, actor NodeActor, in Artifact
 		if build.LastArtifactSeq == math.MaxInt64 || d.Seq != build.LastArtifactSeq+1 {
 			return ErrSequenceInvalid
 		}
-		var totals struct{ Count, Size int64 }
-		if err = tx.Model(&artifactRecord{}).Select("COUNT(*) AS count, COALESCE(SUM(size),0) AS size").Where("attempt_id = ?", d.Ref.AttemptID).Scan(&totals).Error; err != nil {
+		var totals struct{ OrdinaryCount, Size int64 }
+		if err = tx.Model(&artifactRecord{}).Select("COUNT(CASE WHEN purpose <> 'junit' THEN 1 END) AS ordinary_count, COALESCE(SUM(size),0) AS size").Where("attempt_id = ?", d.Ref.AttemptID).Scan(&totals).Error; err != nil {
 			return err
 		}
-		if totals.Count >= 128 || totals.Size > (4<<30)-d.Size {
+		if d.Purpose != "junit" && totals.OrdinaryCount >= 128 || totals.Size > (4<<30)-d.Size {
 			return ErrArtifactConflict
 		}
 		file := artifactRecord{SourcePath: d.SourcePath, ID: d.ID, BuildID: build.ID, AttemptID: d.Ref.AttemptID, Seq: d.Seq, Phase: d.Phase, Step: d.Step, Name: d.Name, Index: d.Index, Size: d.Size, SHA256: d.SHA256, StorageID: in.StorageID, Purpose: d.Purpose, ReportRevision: d.ReportRevision, ReportKey: d.ReportKey, VerifiedJUnitJSON: verifiedJSON, CreatedAt: time.Now().UTC()}

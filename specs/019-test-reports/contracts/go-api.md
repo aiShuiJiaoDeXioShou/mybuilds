@@ -73,3 +73,7 @@ protocol/node.go、Agent journal/execute/artifact、Store event/model/query/enqu
 ## 实施阶段有限XML上传预算接点
 
 既有CheckExecution只校验运行权，新增具体Store.ReportUploadBudget(ctx,NodeActor,LeaseRef)(*int64,error)只给实际Server junit上传消费者：同write/currentExecution/oldExpires复核，当前final且尚未sealed，最后已持久receipt必须reports_checked，使用该receipt的控制端CreatedAt从RemainingBudgetNS扣减累计时间。所有XML共用同一锚，不按文件重置；nil保原ordinary无限但网络仍≤2m，0拒启动。validateJUnitArtifact提交末尾复用同一私有预算计算，事务不读XML，不新增字段/表/cursor。Server实际上传deadline=min(2m,remaining)且定期检查原Authority；stage解析还受≤10s及该deadline约束。此具体接点落实原FR013/015，不放开Reports或预建通用接口。
+
+## 2026-10-08 配置数量接入
+
+config.JUnitReport新增MaxFiles *int，FileLimit()省略时返回256，Validate接受1–1024；preparedBuild将有效数量传入newReportCollection/restoreReportCollection的maxFiles参数。Store证据/确认/retention与Agent活动声明读取冻结Definition，普通制品数量排除junit；仅无快照的恢复以1024绝对上界检查。protocol.MaxReportMessageBytes=8MiB供实际相关消息消费者共用，journal容量见node-http契约。不新增表或依赖。

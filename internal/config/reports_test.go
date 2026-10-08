@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -41,6 +42,40 @@ func repeatedReportPaths(count int) []string {
 		paths[i] = fmt.Sprintf("results/%d/*.xml", i)
 	}
 	return paths
+}
+
+func TestReportsMaxFiles(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  int
+	}{
+		{"", 256}, {", max_files: 1", 1}, {", max_files: 256", 256}, {", max_files: 1024", 1024},
+		{", max_files: 0", 0}, {", max_files: -1", 0}, {", max_files: 1025", 0},
+		{", max_files: null", 0}, {", max_files: '64'", 0}, {", max_files: 64.0", 0},
+		{", max_files: true", 0}, {", max_files: 64, max_files: 128", 0},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			d, err := Parse([]byte(minimal + "reports: {junit: {paths: ['results/*.xml']" + tc.value + "}}\n"))
+			if tc.want == 0 {
+				if err == nil {
+					t.Fatal("非法数量未拒绝")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := d.Builds["default"].Reports.JUnit.FileLimit(); got != tc.want {
+				t.Fatalf("数量=%d，期望%d", got, tc.want)
+			}
+			if tc.value == "" {
+				wire, err := json.Marshal(d.Builds["default"].Reports.JUnit)
+				if err != nil || strings.Contains(string(wire), "MaxFiles") {
+					t.Fatal("省略字段改变了旧快照编码")
+				}
+			}
+		})
+	}
 }
 
 func TestReportsStrictSchemaAndRequired(t *testing.T) {

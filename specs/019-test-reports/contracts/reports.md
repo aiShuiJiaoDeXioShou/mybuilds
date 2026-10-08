@@ -10,6 +10,7 @@ builds:
       junit:
         paths: [build/test-results/**/*.xml]
         required: true
+        max_files: 512
     steps:
       - kind: run
         name: test
@@ -40,7 +41,7 @@ time为非负十进制秒，最多9位小数，整数部分有界；不接受负
 
 | 输入/结果 | 限额 |
 |---|---|
-| patterns/匹配文件 | 最多32模式，当前最多64文件；重复匹配按相对路径去重 |
+| patterns/匹配文件 | 最多32模式，默认最多256文件，可配置max_files=1–1024；重复匹配按相对路径去重 |
 | 原XML | 单文件8MiB、当前集合64MiB；baseline亦有界，巨大旧文件拒绝而不无限hash |
 | XML深度/属性 | 深度64、每元素属性64；属性名≤256B、值≤4096B |
 | testcase | 当前集合100000；case名称≤512B |
@@ -48,7 +49,7 @@ time为非负十进制秒，最多9位小数，整数部分有界；不接受负
 | Diagnostic | 最多20条、总20KiB，Case≤512B、Message≤1024B；先处理控制字符和脱敏再UTF-8安全截断 |
 | 相对Path | ≤1024B，非绝对、无控制/反斜杠/..，leaf沿现有255B文件名边界 |
 | checkpoint/final纯本地检查 | 每次总≤10s，且不超过ordinary剩余ns；上传/回执按原协议时限并受ordinary预算；0不启动，不退无限 |
-| 中央所有文件 | 同attempt所有purpose合计128文件/4GiB；XML另受64文件/64MiB，不可各用途另拿配额 |
+| 中央所有文件 | 同attempt普通制品最多128份，JUnit按max_files数量单独计；合计4GiB，XML累计64MiB |
 
 检查所有raw字节和所有解码属性/文本/路径中的已声明非空secret；命中report_secret，不上传或公开该XML，不重写原字节伪造报告。诊断按同一声明秘密脱敏。合法原XML下载字节、Size、SHA256须相符。
 
@@ -63,3 +64,5 @@ Outcome：pending（尚未final）、passed、failed、missing（只optional最�
 检查/解析/上传耗时与确认回执都计普通budget。用户cancel但Authority仍有效时，可以用受10s及ordinary剩余budget限制的取消独立上下文收集已经产生的XML；不因WithoutCancel延长Authority。Authority、journal/日志/进度/文件确认持久化失败沿007闭锁，不能再开始下一步或always；原失败优先保留。
 
 生效approval/upload/reports之外尚未交付能力仍按原规则拒绝。019提供同一执行封存证据，不能声称已实现商店/审批放行。将来进入approval/首次upload前只核验已有seal+文件，不重新读post的工作树；变更/缺失不能放行。
+
+2026-10-08 数量增量：默认256、max_files=1–1024；普通制品128份单独计数，累计字节/cases/诊断/时间上限不变。报告相关消息8MiB，执行journal64MiB/100万节点；冻结配置、审批与恢复使用同一配额，极端元数据与历史仍可能触及独立预算。

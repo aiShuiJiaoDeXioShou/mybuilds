@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"mybuilds/internal/config"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -40,7 +41,7 @@ func TestReportCollectionRejectsActualSourceReadRaces(t *testing.T) {
 	for _, mode := range []string{"replacement", "preserved_mtime_bytes", "closed_workspace_root"} {
 		t.Run(mode, func(t *testing.T) {
 			work, wr, dr := reportRoots(t)
-			c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil)
+			c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil, config.DefaultJUnitMaxFiles)
 			if err != nil {
 				t.Fatal(err)
 			}

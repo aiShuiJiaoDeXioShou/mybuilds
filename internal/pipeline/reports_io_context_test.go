@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"mybuilds/internal/config"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,7 +12,7 @@ import (
 
 func TestReportCollectionFileConsumersPreserveActualDeadline(t *testing.T) {
 	work, wr, dr := reportRoots(t)
-	c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil)
+	c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil, config.DefaultJUnitMaxFiles)
 	if err != nil {
 		t.Fatal(err)
 	}

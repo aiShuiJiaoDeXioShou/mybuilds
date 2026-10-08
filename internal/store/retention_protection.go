@@ -188,7 +188,7 @@ func retentionProtectionWithRetries(tx *gorm.DB, row buildRecord, retryDependenc
 			guard["artifacts_unconfirmed"] = true
 			continue
 		}
-		if !validateArtifactIDs(ids) {
+		if !validateArtifactIDs(ids, 128) {
 			guard["artifacts_unconfirmed"] = true
 			continue
 		}
@@ -251,7 +251,7 @@ func retentionReportsConfirmed(row buildRecord, steps []stepRecord, files []arti
 		return true
 	}
 	evidence, err := sealedReports(row)
-	if err != nil || evidence == nil || evidence.Outcome == "pending" || evidence.Reason == "report_error" || evidence.Reason == "timeout" || !validReportEvidence(evidence, cfg.Required == nil || *cfg.Required) || !reportSources(steps, *evidence) {
+	if err != nil || evidence == nil || evidence.Outcome == "pending" || evidence.Reason == "report_error" || evidence.Reason == "timeout" || !validReportEvidence(evidence, cfg.Required == nil || *cfg.Required, cfg.FileLimit()) || !reportSources(steps, *evidence) {
 		return false
 	}
 	byID := map[string]artifactRecord{}

@@ -20,6 +20,17 @@ type localArtifact struct {
 	Confirmed    bool                         `json:"confirmed"`
 }
 
+func artifactCounts(artifacts []localArtifact) (ordinary, junit int) {
+	for _, a := range artifacts {
+		if a.Declaration.Purpose == "junit" {
+			junit++
+		} else {
+			ordinary++
+		}
+	}
+	return
+}
+
 func (execution *taskExecution) declare(p *protocol.ExecutionProgress) error {
 	journal := execution.journal
 	journal.mu.Lock()
@@ -29,11 +40,12 @@ func (execution *taskExecution) declare(p *protocol.ExecutionProgress) error {
 	}
 	expected := protocol.ArtifactExpectation{Phase: p.Phase, Index: p.Index, IDs: []string{}}
 	var total int64
+	ordinary, _ := artifactCounts(journal.state.Artifacts)
 	for _, artifact := range journal.state.Artifacts {
 		total += artifact.Declaration.Size
 	}
 	for _, artifact := range p.LocalArtifacts {
-		if len(journal.state.Artifacts) >= 128 || artifact.Size < 0 || artifact.Size > 1<<30 || total+artifact.Size > 4<<30 {
+		if ordinary >= 128 || artifact.Size < 0 || artifact.Size > 1<<30 || total+artifact.Size > 4<<30 {
 			return failure("artifact_limit")
 		}
 		id := uuid.NewString()
@@ -42,6 +54,7 @@ func (execution *taskExecution) declare(p *protocol.ExecutionProgress) error {
 		journal.state.Artifacts = append(journal.state.Artifacts, localArtifact{Declaration: declaration, SnapshotPath: artifact.SnapshotPath})
 		expected.IDs = append(expected.IDs, id)
 		total += artifact.Size
+		ordinary++
 	}
 	expected.Count = len(expected.IDs)
 	p.ArtifactIDs = expected.IDs

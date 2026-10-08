@@ -31,3 +31,7 @@ disabled/revoked/rotated/过期/ctx失权时保存真实journal与清理保护�
 不新增report命令：mybuilds run结果JSON含reports；build show --json/文本展示Counts/Outcome/Reason/实际seal，artifact ls显示当前报告purpose及原XML大小SHA，artifact download使用原ID与私有--output排他校验。logs仍日志，不作为report summary运输。admin/approver可读，trigger及node token不可访问用户证据。节点离线中央已确认XML可读，坏内容/摘要/短流/输出存在拒绝。
 
 approval/upload/商店恢复尚未实现，不因报告passed放开入口。报告字段是封存证据，未来审批/首次上传只核验同执行seal与实际文件，不能因post变更重采或偷换。
+
+## 2026-10-08 数量及消息容量
+
+max_files默认256、显式1–1024；普通制品128份与报告分别计数，合计4GiB/报告累计64MiB不变。events请求和审批checkpoint摘要、claim恢复响应、CLI构建/审批响应最多8MiB；events严格JSON最多65536节点，普通管理请求仍1MiB/10000节点。执行journal64MiB/100万节点，秘密/resources/deletions/spool原限额不变，旧fence/完整回执/原预算保持。多个大报告列表可用--limit 1分页。

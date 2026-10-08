@@ -86,6 +86,18 @@ type Reports struct {
 type JUnitReport struct {
 	Paths    []string `yaml:"paths"`
 	Required *bool    `yaml:"required,omitempty"`
+	MaxFiles *int     `yaml:"max_files,omitempty" json:",omitempty"`
+}
+
+const DefaultJUnitMaxFiles = 256
+const MaximumJUnitMaxFiles = 1024
+
+// FileLimit读取冻结配置，省略时使用默认；合法范围由Validate检查。
+func (r *JUnitReport) FileLimit() int {
+	if r == nil || r.MaxFiles == nil {
+		return DefaultJUnitMaxFiles
+	}
+	return *r.MaxFiles
 }
 
 type Notifications struct {

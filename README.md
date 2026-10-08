@@ -32,6 +32,8 @@ mybuilds 让移动开发团队通过命令行管理自己的构建机：注册 G
 | 审批并发布 | 审批后在原节点继续；已配置的测试报告失败时阻止发布；支持 Google Play、App Store 和自定义发布结果核对 |
 | 自动触发构建 | GitHub、GitLab、Gitee 和通用 Webhook，支持去重、变更路径筛选和触发等待窗口 |
 
+JUnit 报告默认最多 256 份，每个 build 可用 `reports.junit.max_files` 配置为 1–1024；配置示例见[报告设置](docs/plans/CONFIGURATION.md#mvp-日志测试报告与保留策略)。
+
 ## 安装
 
 从 [GitHub Releases](https://github.com/aiShuiJiaoDeXioShou/mybuilds/releases) 安装预编译程序，无需 Go。macOS / Linux 客户端：

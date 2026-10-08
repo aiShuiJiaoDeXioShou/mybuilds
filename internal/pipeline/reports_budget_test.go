@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"mybuilds/internal/config"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,7 +26,7 @@ func TestReportCollectionActiveDeadlineInterruptsRealBaseline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 	defer cancel()
 	started := time.Now()
-	_, err := newReportCollection(ctx, wr, dr, []string{"*.xml"}, true, nil)
+	_, err := newReportCollection(ctx, wr, dr, []string{"*.xml"}, true, nil, config.DefaultJUnitMaxFiles)
 	if err == nil || reportFailureReason(err) != "timeout" || time.Since(started) > time.Second {
 		t.Fatalf("基线未服从实际期限: %v", err)
 	}
@@ -33,7 +34,7 @@ func TestReportCollectionActiveDeadlineInterruptsRealBaseline(t *testing.T) {
 
 func TestReportCollectionZeroDeadlineDoesNotOpenSnapshot(t *testing.T) {
 	work, wr, dr := reportRoots(t)
-	c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil)
+	c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil, config.DefaultJUnitMaxFiles)
 	if err != nil {
 		t.Fatal(err)
 	}

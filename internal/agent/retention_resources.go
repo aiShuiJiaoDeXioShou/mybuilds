@@ -204,7 +204,7 @@ func (j *executionJournal) readResourceLocked(ctx context.Context) (resourceReco
 	}
 	tokens := json.NewDecoder(bytes.NewReader(data))
 	count := 0
-	if journalJSONValue(tokens, 0, &count) != nil {
+	if journalJSONValue(tokens, 0, &count, 10000) != nil {
 		return r, nil, failure("persistence_error")
 	}
 	if _, e = tokens.Token(); e != io.EOF {

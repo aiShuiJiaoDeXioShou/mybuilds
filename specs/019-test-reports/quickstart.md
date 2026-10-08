@@ -136,7 +136,7 @@ admin/approver可读，trigger/user-node交叉身份拒绝；Node只能同fence�
 
 ## 双库、预算与008兼容
 
-自有SQLite与独立PostgreSQL数据库运行同套Store/API/三二进制，用实际会话锁/old expires/20幂等触发/重启/取消/失权/持久化失败验证。报告与artifact合计128/4GiB上限不绕过，XML另64/64MiB；10s纯检查上限与ordinary剩余ns较小者生效，上传/receipt仍计ordinary，不转post预算。剩余0拒启动，最后确认耗尽预算为timeout。
+自有SQLite与独立PostgreSQL数据库运行同套Store/API/三二进制，用实际会话锁/old expires/20幂等触发/重启/取消/失权/持久化失败验证。普通制品128份、JUnit按max_files单独计数，合计4GiB和XML累计64MiB不绕过；10s纯检查上限与ordinary剩余ns较小者生效，上传/receipt仍计ordinary，不转post预算。剩余0拒启动，最后确认耗尽预算为timeout。
 
 最终terminal完整精确Reports seal digest/IDs/Counts以及原日志/ArtifactSteps/cursors核对后才能产生008 StopKnown receipt；尚未确认文件或checked不能清journal。retry沿原SHA/Reports配置但新执行不沿旧pass，恢复不重读post改写XML。008已在504dc6验收集成；019沿其真实终态回执与原快照重试入口核对报告字段，未造占位恢复逻辑。
 
@@ -149,3 +149,17 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$FIXTURE/client-windows.exe
 ```
 
 记录实际Go/两库/节点版本、固定SHA、UTC命令/退出码、实际报告字节/摘要与安全断言；无报告回归、全部18FR/6SC/12AC映射、README/历史/validation与converge通过后整019一次本地提交，无push。报告通过/封存不等于商店或Apple签名验收，不启动未交付发布能力。
+
+## 2026-10-08 大量报告
+
+旧配置自动提升为256份；大型工程在相应build配置：
+
+```yaml
+reports:
+  junit:
+    paths: [build/test-results/**/*.xml]
+    required: true
+    max_files: 1024
+```
+
+数量为1–1024整数；默认256份/第257份失败，自定义1024份/第1025份失败。普通制品仍128份，报告另外计数，XML8MiB/总64MiB/10万cases等其他预算保持。消息8MiB、journal64MiB/100万节点独立有界，不代表任意诊断与审批历史组合无限可用。

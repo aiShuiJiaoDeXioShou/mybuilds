@@ -1,11 +1,46 @@
 package store
 
 import (
+	"fmt"
 	"github.com/google/uuid"
 	"mybuilds/internal/protocol"
 	"strings"
 	"testing"
 )
+
+func TestPublicationCandidatesFilterReportsBeforeLimit(t *testing.T) {
+	stores(t, func(t *testing.T, s *Store, _ Options) {
+		_, g, in := publishFixture(t, s)
+		var row buildRecord
+		var wanted artifactRecord
+		if err := s.writer.First(&row, "id = ?", g.Ref.BuildID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := s.writer.First(&wanted, "id = ?", in.ArtifactID).Error; err != nil {
+			t.Fatal(err)
+		}
+		// 仅构造SQL候选顺序，报告上传/封存由真实HTTP案例另验。
+		if err := s.writer.Delete(&wanted).Error; err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 256; i++ {
+			f := wanted
+			f.ID = fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
+			f.Seq = int64(i + 2)
+			f.Purpose = "junit"
+			f.StorageID = uuid.NewString()
+			if err := s.writer.Create(&f).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.writer.Create(&wanted).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := publicationArtifact(s.writer, row, *g.Task, g.Task.Definition.Steps[in.Index-1], in.Index, wanted); err != nil {
+			t.Fatal("报告挤掉了普通发布制品", err)
+		}
+	})
+}
 
 func TestPublishFrozenFileRejectsAdditionalAmbiguousOrForeignSource(t *testing.T) {
 	for _, source := range []string{"output/app.aab", "foreign/app.aab"} {

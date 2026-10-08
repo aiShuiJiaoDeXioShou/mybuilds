@@ -113,7 +113,11 @@ func readJSONLimit(r *http.Request, target any, limit int64) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	nodes := 0
-	value, err := jsonValue(dec, 0, &nodes)
+	maxNodes := 10000
+	if limit > 1<<20 {
+		maxNodes = 65536
+	}
+	value, err := jsonValue(dec, 0, &nodes, maxNodes)
 	if err != nil {
 		return store.ErrInvalid
 	}
@@ -131,9 +135,9 @@ func readJSONLimit(r *http.Request, target any, limit int64) error {
 	}
 	return nil
 }
-func jsonValue(dec *json.Decoder, depth int, nodes *int) (any, error) {
+func jsonValue(dec *json.Decoder, depth int, nodes *int, maxNodes int) (any, error) {
 	*nodes++
-	if depth > 64 || *nodes > 10000 {
+	if depth > 64 || *nodes > maxNodes {
 		return nil, store.ErrInvalid
 	}
 	token, err := dec.Token()
@@ -156,7 +160,7 @@ func jsonValue(dec *json.Decoder, depth int, nodes *int) (any, error) {
 			if _, exists := result[name]; exists {
 				return nil, store.ErrInvalid
 			}
-			value, err := jsonValue(dec, depth+1, nodes)
+			value, err := jsonValue(dec, depth+1, nodes, maxNodes)
 			if err != nil {
 				return nil, err
 			}
@@ -170,7 +174,7 @@ func jsonValue(dec *json.Decoder, depth int, nodes *int) (any, error) {
 	case '[':
 		result := []any{}
 		for dec.More() {
-			value, err := jsonValue(dec, depth+1, nodes)
+			value, err := jsonValue(dec, depth+1, nodes, maxNodes)
 			if err != nil {
 				return nil, err
 			}

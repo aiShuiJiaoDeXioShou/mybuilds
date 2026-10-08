@@ -70,8 +70,8 @@ func ordinarySummary(steps []stepRecord) (complete, started, failed, cancelled b
 	}
 	return
 }
-func validateArtifactIDs(ids []string) bool {
-	if len(ids) > 128 {
+func validateArtifactIDs(ids []string, maxFiles int) bool {
+	if len(ids) > maxFiles {
 		return false
 	}
 	seen := map[string]bool{}
@@ -155,7 +155,7 @@ func applyStep(db *gorm.DB, row *buildRecord, p protocol.ExecutionProgress) erro
 		if p.Status != "succeeded" && p.Reason == "" {
 			return ErrEventConflict
 		}
-		if p.StepKind != "artifact" && len(p.ArtifactIDs) != 0 || !validateArtifactIDs(p.ArtifactIDs) {
+		if p.StepKind != "artifact" && len(p.ArtifactIDs) != 0 || !validateArtifactIDs(p.ArtifactIDs, 128) {
 			return ErrEventConflict
 		}
 		if p.StepKind == "artifact" {
@@ -265,7 +265,7 @@ func verifyManifest(db *gorm.DB, row buildRecord, p protocol.ExecutionProgress, 
 	for _, expectation := range p.ArtifactSteps {
 		key := expectation.Phase + "/" + strconv.Itoa(expectation.Index)
 		step, ok := expectedSteps[key]
-		if !ok || seenSteps[key] || expectation.Count != len(expectation.IDs) || !validateArtifactIDs(expectation.IDs) {
+		if !ok || seenSteps[key] || expectation.Count != len(expectation.IDs) || !validateArtifactIDs(expectation.IDs, 128) {
 			return ErrEventConflict
 		}
 		seenSteps[key] = true

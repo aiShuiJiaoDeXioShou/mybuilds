@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,11 +21,21 @@ import (
 
 	"mybuilds/internal/config"
 	"mybuilds/internal/pipeline"
+	"mybuilds/internal/protocol"
 	"mybuilds/internal/store"
 )
 
 // 实际Store入队、HTTP、固定Git checkout、唯一Run与中央原XML共同验收；不造上传回执。
 func TestServeActualJUnitFinalRevisionAndOriginalDownload(t *testing.T) {
+	serveActualJUnit(t, 1)
+}
+
+func TestServeActualJUnitMaximumFiles(t *testing.T) {
+	serveActualJUnit(t, config.MaximumJUnitMaxFiles)
+}
+
+func serveActualJUnit(t *testing.T, count int) {
+	t.Helper()
 	st, admin, cfg, handler := agentControl(t)
 	control := httptest.NewServer(handler)
 	defer control.Close()
@@ -48,11 +59,11 @@ func TestServeActualJUnitFinalRevisionAndOriginalDownload(t *testing.T) {
 	runGit("init", "--initial-branch=main", "--template=")
 	original := `<testsuite tests="1"><testcase name="actual" time="0.125"/></testsuite>`
 	source := `version: 1
-reports: {junit: {paths: ['result.xml']}}
+reports: {junit: {paths: ['result*.xml']}}
 steps:
  - kind: run
    name: tests
-   run: printf '` + original + `' > result.xml; printf once >> count
+   run: printf '` + original + `' > result.xml; i=1; while [ $i -lt ` + fmt.Sprint(count) + ` ]; do cp result.xml result-$i.xml; i=$((i+1)); done; printf once >> count
  - kind: artifact
    name: ordinary-artifact
    paths: [count]
@@ -61,7 +72,13 @@ post:
   - kind: run
     name: cleanup
     run: printf '<testsuite tests="0"/>' > result.xml; printf cleanup > cleanup
+  - kind: artifact
+    name: post-artifact
+    paths: [cleanup]
 `
+	if count > 1 {
+		source = strings.Replace(source, "paths: ['result*.xml']", fmt.Sprintf("paths: ['result*.xml'], max_files: %d", count), 1)
+	}
 	if err := os.WriteFile(filepath.Join(repo, "mybuilds.yml"), []byte(source), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -104,14 +121,44 @@ post:
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- Serve(ctx, cfg) }()
-	waitUntil := time.Now().Add(12 * time.Second)
+	logState := func() {
+		view, _ := st.GetBuild(context.Background(), batch.Builds[0].ID)
+		for _, step := range view.Steps {
+			t.Logf("阶段%s/%d %s: %s/%s", step.Phase, step.Index, step.Kind, step.Status, step.Reason)
+		}
+		names, _ := filepath.Glob(filepath.Join(cfg.DataDir, "journal", "*.json"))
+		for _, name := range names {
+			raw, _ := os.ReadFile(name)
+			var state journalState
+			if json.Unmarshal(raw, &state) == nil {
+				kind := ""
+				if state.PendingEvent != nil {
+					kind = state.PendingEvent.Progress.Kind
+				}
+				confirmed := 0
+				for _, a := range state.Artifacts {
+					if a.Confirmed {
+						confirmed++
+					}
+				}
+				t.Logf("journal seq=%d pending=%s files=%d confirmed=%d stopped=%t", state.LastEventSeq, kind, len(state.Artifacts), confirmed, state.StopConfirmed)
+			}
+		}
+	}
+	waitUntil := time.Now().Add(180 * time.Second)
+	lastDebug := time.Now()
 	for time.Now().Before(waitUntil) {
+		if count > 1 && time.Since(lastDebug) > 20*time.Second {
+			logState()
+			lastDebug = time.Now()
+		}
 		view, err := st.GetBuild(context.Background(), batch.Builds[0].ID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		select {
 		case err := <-done:
+			logState()
 			t.Fatalf("真实Agent未完成报告链便退出: %v，中央%s/%s", err, view.Status, view.Reason)
 		default:
 		}
@@ -126,19 +173,29 @@ post:
 				} `json:"reports"`
 				ReportSealDigest string `json:"report_seal_digest"`
 			}
-			if json.Unmarshal(encoded, &public) != nil || public.Reports == nil || !public.Reports.Sealed || public.Reports.Counts.Tests != 1 || public.ReportSealDigest == "" {
+			if json.Unmarshal(encoded, &public) != nil || public.Reports == nil || !public.Reports.Sealed || public.Reports.Counts.Tests != int64(count) || public.ReportSealDigest == "" {
 				t.Fatal("中央真实报告未完整封存")
 			}
-			files, err := st.ListArtifacts(context.Background(), admin, view.ID, store.Page{})
-			if err != nil || len(files) != 2 {
-				t.Fatal("真实两用途文件", len(files), err)
+			files := []protocol.ArtifactView{}
+			for offset := 0; ; offset += 200 {
+				page, err := st.ListArtifacts(context.Background(), admin, view.ID, store.Page{Limit: 200, Offset: offset})
+				if err != nil {
+					t.Fatal(err)
+				}
+				files = append(files, page...)
+				if len(page) < 200 {
+					break
+				}
 			}
-			found := false
+			if len(files) != count+2 {
+				t.Fatal("真实两用途文件", len(files))
+			}
+			found := 0
 			for _, f := range files {
 				if f.Purpose != "junit" {
 					continue
 				}
-				found = true
+				found++
 				want := sha256.Sum256([]byte(original))
 				if f.SHA256 != hex.EncodeToString(want[:]) || f.Size != int64(len(original)) || f.ReportRevision < 1 || f.ReportKey == "" || f.Index != 1 || f.Step != "tests" {
 					t.Fatal("原XML元数据不精确")
@@ -155,7 +212,7 @@ post:
 					t.Fatal("中央原字节下载失败")
 				}
 			}
-			if !found {
+			if found != count {
 				t.Fatal("没有真实junit用途")
 			}
 			waitAttemptJournalRemoved(t, cfg.DataDir, view.ID)
@@ -181,5 +238,8 @@ post:
 		time.Sleep(20 * time.Millisecond)
 	}
 	view, _ := st.GetBuild(context.Background(), batch.Builds[0].ID)
+	logState()
+	cancel()
+	<-done
 	t.Fatalf("真实报告未达完整终态: %s/%s，ordinary=%d，report=%v", view.Status, view.Reason, len(view.Steps), view.Reports != nil)
 }

@@ -193,7 +193,7 @@ func publishReports(tx *gorm.DB, row buildRecord, in protocol.PublishAuthorizati
 	if err != nil {
 		return err
 	}
-	if in.ReportIDs == nil || !validateArtifactIDs(in.ReportIDs) {
+	if in.ReportIDs == nil || !validateArtifactIDs(in.ReportIDs, cfg.FileLimit()) {
 		return ErrInvalid
 	}
 	if cfg == nil {

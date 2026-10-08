@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"mybuilds/internal/config"
 	"mybuilds/internal/protocol"
 	"mybuilds/internal/reports"
 	"os"
@@ -39,11 +40,11 @@ func (c *reportCollection) checkpoint() (*protocol.ReportCollectionCheckpoint, e
 	}
 	return out, nil
 }
-func restoreReportCollection(ctx context.Context, workspace, result *os.Root, patterns, secrets []string, required bool, saved *protocol.ReportCollectionCheckpoint) (*reportCollection, error) {
-	if saved == nil || saved.Revision < 1 || !slices.Equal(saved.Patterns, patterns) || saved.Required != required || saved.Baseline == nil || saved.Current == nil || len(saved.Baseline) > 64 || len(saved.Current) > 64 || !strings.HasPrefix(saved.Directory, "reports/") || !reportValidPath(path.Join(saved.Directory, "x.xml")) {
+func restoreReportCollection(ctx context.Context, workspace, result *os.Root, patterns, secrets []string, required bool, saved *protocol.ReportCollectionCheckpoint, maxFiles int) (*reportCollection, error) {
+	if maxFiles < 1 || maxFiles > config.MaximumJUnitMaxFiles || saved == nil || saved.Revision < 1 || !slices.Equal(saved.Patterns, patterns) || saved.Required != required || saved.Baseline == nil || saved.Current == nil || len(saved.Baseline) > maxFiles || len(saved.Current) > maxFiles || !strings.HasPrefix(saved.Directory, "reports/") || !reportValidPath(path.Join(saved.Directory, "x.xml")) {
 		return nil, errReportSave
 	}
-	c := &reportCollection{workspace: workspace, resultRoot: result, patterns: slices.Clone(patterns), secrets: slices.Clone(secrets), required: required, directory: saved.Directory, baseline: map[string]reportFingerprint{}, current: map[string]reportEntry{}, revision: saved.Revision, lastIndex: saved.LastIndex, lastName: saved.LastName, final: saved.Final, lastCanonical: slices.Clone(saved.LastCanonical), sealed: saved.Sealed, digest: saved.Digest}
+	c := &reportCollection{workspace: workspace, resultRoot: result, patterns: slices.Clone(patterns), secrets: slices.Clone(secrets), required: required, maxFiles: maxFiles, directory: saved.Directory, baseline: map[string]reportFingerprint{}, current: map[string]reportEntry{}, revision: saved.Revision, lastIndex: saved.LastIndex, lastName: saved.LastName, final: saved.Final, lastCanonical: slices.Clone(saved.LastCanonical), sealed: saved.Sealed, digest: saved.Digest}
 	for name, f := range saved.Baseline {
 		if err := ctx.Err(); err != nil {
 			return nil, err

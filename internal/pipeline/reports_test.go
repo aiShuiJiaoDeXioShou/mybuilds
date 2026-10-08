@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"mybuilds/internal/config"
 	"os"
 	"path/filepath"
 	"testing"
@@ -49,7 +50,7 @@ func reportCheck(t *testing.T, c *reportCollection, index int, final bool) (prot
 }
 func TestReportCollectionRealReplacementAndSnapshot(t *testing.T) {
 	work, wr, dr := reportRoots(t)
-	c, err := newReportCollection(context.Background(), wr, dr, []string{"results/*.xml", "results/result.xml"}, true, nil)
+	c, err := newReportCollection(context.Background(), wr, dr, []string{"results/*.xml", "results/result.xml"}, true, nil, config.DefaultJUnitMaxFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +108,7 @@ func TestReportCollectionFreshnessAndMissing(t *testing.T) {
 				t.Fatal(e)
 			}
 			info, _ := os.Stat(file)
-			c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, required, nil)
+			c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, required, nil, config.DefaultJUnitMaxFiles)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -148,7 +149,7 @@ func TestReportCollectionNewIdentitySameBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	old, _ := os.Stat(file)
-	c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil)
+	c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil, config.DefaultJUnitMaxFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +178,7 @@ func TestReportCollectionCancelledBeforeBaseline(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	start := time.Now()
-	if _, err := newReportCollection(ctx, wr, dr, []string{"**/*.xml"}, true, nil); err == nil || time.Since(start) > time.Second {
+	if _, err := newReportCollection(ctx, wr, dr, []string{"**/*.xml"}, true, nil, config.DefaultJUnitMaxFiles); err == nil || time.Since(start) > time.Second {
 		t.Fatal("取消未受限")
 	}
 }

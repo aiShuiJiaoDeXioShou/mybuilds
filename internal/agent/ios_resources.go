@@ -63,7 +63,7 @@ func closeRecoveredIOSResources(ctx context.Context, lock *dataLock) error {
 		}
 		tokens := json.NewDecoder(bytes.NewReader(data))
 		count := 0
-		if journalJSONValue(tokens, 0, &count) != nil {
+		if journalJSONValue(tokens, 0, &count, maxJournalNodes) != nil {
 			return failure("journal_unconfirmed")
 		}
 		if _, e = tokens.Token(); e != io.EOF {

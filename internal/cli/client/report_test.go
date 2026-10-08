@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
 	"mybuilds/internal/server"
@@ -24,6 +25,30 @@ import (
 	"mybuilds/internal/protocol"
 	"mybuilds/internal/store"
 )
+
+func TestReportLargeBuildResponseBudget(t *testing.T) {
+	e := &protocol.ReportEvidence{Revision: 1, Sealed: true, Outcome: "passed", Required: true, Counts: protocol.JUnitCounts{Tests: 1024}, Files: []protocol.ReportFile{}, Diagnostics: []protocol.JUnitDiagnostic{}}
+	for i := 0; i < 1024; i++ {
+		e.Files = append(e.Files, protocol.ReportFile{Path: strings.Repeat("x/", 500) + fmt.Sprintf("%04d.xml", i), ArtifactID: uuid.NewString(), SourceStep: "tests", SourceIndex: 1, Counts: protocol.JUnitCounts{Tests: 1}})
+	}
+	body, err := json.Marshal(store.BuildView{Reports: e})
+	if err != nil || len(body) <= config.MaxConfigBytes {
+		t.Fatal("未形成大报告响应", len(body), err)
+	}
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(body) }))
+	defer api.Close()
+	cfg := config.ClientConfig{Server: api.URL, RuntimeToken: strings.Repeat("t", 32), Timeout: time.Second}
+	for _, path := range []string{"/api/builds/fixture", "/api/approvals/fixture"} {
+		var result store.BuildView
+		if err := requestJSON(context.Background(), cfg, http.MethodGet, path, nil, &result, ""); err != nil || result.Reports == nil || len(result.Reports.Files) != 1024 {
+			t.Fatal("完整大响应未读取", err)
+		}
+	}
+	body = []byte(strings.Repeat(" ", protocol.MaxReportMessageBytes+1))
+	if err := requestJSON(context.Background(), cfg, http.MethodGet, "/api/builds/fixture", nil, &store.BuildView{}, ""); err == nil {
+		t.Fatal("超响应预算未拒绝")
+	}
+}
 
 func TestReportsLocalCLIJSONKeepsOriginalFailureAndSnapshot(t *testing.T) {
 	requireLocalShell(t)

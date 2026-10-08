@@ -150,6 +150,9 @@ func validateBuild(b *Build, field string) error {
 			return invalid(field+".reports.junit", "缺少必要字段")
 		}
 		paths := b.Reports.JUnit.Paths
+		if n := b.Reports.JUnit.FileLimit(); n < 1 || n > MaximumJUnitMaxFiles {
+			return invalid(field+".reports.junit.max_files", "报告数量上限必须为1–1024")
+		}
 		if len(paths) > 32 {
 			return invalid(field+".reports.junit.paths", "最多允许32个报告模式")
 		}

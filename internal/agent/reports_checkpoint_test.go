@@ -3,9 +3,12 @@
 package agent
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,8 +16,49 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"mybuilds/internal/config"
 	"mybuilds/internal/protocol"
 )
+
+func TestReportLargeJournalPersistenceAndStartupParsing(t *testing.T) {
+	execution, p := reportJournalFixture(t)
+	e := copyReportEvidence(*p.Reports)
+	e.Files = []protocol.ReportFile{}
+	for i := 0; i < config.MaximumJUnitMaxFiles; i++ {
+		f := p.Reports.Files[0]
+		f.Path = strings.Repeat(strings.Repeat(">", 200)+"/", 4) + strings.Repeat(">", 212) + fmt.Sprintf("%04d.xml", i)
+		key := sha256.Sum256([]byte(f.Path))
+		f.Key = hex.EncodeToString(key[:])
+		f.ArtifactID = uuid.NewString()
+		e.Files = append(e.Files, f)
+	}
+	e.Counts.Tests = int64(len(e.Files))
+	j := execution.journal
+	j.state.Reports = &reportCheckpoint{Evidence: e}
+	if err := j.save(); err != nil {
+		t.Fatal(err)
+	}
+	data, _, err := j.lock.readJournalFile(j.name)
+	if err != nil || len(data) <= 1<<20 {
+		t.Fatal("大journal写读失败", len(data), err)
+	}
+	nodes := 0
+	if err := journalJSONValue(json.NewDecoder(bytes.NewReader(data)), 0, &nodes, maxJournalNodes); err != nil || nodes <= 10000 {
+		t.Fatal("节点容量未更新", nodes, err)
+	}
+	if err := closeRecoveredIOSResources(context.Background(), j.lock); err != nil {
+		t.Fatal("非iOS大journal启动扫描失败", err)
+	}
+	before := j.info
+	j.state.ResultDir = strings.Repeat("x", maxJournalBytes)
+	if err := j.save(); err == nil {
+		t.Fatal("journal超限未拒绝")
+	}
+	after, err := j.lock.root.Stat("journal/" + j.name)
+	if err != nil || !os.SameFile(before, after) || before.Size() != after.Size() {
+		t.Fatal("超限写入破坏旧journal")
+	}
+}
 
 // 真实私有锁/原子journal核验本地接点，中央成功仍由HTTP整链测试证明。
 func reportJournalFixture(t *testing.T) (*taskExecution, protocol.ExecutionProgress) {
@@ -55,7 +99,7 @@ func reportJournalFixture(t *testing.T) (*taskExecution, protocol.ExecutionProgr
 	hash := sha256.Sum256(data)
 	file := protocol.ReportFile{Key: hex.EncodeToString(key[:]), Path: "result.xml", ArtifactID: uuid.NewString(), SourceIndex: 1, SourceStep: "tests", Size: int64(len(data)), SHA256: hex.EncodeToString(hash[:]), Counts: protocol.JUnitCounts{Tests: 1}}
 	evidence := protocol.ReportEvidence{Revision: 1, Outcome: "pending", Required: true, Counts: file.Counts, Diagnostics: []protocol.JUnitDiagnostic{}, Files: []protocol.ReportFile{file}}
-	return &taskExecution{journal: journal}, protocol.ExecutionProgress{Kind: "reports_checked", Phase: "ordinary", Index: 1, Name: "tests", StepKind: "run", ExitCode: -1, Reports: &evidence, LocalReports: []protocol.CollectedReport{{File: file, SnapshotPath: snapshot}}, LocalResultDir: dir}
+	return &taskExecution{journal: journal, task: &protocol.TaskSnapshot{Definition: config.Build{Reports: &config.Reports{JUnit: &config.JUnitReport{Paths: []string{"result.xml"}}}}}}, protocol.ExecutionProgress{Kind: "reports_checked", Phase: "ordinary", Index: 1, Name: "tests", StepKind: "run", ExitCode: -1, Reports: &evidence, LocalReports: []protocol.CollectedReport{{File: file, SnapshotPath: snapshot}}, LocalResultDir: dir}
 }
 
 func TestReportCheckpointPrivateAndFinalOnlyDeclaration(t *testing.T) {

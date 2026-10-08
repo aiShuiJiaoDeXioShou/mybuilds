@@ -162,11 +162,19 @@ func approvalFiles(tx *gorm.DB, row buildRecord, p protocol.ExecutionProgress, s
 		return ErrEventConflict
 	}
 	// 普通产物沿原完整manifest核验；未final报告的已确认文件单独核对，不能伪造seal。
-	var files []artifactRecord
-	if err := tx.Where("attempt_id = ?", row.AttemptID).Limit(129).Find(&files).Error; err != nil {
+	cfg, err := configuredReport(row)
+	if err != nil {
 		return err
 	}
-	if len(files) > 128 {
+	limit := 128
+	if cfg != nil {
+		limit += cfg.FileLimit()
+	}
+	var files []artifactRecord
+	if err := tx.Where("attempt_id = ?", row.AttemptID).Limit(limit + 1).Find(&files).Error; err != nil {
+		return err
+	}
+	if len(files) > limit {
 		return ErrEventConflict
 	}
 	expected := map[string]stepRecord{}
@@ -181,7 +189,7 @@ func approvalFiles(tx *gorm.DB, row buildRecord, p protocol.ExecutionProgress, s
 	seen := map[string]bool{}
 	for _, e := range p.ArtifactSteps {
 		step, ok := expected[e.Phase+"/"+strconv.Itoa(e.Index)]
-		if !ok || step.Index != e.Index || e.Count != len(e.IDs) || !validateArtifactIDs(e.IDs) {
+		if !ok || step.Index != e.Index || e.Count != len(e.IDs) || !validateArtifactIDs(e.IDs, 128) {
 			return ErrEventConflict
 		}
 		var ids []string

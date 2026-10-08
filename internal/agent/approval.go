@@ -59,12 +59,12 @@ func approvalRefKnown(state journalState, ref protocol.LeaseRef) bool {
 }
 func parseApprovalJournal(data []byte) (journalState, error) {
 	var state journalState
-	if len(data) > 1<<20 {
+	if len(data) > maxJournalBytes {
 		return state, failure("journal_unconfirmed")
 	}
 	tokens := json.NewDecoder(bytes.NewReader(data))
 	count := 0
-	if journalJSONValue(tokens, 0, &count) != nil {
+	if journalJSONValue(tokens, 0, &count, maxJournalNodes) != nil {
 		return state, failure("journal_unconfirmed")
 	}
 	if _, err := tokens.Token(); err != io.EOF {
@@ -216,6 +216,7 @@ func (e *taskExecution) declareApprovalReports(p *protocol.ExecutionProgress) er
 	if j.state.Ref == nil || j.state.Reports == nil || !sameReportEvidence(j.state.Reports.Evidence, *p.Approval.Reports) || p.LocalApproval.Collection == nil {
 		return failure("report_invalid")
 	}
+	_, reportCount := artifactCounts(j.state.Artifacts)
 	for _, entry := range p.LocalApproval.Collection.Current {
 		f := entry.Local.File
 		found := false
@@ -231,11 +232,12 @@ func (e *taskExecution) declareApprovalReports(p *protocol.ExecutionProgress) er
 		if found {
 			continue
 		}
-		if !exactUUID(f.ArtifactID) || f.SourceIndex < 1 || f.SourceStep == "" || !safeDigest(f.SHA256) || len(j.state.Artifacts) >= 128 {
+		if !exactUUID(f.ArtifactID) || f.SourceIndex < 1 || f.SourceStep == "" || !safeDigest(f.SHA256) || reportCount >= e.reportFileLimit() {
 			return failure("report_invalid")
 		}
 		d := protocol.ArtifactDeclaration{Ref: *j.state.Ref, ID: f.ArtifactID, Seq: int64(len(j.state.Artifacts) + 1), Phase: "ordinary", Index: f.SourceIndex, Step: f.SourceStep, Name: path.Base(f.Path), Size: f.Size, SHA256: f.SHA256, Purpose: "junit", ReportRevision: p.Approval.Reports.Revision, ReportKey: f.Key}
 		j.state.Artifacts = append(j.state.Artifacts, localArtifact{Declaration: d, SnapshotPath: entry.Local.SnapshotPath})
+		reportCount++
 	}
 	return j.saveLocked()
 }

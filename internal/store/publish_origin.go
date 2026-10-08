@@ -16,15 +16,12 @@ func publicationArtifact(tx *gorm.DB, row buildRecord, task protocol.TaskSnapsho
 		return e
 	}
 	var candidates []artifactRecord
-	if e = tx.Where("build_id = ? AND attempt_id = ? AND phase = ? AND \"index\" < ?", row.ID, row.AttemptID, "ordinary", index).Limit(129).Find(&candidates).Error; e != nil {
+	if e = tx.Where("build_id = ? AND attempt_id = ? AND phase = ? AND \"index\" < ? AND purpose IN ?", row.ID, row.AttemptID, "ordinary", index, []string{"", "artifact"}).Limit(129).Find(&candidates).Error; e != nil {
 		return e
 	}
 	matches := 0
 	selected := false
 	for _, a := range candidates {
-		if a.Purpose != "" && a.Purpose != "artifact" {
-			continue
-		}
 		if a.Index < 1 || a.Index > len(task.Definition.Steps) {
 			return ErrArtifactConflict
 		}

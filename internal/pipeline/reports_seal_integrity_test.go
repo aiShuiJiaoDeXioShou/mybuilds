@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"mybuilds/internal/config"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,7 +12,7 @@ func TestReportCollectionSealRejectsMutatedCandidate(t *testing.T) {
 	for _, field := range []string{"size", "source", "diagnostic"} {
 		t.Run(field, func(t *testing.T) {
 			work, wr, dr := reportRoots(t)
-			c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil)
+			c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil, config.DefaultJUnitMaxFiles)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -39,7 +40,7 @@ func TestReportCollectionSealRejectsMutatedCandidate(t *testing.T) {
 
 func TestReportCollectionNoRealRunDoesNotInventXMLSource(t *testing.T) {
 	work, wr, dr := reportRoots(t)
-	c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil)
+	c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil, config.DefaultJUnitMaxFiles)
 	if err != nil {
 		t.Fatal(err)
 	}

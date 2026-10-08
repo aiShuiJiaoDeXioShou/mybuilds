@@ -64,7 +64,7 @@ func deletionPrivateFile(ctx context.Context, lock *dataLock, directory, id stri
 func deletionJSON(data []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	count := 0
-	if e := journalJSONValue(dec, 0, &count); e != nil {
+	if e := journalJSONValue(dec, 0, &count, 10000); e != nil {
 		return failure("resource_unconfirmed")
 	}
 	if _, e := dec.Token(); e != io.EOF {

@@ -67,9 +67,13 @@ func (journal *executionJournal) save() error {
 	defer journal.mu.Unlock()
 	return journal.saveLocked()
 }
+
+const maxJournalBytes = 64 << 20
+const maxJournalNodes = 1000000
+
 func (journal *executionJournal) saveLocked() error {
 	data, err := json.Marshal(journal.state)
-	if err != nil || len(data) > 1<<20 {
+	if err != nil || len(data) > maxJournalBytes {
 		return failure("persistence_error")
 	}
 	info, err := journal.lock.atomicFile("journal/"+journal.name, data, journal.info)

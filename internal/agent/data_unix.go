@@ -155,7 +155,7 @@ func inspectData(path string) string {
 	}
 	for _, entry := range entries {
 		info, err := root.Lstat(filepath.Join("journal", entry.Name()))
-		if err != nil || !privateInfo(info, false) || info.Size() > 1<<20 {
+		if err != nil || !privateInfo(info, false) || info.Size() > maxJournalBytes {
 			return "data_invalid"
 		}
 	}

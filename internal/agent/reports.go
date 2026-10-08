@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"mybuilds/internal/config"
 	"mybuilds/internal/protocol"
 )
 
@@ -18,6 +19,13 @@ type reportCheckpoint struct {
 	Evidence   protocol.ReportEvidence `json:"evidence"`
 	Final      bool                    `json:"final"`
 	SealDigest string                  `json:"seal_digest,omitempty"`
+}
+
+func (execution *taskExecution) reportFileLimit() int {
+	if r := execution.task.Definition.Reports; r != nil {
+		return r.JUnit.FileLimit()
+	}
+	return config.DefaultJUnitMaxFiles
 }
 
 func copyReportEvidence(e protocol.ReportEvidence) protocol.ReportEvidence {
@@ -51,7 +59,8 @@ func (execution *taskExecution) declareReports(p *protocol.ExecutionProgress) er
 	defer journal.mu.Unlock()
 	e := p.Reports
 	previous := journal.state.Reports
-	if e == nil || e.Sealed || e.Revision < 1 || journal.state.Ref == nil || len(e.Files) > 64 || len(e.Files) != len(p.LocalReports) || previous != nil && (previous.Final || e.Revision != previous.Evidence.Revision+1) || previous == nil && e.Revision != 1 {
+	limit := execution.reportFileLimit()
+	if e == nil || e.Sealed || e.Revision < 1 || journal.state.Ref == nil || len(e.Files) > limit || len(e.Files) != len(p.LocalReports) || previous != nil && (previous.Final || e.Revision != previous.Evidence.Revision+1) || previous == nil && e.Revision != 1 {
 		return failure("report_invalid")
 	}
 	final := p.Index == 0
@@ -59,10 +68,15 @@ func (execution *taskExecution) declareReports(p *protocol.ExecutionProgress) er
 		return failure("report_invalid")
 	}
 	var total, reportTotal int64
+	knownRefs := map[protocol.LeaseRef]bool{}
 	for _, a := range journal.state.Artifacts {
 		total += a.Declaration.Size
+		if _, checked := knownRefs[a.Declaration.Ref]; !checked {
+			knownRefs[a.Declaration.Ref] = approvalRefKnown(journal.state, a.Declaration.Ref)
+		}
 	}
 	pending := make([]localArtifact, 0, len(e.Files))
+	_, reportCount := artifactCounts(journal.state.Artifacts)
 	ids := map[string]bool{}
 	lastPath := ""
 	for i, file := range e.Files {
@@ -83,7 +97,7 @@ func (execution *taskExecution) declareReports(p *protocol.ExecutionProgress) er
 		for _, a := range journal.state.Artifacts {
 			if a.Declaration.ID == file.ArtifactID {
 				d := a.Declaration
-				if !a.Confirmed || !approvalRefKnown(journal.state, d.Ref) || d.Purpose != "junit" || d.ReportRevision > e.Revision || d.ReportKey != file.Key || d.Size != file.Size || d.SHA256 != file.SHA256 || d.Index != file.SourceIndex || d.Step != file.SourceStep {
+				if !a.Confirmed || !knownRefs[d.Ref] || d.Purpose != "junit" || d.ReportRevision > e.Revision || d.ReportKey != file.Key || d.Size != file.Size || d.SHA256 != file.SHA256 || d.Index != file.SourceIndex || d.Step != file.SourceStep {
 					return failure("report_invalid")
 				}
 				found = true
@@ -93,7 +107,7 @@ func (execution *taskExecution) declareReports(p *protocol.ExecutionProgress) er
 			continue
 		}
 		total += file.Size
-		if len(journal.state.Artifacts)+len(pending) >= 128 || total > 4<<30 {
+		if reportCount+len(pending) >= limit || total > 4<<30 {
 			return failure("artifact_limit")
 		}
 		declaration := protocol.ArtifactDeclaration{Ref: *journal.state.Ref, ID: file.ArtifactID, Seq: int64(len(journal.state.Artifacts) + len(pending) + 1), Phase: "ordinary", Index: file.SourceIndex, Step: file.SourceStep, Name: path.Base(file.Path), Size: file.Size, SHA256: file.SHA256, Purpose: "junit", ReportRevision: e.Revision, ReportKey: file.Key}
@@ -165,8 +179,20 @@ func (execution *taskExecution) checkSealed(p *protocol.ExecutionProgress) error
 
 // 封存与终态/只读恢复都核同一份完整声明；Confirmed不能替代归属与元数据。
 func confirmedReportFiles(state *journalState, evidence protocol.ReportEvidence) bool {
-	if state.Ref == nil || len(evidence.Files) > 64 || len(state.Artifacts) > 128 {
+	ordinary, junit := artifactCounts(state.Artifacts)
+	if state.Ref == nil || len(evidence.Files) > config.MaximumJUnitMaxFiles || ordinary > 128 || junit > config.MaximumJUnitMaxFiles {
 		return false
+	}
+	// 同一Ref的历史摘要只核一次，避免每个文件/候选重复编码整份报告。
+	knownRefs := map[protocol.LeaseRef]bool{}
+	for index, artifact := range state.Artifacts {
+		if artifact.Declaration.Seq != int64(index+1) {
+			return false
+		}
+		ref := artifact.Declaration.Ref
+		if _, checked := knownRefs[ref]; !checked {
+			knownRefs[ref] = approvalRefKnown(*state, ref)
+		}
 	}
 	seen := map[string]bool{}
 	for _, file := range evidence.Files {
@@ -177,7 +203,7 @@ func confirmedReportFiles(state *journalState, evidence protocol.ReportEvidence)
 		found := false
 		for index, artifact := range state.Artifacts {
 			d := artifact.Declaration
-			if approvalRefKnown(*state, d.Ref) && d.ID == file.ArtifactID && d.Seq == int64(index+1) && artifact.Confirmed && d.Phase == "ordinary" && d.Name == path.Base(file.Path) && d.Purpose == "junit" && d.ReportRevision <= evidence.Revision && d.ReportKey == file.Key && d.Size == file.Size && d.SHA256 == file.SHA256 && d.Index == file.SourceIndex && d.Step == file.SourceStep {
+			if d.ID == file.ArtifactID && knownRefs[d.Ref] && d.Seq == int64(index+1) && artifact.Confirmed && d.Phase == "ordinary" && d.Name == path.Base(file.Path) && d.Purpose == "junit" && d.ReportRevision <= evidence.Revision && d.ReportKey == file.Key && d.Size == file.Size && d.SHA256 == file.SHA256 && d.Index == file.SourceIndex && d.Step == file.SourceStep {
 				found = true
 				break
 			}
@@ -187,10 +213,7 @@ func confirmedReportFiles(state *journalState, evidence protocol.ReportEvidence)
 		}
 	}
 	// 集合外XML只能是先前实际审批封存后被新检查替换的历史文件。
-	for index, artifact := range state.Artifacts {
-		if artifact.Declaration.Seq != int64(index+1) {
-			return false
-		}
+	for _, artifact := range state.Artifacts {
 		if artifact.Declaration.Purpose == "junit" && !seen[artifact.Declaration.ID] && !approvalReportArtifactKnown(state, artifact, evidence.Revision) {
 			return false
 		}

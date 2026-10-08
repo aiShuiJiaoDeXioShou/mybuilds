@@ -23,7 +23,7 @@ func readTerminalJournal(lock *dataLock, name string) (*executionJournal, error)
 	}
 	tokens := json.NewDecoder(bytes.NewReader(data))
 	count := 0
-	if err = journalJSONValue(tokens, 0, &count); err != nil {
+	if err = journalJSONValue(tokens, 0, &count, maxJournalNodes); err != nil {
 		return nil, failure("journal_unconfirmed")
 	}
 	if _, err = tokens.Token(); err != io.EOF {
@@ -93,9 +93,9 @@ func sameBudget(a, b *int64) bool {
 }
 
 // journal是单个有界对象，拒绝重复/null/过深数据，不以Decoder的后值覆盖解释证据。
-func journalJSONValue(dec *json.Decoder, depth int, count *int) error {
+func journalJSONValue(dec *json.Decoder, depth int, count *int, maxNodes int) error {
 	*count++
-	if depth > 64 || *count > 10000 {
+	if depth > 64 || *count > maxNodes {
 		return failure("journal_unconfirmed")
 	}
 	value, err := dec.Token()
@@ -116,7 +116,7 @@ func journalJSONValue(dec *json.Decoder, depth int, count *int) error {
 				return failure("journal_unconfirmed")
 			}
 			seen[strings.ToLower(key)] = true
-			if err = journalJSONValue(dec, depth+1, count); err != nil {
+			if err = journalJSONValue(dec, depth+1, count, maxNodes); err != nil {
 				return err
 			}
 		}
@@ -126,7 +126,7 @@ func journalJSONValue(dec *json.Decoder, depth int, count *int) error {
 		}
 	case '[':
 		for dec.More() {
-			if err := journalJSONValue(dec, depth+1, count); err != nil {
+			if err := journalJSONValue(dec, depth+1, count, maxNodes); err != nil {
 				return err
 			}
 		}

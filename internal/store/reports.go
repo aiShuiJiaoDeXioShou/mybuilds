@@ -87,8 +87,8 @@ func reportCounts(c protocol.JUnitCounts) bool {
 	_, err := reports.MergeJUnit([]protocol.JUnitResult{{Counts: c, Diagnostics: []protocol.JUnitDiagnostic{}}})
 	return err == nil
 }
-func validReportEvidence(e *protocol.ReportEvidence, required bool) bool {
-	if e == nil || e.Files == nil || e.Diagnostics == nil || e.Revision < 1 || e.Required != required || len(e.Files) > 64 || len(e.Diagnostics) > 20 || !slices.Contains([]string{"pending", "passed", "failed", "missing"}, e.Outcome) || !slices.Contains([]string{"", "report_failed", "report_invalid", "report_missing", "report_secret", "report_error", "timeout"}, e.Reason) || (e.Outcome == "failed") != (e.Reason != "") {
+func validReportEvidence(e *protocol.ReportEvidence, required bool, maxFiles int) bool {
+	if e == nil || e.Files == nil || e.Diagnostics == nil || e.Revision < 1 || e.Required != required || maxFiles < 1 || maxFiles > config.MaximumJUnitMaxFiles || len(e.Files) > maxFiles || len(e.Diagnostics) > 20 || !slices.Contains([]string{"pending", "passed", "failed", "missing"}, e.Outcome) || !slices.Contains([]string{"", "report_failed", "report_invalid", "report_missing", "report_secret", "report_error", "timeout"}, e.Reason) || (e.Outcome == "failed") != (e.Reason != "") {
 		return false
 	}
 	if !reportCounts(e.Counts) {
@@ -213,7 +213,7 @@ func applyReportsChecked(tx *gorm.DB, row *buildRecord, p protocol.ExecutionProg
 		return ErrEventConflict
 	}
 	required := cfg.Required == nil || *cfg.Required
-	if !validReportEvidence(p.Reports, required) || p.Reports.Sealed || p.Reports.Revision != row.ReportRevision+1 {
+	if !validReportEvidence(p.Reports, required, cfg.FileLimit()) || p.Reports.Sealed || p.Reports.Revision != row.ReportRevision+1 {
 		return ErrEventConflict
 	}
 	steps, err := loadSteps(tx, row.ID)
@@ -548,7 +548,11 @@ func validateJUnitArtifact(tx *gorm.DB, row buildRecord, in ArtifactCommit) (str
 	if err = tx.Model(&artifactRecord{}).Select("COUNT(*) AS count, COALESCE(SUM(size),0) AS size").Where("attempt_id = ? AND purpose = ?", *row.AttemptID, "junit").Scan(&totals).Error; err != nil {
 		return "", err
 	}
-	if totals.Count >= 64 || totals.Size > (64<<20)-d.Size {
+	cfg, err := configuredReport(row)
+	if err != nil {
+		return "", err
+	}
+	if cfg == nil || totals.Count >= int64(cfg.FileLimit()) || totals.Size > (64<<20)-d.Size {
 		return "", ErrArtifactConflict
 	}
 	if _, err = remainingReportBudget(tx, row); err != nil {
@@ -654,7 +658,7 @@ func validateReportManifest(tx *gorm.DB, row buildRecord, p protocol.ExecutionPr
 		return err
 	}
 	m := p.ReportManifest
-	if evidence == nil || !row.ReportFinal || !evidence.Sealed || p.Reports != nil || m == nil || m.IDs == nil || m.SealDigest != row.ReportSealDigest || !validDigest(m.SealDigest) || len(m.IDs) != len(evidence.Files) || !validateArtifactIDs(m.IDs) {
+	if evidence == nil || !row.ReportFinal || !evidence.Sealed || p.Reports != nil || m == nil || m.IDs == nil || m.SealDigest != row.ReportSealDigest || !validDigest(m.SealDigest) || len(m.IDs) != len(evidence.Files) || !validateArtifactIDs(m.IDs, cfg.FileLimit()) {
 		return ErrEventConflict
 	}
 	var files []artifactRecord

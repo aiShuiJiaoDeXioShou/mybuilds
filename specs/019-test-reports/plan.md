@@ -19,9 +19,9 @@
 - **Testing**: 测试先行；真实本地脚本、Store 双库、真实 Server/Client/Agent+Git/HTTPS，macOS/Linux 节点实际生成 XML、断权/数据库和文件失败、中央离线下载；test/vet/race 与客户端纯 Go 跨编译。
 - **Target Platform**: 执行/控制端 macOS/Linux，远程客户端跨平台；不扩展 iOS/Flutter/商店工具链。
 - **Project Type**: 既有三个 CLI 和鉴权 HTTP，有限纯报告解析包供两个实际消费者。
-- **Performance Goals**: 单 XML≤8MiB，当前报告集合≤64 文件/64MiB/100000 cases，流式深度≤64；纯本地检查/快照/解析每次≤10s且不超过剩余普通预算，网络文件沿007单次2m但同受剩余普通预算限制。
+- **Performance Goals**: 单 XML≤8MiB，当前报告集合默认≤256文件（max_files=1–1024）/64MiB/100000 cases，流式深度≤64；纯本地检查/快照/解析每次≤10s且不超过剩余普通预算，网络文件沿007单次2m但同受剩余普通预算限制。
 - **Constraints**: 原工作树旧文件不删除；只读本 build 匹配的普通文件；拒 symlink/FIFO/DOCTYPE/外部实体/超限/秘密；固定执行权、完整回执和纳秒预算不可重置；无报告配置不读目录、不增加事件或结果字段。
-- **Scale/Scope**: 只实现 reports.junit；保持四种步骤及 succeeded/failed/cancelled/skipped/interrupted，不加 unstable、插件/报告平台/第二执行器。report XML与其它文件合计仍受每 attempt≤128 文件/4GiB 的007上限，报告自己的限额进一步收紧。
+- **Scale/Scope**: 只实现 reports.junit；保持四种步骤及 succeeded/failed/cancelled/skipped/interrupted，不加 unstable、插件/报告平台/第二执行器。每attempt普通制品≤128份，JUnit数量按冻结max_files独立计；合计4GiB与报告累计64MiB保持。
 
 ## Constitution Check
 
@@ -83,3 +83,15 @@ US1真实脚本生成通过/失败/错误/跳过、嵌套suite和同路径改写
 ## Complexity Tracking
 
 无原则违反，无需复杂度例外。唯一新包internal/reports只有真实纯JUnit解析，不提供registry/interface/hook/多格式框架。新增checked/sealed是本功能实际阶段证据，不新增脚本步骤或第二执行协议。
+
+## 2026-10-08 增量实施计划
+
+基线 main@21116f7。仅提高报告文件数量并支持每 build 配置；既有64份及报告与制品合计128份描述由本节取代。默认256，配置1–1024；普通制品仍128，JUnit累计数量使用冻结配置，字节/cases/诊断/执行预算不变。
+
+1. config定义唯一默认/最大值及有效值读取；严格schema验证max_files，可省略，不接受零/null/非整数。pipeline准备、构造、扫描、检查点恢复均传入有效值。
+2. Agent声明和审批上传、Store证据和文件确认使用冻结有效值；普通制品配额排除purpose=junit，发布候选先过滤用途再Limit，保持原顺序与幂等。无快照的只读恢复使用绝对1024边界。
+3. 报告events请求与claim响应、build详情响应及审批摘要允许8MiB；普通管理请求仍1MiB。严格JSON节点上限按报告容量提高，重复/null/深度检查不变。journal写入、审批/终态恢复、retention只读守卫统一64MiB及100万节点；该独立预算仍可拒绝极端诊断或过多历史，不能将max_files宣称无限容量。
+4. 先验证配置与默认/自定义边界，再执行真实大量XML收集、Store+HTTP上传封存/恢复与中央下载、长路径消息，回归报告失败和无报告流程；不新增依赖/框架，不改XML解析器。
+5. 根代理串行拥有所有代码、文档与提交；Phase0仅授权只读研究子代理审计传输/恢复消费者，不并发改写。必要全量test、相关race、vet与纯Go构建通过后converge并本地一次提交，无push。
+
+Constitution Check：复用019与唯一Run，无新依赖或抽象；有限输入/租约/持久化/原XML与失败门保持；中文文档与本地提交满足原则，无例外。

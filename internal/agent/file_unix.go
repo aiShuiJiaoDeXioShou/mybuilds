@@ -18,7 +18,11 @@ import (
 
 // 文件只能发布在已知私有目录，重命名与目录fsync都完成后才允许发送。
 func (lock *dataLock) atomicFile(name string, data []byte, previous os.FileInfo) (os.FileInfo, error) {
-	if len(data) == 0 || len(data) > 1<<20 || !ownedFileName(name) {
+	limit := 1 << 20
+	if path.Dir(name) == "journal" {
+		limit = maxJournalBytes
+	}
+	if len(data) == 0 || len(data) > limit || !ownedFileName(name) {
 		return nil, failure("persistence_error")
 	}
 	if err := lock.Check(); err != nil {
@@ -233,7 +237,7 @@ func (lock *dataLock) readJournalFile(name string) ([]byte, os.FileInfo, error) 
 		return nil, nil, failure("data_invalid")
 	}
 	before, err := lock.root.Lstat(relative)
-	if err != nil || !privateInfo(before, false) || before.Size() < 1 || before.Size() > 1<<20 {
+	if err != nil || !privateInfo(before, false) || before.Size() < 1 || before.Size() > maxJournalBytes {
 		return nil, nil, failure("data_invalid")
 	}
 	file, err := lock.root.OpenFile(relative, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
@@ -245,7 +249,7 @@ func (lock *dataLock) readJournalFile(name string) ([]byte, os.FileInfo, error) 
 	if err != nil || !privateInfo(opened, false) || !os.SameFile(before, opened) {
 		return nil, nil, failure("data_invalid")
 	}
-	data, readErr := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+	data, readErr := io.ReadAll(io.LimitReader(file, (maxJournalBytes)+1))
 	after, statErr := file.Stat()
 	current, pathErr := lock.root.Lstat(relative)
 	currentParent, parentErr := lock.root.Lstat("journal")

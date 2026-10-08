@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"mybuilds/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +12,7 @@ import (
 
 func TestReportCollectionDiagnosticsReboundedAfterPathKey(t *testing.T) {
 	work, wr, dr := reportRoots(t)
-	c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil)
+	c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil, config.DefaultJUnitMaxFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +40,7 @@ func TestReportCollectionDiagnosticsReboundedAfterPathKey(t *testing.T) {
 
 func TestReportCollectionOptionalPartialPatternsKeepCounts(t *testing.T) {
 	work, wr, dr := reportRoots(t)
-	c, err := newReportCollection(context.Background(), wr, dr, []string{"present.xml", "absent.xml"}, false, nil)
+	c, err := newReportCollection(context.Background(), wr, dr, []string{"present.xml", "absent.xml"}, false, nil, config.DefaultJUnitMaxFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,11 +56,11 @@ func TestReportCollectionOptionalPartialPatternsKeepCounts(t *testing.T) {
 
 func TestReportCollectionTooManyNewFilesIsSafeFailure(t *testing.T) {
 	work, wr, dr := reportRoots(t)
-	c, err := newReportCollection(context.Background(), wr, dr, []string{"*.xml"}, true, nil)
+	c, err := newReportCollection(context.Background(), wr, dr, []string{"*.xml"}, true, nil, config.DefaultJUnitMaxFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 65; i++ {
+	for i := 0; i <= config.DefaultJUnitMaxFiles; i++ {
 		if err = os.WriteFile(filepath.Join(work, fmt.Sprintf("result-%d.xml", i)), []byte(`<testsuite/>`), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -70,9 +71,51 @@ func TestReportCollectionTooManyNewFilesIsSafeFailure(t *testing.T) {
 	}
 }
 
+func TestReportCollectionConfiguredFileLimitsAndRestore(t *testing.T) {
+	for _, tc := range []struct{ limit, count int }{{256, 256}, {256, 257}, {65, 65}, {64, 65}, {1024, 1024}, {1024, 1025}} {
+		t.Run(fmt.Sprintf("%d/%d", tc.limit, tc.count), func(t *testing.T) {
+			work, wr, dr := reportRoots(t)
+			c, err := newReportCollection(context.Background(), wr, dr, []string{"*.xml"}, true, nil, tc.limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < tc.count; i++ {
+				if err := os.WriteFile(filepath.Join(work, fmt.Sprintf("%04d.xml", i)), []byte(`<testsuite><testcase/></testsuite>`), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			e, _ := reportCheck(t, c, 1, false)
+			if tc.count > tc.limit {
+				if e.Outcome != "failed" || e.Reason != "report_invalid" || len(e.Files) != 0 {
+					t.Fatal("扫描超限未拒绝")
+				}
+				if _, err := newReportCollection(context.Background(), wr, dr, c.patterns, true, nil, tc.limit); err == nil {
+					t.Fatal("基线超限未拒绝")
+				}
+				return
+			}
+			if e.Counts.Tests != int64(tc.count) || len(e.Files) != tc.count {
+				t.Fatal("完整数量未收集")
+			}
+			saved, err := c.checkpoint()
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err = restoreReportCollection(context.Background(), wr, dr, c.patterns, nil, true, saved, tc.limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			final, _ := reportCheck(t, c, 0, true)
+			if final.Outcome != "passed" || final.Counts.Tests != int64(tc.count) {
+				t.Fatal("恢复未保持完整结果")
+			}
+		})
+	}
+}
+
 func TestReportCollectionCheckpointRemainsPendingUntilFinal(t *testing.T) {
 	work, wr, dr := reportRoots(t)
-	c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil)
+	c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil, config.DefaultJUnitMaxFiles)
 	if err != nil {
 		t.Fatal(err)
 	}

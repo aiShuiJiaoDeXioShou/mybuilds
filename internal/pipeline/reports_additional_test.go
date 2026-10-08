@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"crypto/sha256"
+	"mybuilds/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +14,7 @@ import (
 
 func TestReportCollectionRequiredEachPatternKeepsActualCounts(t *testing.T) {
 	work, wr, dr := reportRoots(t)
-	c, err := newReportCollection(context.Background(), wr, dr, []string{"results/*.xml", "missing/*.xml"}, true, nil)
+	c, err := newReportCollection(context.Background(), wr, dr, []string{"results/*.xml", "missing/*.xml"}, true, nil, config.DefaultJUnitMaxFiles)
 	if err != nil {
 		t.Fatal(err)
 	}

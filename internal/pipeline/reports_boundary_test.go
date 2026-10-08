@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"mybuilds/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,7 +46,7 @@ func TestReportCollectionRejectsUnsafeSources(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			work, wr, dr := reportRoots(t)
 			tc.setup(t, work)
-			if _, err := newReportCollection(context.Background(), wr, dr, []string{tc.pattern}, false, nil); err == nil {
+			if _, err := newReportCollection(context.Background(), wr, dr, []string{tc.pattern}, false, nil, config.DefaultJUnitMaxFiles); err == nil {
 				t.Fatal("不安全旧源未拒绝")
 			}
 		})
@@ -55,7 +56,7 @@ func TestReportCollectionRejectsUnsafeSources(t *testing.T) {
 func TestReportCollectionUnsafePatterns(t *testing.T) {
 	_, wr, dr := reportRoots(t)
 	for _, pattern := range []string{"../x.xml", "/x.xml", "C:/x.xml", `a\x.xml`, "a/../x.xml", "a\nx.xml", strings.Repeat("a", 256) + ".xml"} {
-		if _, err := newReportCollection(context.Background(), wr, dr, []string{pattern}, true, nil); err == nil {
+		if _, err := newReportCollection(context.Background(), wr, dr, []string{pattern}, true, nil, config.DefaultJUnitMaxFiles); err == nil {
 			t.Fatalf("接受非法路径 %q", pattern)
 		}
 	}
@@ -63,7 +64,7 @@ func TestReportCollectionUnsafePatterns(t *testing.T) {
 
 func TestReportCollectionSnapshotPersistenceFailure(t *testing.T) {
 	work, wr, dr := reportRoots(t)
-	c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil)
+	c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil, config.DefaultJUnitMaxFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +82,7 @@ func TestReportCollectionSnapshotPersistenceFailure(t *testing.T) {
 
 func TestReportCollectionCorruptSnapshotCannotSeal(t *testing.T) {
 	work, wr, dr := reportRoots(t)
-	c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil)
+	c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, nil, config.DefaultJUnitMaxFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +101,7 @@ func TestReportCollectionCorruptSnapshotCannotSeal(t *testing.T) {
 
 func TestReportCollectionDirectoryReadFailureClosesExecution(t *testing.T) {
 	_, wr, dr := reportRoots(t)
-	c, err := newReportCollection(context.Background(), wr, dr, []string{"results/*.xml"}, true, nil)
+	c, err := newReportCollection(context.Background(), wr, dr, []string{"results/*.xml"}, true, nil, config.DefaultJUnitMaxFiles)
 	if err != nil {
 		t.Fatal(err)
 	}

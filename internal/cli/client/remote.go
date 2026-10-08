@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"io"
 	"mybuilds/internal/config"
+	"mybuilds/internal/protocol"
 	"net/http"
 	"strings"
 	"text/tabwriter"
@@ -62,8 +63,12 @@ func requestJSON(ctx context.Context, cfg config.ClientConfig, method, path stri
 	if result.StatusCode == http.StatusNoContent {
 		return nil
 	}
-	data, err = io.ReadAll(io.LimitReader(result.Body, config.MaxConfigBytes+1))
-	if err != nil || len(data) > config.MaxConfigBytes {
+	limit := config.MaxConfigBytes
+	if method == http.MethodGet && strings.HasPrefix(path, "/api/builds") || strings.HasPrefix(path, "/api/approvals") {
+		limit = protocol.MaxReportMessageBytes
+	}
+	data, err = io.ReadAll(io.LimitReader(result.Body, int64(limit)+1))
+	if err != nil || len(data) > limit {
 		return errors.New("控制端响应无效")
 	}
 	if response == nil {

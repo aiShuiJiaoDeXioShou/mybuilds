@@ -117,6 +117,10 @@ type JUnitResult struct {
 	Counts      JUnitCounts       `json:"counts"`
 	Diagnostics []JUnitDiagnostic `json:"diagnostics"`
 }
+
+// 报告证据可能包含大量相对路径，相关JSON消息使用独立的有限预算。
+const MaxReportMessageBytes = 8 << 20
+
 type ReportFile struct {
 	Key         string      `json:"key"`
 	Path        string      `json:"path"`

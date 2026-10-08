@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"mybuilds/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +18,7 @@ func TestReportCollectionSecretsNeverPublishXML(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			work, wr, dr := reportRoots(t)
-			c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, []string{"private-marker"})
+			c, err := newReportCollection(context.Background(), wr, dr, []string{"result.xml"}, true, []string{"private-marker"}, config.DefaultJUnitMaxFiles)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -44,7 +45,7 @@ func TestReportCollectionSecretRelativePath(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(work, "private-marker.xml"), []byte(`<testsuite/>`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := newReportCollection(context.Background(), wr, dr, []string{"*.xml"}, true, []string{"private-marker"})
+	_, err := newReportCollection(context.Background(), wr, dr, []string{"*.xml"}, true, []string{"private-marker"}, config.DefaultJUnitMaxFiles)
 	if err == nil || reportFailureReason(err) != "report_secret" || strings.Contains(err.Error(), "private-marker") {
 		t.Fatal("路径秘密未安全拒绝")
 	}
