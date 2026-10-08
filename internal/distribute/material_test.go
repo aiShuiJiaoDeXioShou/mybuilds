@@ -34,6 +34,12 @@ func TestRestrictedMaterialBoundaries(t *testing.T) {
 	if err != nil || string(b) != "private" {
 		t.Fatalf("%v", err)
 	}
+	if err := os.Chmod(p, 0400); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := readMaterial(context.Background(), p, 64, true); err != nil || string(data) != "private" {
+		t.Fatal("只读发布材料被拒绝", err)
+	}
 	for _, name := range []string{"link", "hard"} {
 		q := filepath.Join(dir, name)
 		if name == "link" {

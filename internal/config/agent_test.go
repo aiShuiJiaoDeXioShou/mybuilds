@@ -27,6 +27,12 @@ func TestAgentConfiguration(t *testing.T) {
 	if cfg.Node != "mac-build-01" || cfg.Capacity != 1 || cfg.HeartbeatInterval != 5*time.Second || cfg.LeaseDuration != 30*time.Second || cfg.DataDir != filepath.Join(filepath.Dir(p), "node-data") || cfg.CAFile != filepath.Join(filepath.Dir(p), "private-ca.pem") {
 		t.Fatalf("配置/缺省错误: %+v", cfg)
 	}
+	if err := os.Chmod(p, 0400); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadAgent(AgentLoadOptions{Filename: p, Explicit: true}); err != nil {
+		t.Fatal("只读Agent凭据被拒绝", err)
+	}
 	b, _ := json.Marshal(cfg)
 	if strings.Contains(string(b), "SECRET") {
 		t.Fatal("token泄漏")
@@ -81,12 +87,14 @@ func TestAgentPrivateFilesAndReferences(t *testing.T) {
 	secret := filepath.Join(filepath.Dir(p), "secrets.env")
 	os.WriteFile(secret, []byte("DECLARED=value\n"), 0644)
 	p = writeManagementConfig(t, agentBody()+"secrets_file: '"+secret+"'\n")
-	if _, err := LoadAgent(AgentLoadOptions{Filename: p, Explicit: true}); err == nil {
-		t.Fatal("弱权限secret被接受")
+	if cfg, err := LoadAgent(AgentLoadOptions{Filename: p, Explicit: true}); err != nil || cfg.SecretsFile != secret {
+		t.Fatal("配置加载不应读取秘密文件", err)
 	}
-	os.Chmod(secret, 0600)
-	if _, err := LoadAgent(AgentLoadOptions{Filename: p, Explicit: true}); err != nil {
+	if err := os.Remove(secret); err != nil {
 		t.Fatal(err)
+	}
+	if cfg, err := LoadAgent(AgentLoadOptions{Filename: p, Explicit: true}); err != nil || cfg.SecretsFile != secret {
+		t.Fatal("秘密路径必须可在配置加载后部署", err)
 	}
 	dir := filepath.Join(t.TempDir(), "data")
 	os.Mkdir(dir, 0755)

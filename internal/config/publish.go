@@ -19,7 +19,7 @@ func ReadPrivateJSON(filename string, limit int64) ([]byte, error) {
 	}
 	defer file.Close()
 	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || !configurationOwned(info) || !configurationSingleLink(info) || info.Size() > limit {
+	if err != nil || !privateConfiguration(info) || !configurationSingleLink(info) || info.Size() > limit {
 		return nil, os.ErrPermission
 	}
 	data, err := io.ReadAll(io.LimitReader(file, limit+1))
@@ -28,7 +28,7 @@ func ReadPrivateJSON(filename string, limit int64) ([]byte, error) {
 	}
 	after, err := file.Stat()
 	current, e := os.Lstat(filename)
-	if err != nil || e != nil || !os.SameFile(info, after) || !os.SameFile(info, current) || after.Size() != info.Size() || !after.ModTime().Equal(info.ModTime()) || !configurationSingleLink(after) {
+	if err != nil || e != nil || !os.SameFile(info, current) || after.Size() != info.Size() || !after.ModTime().Equal(info.ModTime()) || !configurationSingleLink(after) {
 		return nil, os.ErrPermission
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))

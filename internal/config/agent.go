@@ -55,8 +55,8 @@ func LoadAgent(options AgentLoadOptions) (AgentConfig, error) {
 	if err := decodeConfiguration(data, &file); err != nil {
 		return AgentConfig{}, err
 	}
-	if file.Token != "" && (info.Mode().Perm() != 0600 || !configurationOwned(info)) {
-		return AgentConfig{}, invalid("Agent凭据", "需要自有0600私有文件")
+	if file.Token != "" && !privateConfiguration(info) {
+		return AgentConfig{}, invalid("Agent凭据", "需要自有0400或0600私有文件")
 	}
 	values := viper.New()
 	values.SetConfigType("yaml")
@@ -114,10 +114,6 @@ func LoadAgent(options AgentLoadOptions) (AgentConfig, error) {
 		secrets, err = expandConfigurationPath(merged.SecretsFile, base)
 		if err != nil {
 			return AgentConfig{}, err
-		}
-		_, info, err := readConfiguration(secrets)
-		if err != nil || info.Mode().Perm() != 0600 || !configurationOwned(info) {
-			return AgentConfig{}, invalid("Agent秘密文件", "需要自有0600普通文件")
 		}
 	}
 	ca := ""

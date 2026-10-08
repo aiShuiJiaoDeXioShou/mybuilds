@@ -61,11 +61,12 @@ func runPublishQuery(ctx context.Context, client *agentHTTP, lock *dataLock, cfg
 	}
 
 	name := strings.TrimSuffix(strings.TrimPrefix(task.CredentialRef, "${"), "}")
-	if err == nil && cfg.PublishTools != nil && name != "MYBUILDS_AGENT_TOKEN" && name != "MYBUILDS_CLIENT_TOKEN" && name != cfg.TokenEnv && values[name] != "" && values[name] != cfg.RuntimeToken && !strings.HasPrefix(name, "MYBUILDS_BOOTSTRAP_") && !strings.HasPrefix(name, "MYBUILDS_SERVER_") && !strings.HasPrefix(name, "MYBUILDS_CONTROL_") && name != "MYBUILDS_GIT_SSH_KEY" && name != "MYBUILDS_GIT_KNOWN_HOSTS" {
+	secrets := taskSecrets(cfg, config.Build{Steps: []config.Step{{Kind: "upload", Credentials: task.CredentialRef}}}, values)
+	if err == nil && cfg.PublishTools != nil && secrets[name] != "" {
 		if task.Store == "google_play" {
-			result, err = distribute.QueryGooglePlay(bounded, distribute.GooglePlayOptions{BundleDir: cfg.PublishTools.BundleDir, Bundletool: cfg.PublishTools.Bundletool, DataDir: cfg.DataDir, CredentialFile: values[name], AppIdentifier: task.AppIdentifier, VersionName: task.VersionName, Number: task.VersionCode, UploadCertificateSHA256: task.UploadCertificateSHA256}, task)
+			result, err = distribute.QueryGooglePlay(bounded, distribute.GooglePlayOptions{BundleDir: cfg.PublishTools.BundleDir, Bundletool: cfg.PublishTools.Bundletool, DataDir: cfg.DataDir, CredentialFile: secrets[name], AppIdentifier: task.AppIdentifier, VersionName: task.VersionName, Number: task.VersionCode, UploadCertificateSHA256: task.UploadCertificateSHA256}, task)
 		} else {
-			result, err = distribute.QueryApple(bounded, distribute.AppleOptions{BundleDir: cfg.PublishTools.BundleDir, DataDir: cfg.DataDir, CredentialFile: values[name], AppIdentifier: task.AppIdentifier, VersionName: task.VersionName, Number: task.VersionCode}, task)
+			result, err = distribute.QueryApple(bounded, distribute.AppleOptions{BundleDir: cfg.PublishTools.BundleDir, DataDir: cfg.DataDir, CredentialFile: secrets[name], AppIdentifier: task.AppIdentifier, VersionName: task.VersionName, Number: task.VersionCode}, task)
 		}
 		if errors.Is(err, distribute.ErrCleanup) {
 			return failure("cleanup_error")

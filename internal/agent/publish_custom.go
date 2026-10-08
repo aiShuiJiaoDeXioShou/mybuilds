@@ -17,10 +17,7 @@ func runCustomPublishQuery(ctx context.Context, cfg config.AgentConfig, task pro
 	if c == nil || !validRef(c.OriginalRef) || c.OriginalRef.NodeID != task.NodeID || !safeDigest(c.AuthorizationDigest) || !safeDigest(c.ArtifactSHA256) || !exactUUID(c.ArtifactID) || c.Number < 1 || c.Number != task.VersionCode || c.ReportIDs == nil {
 		return protocol.PublishQueryResult{}, failure("invalid_response")
 	}
-	secrets, e := taskSecrets(cfg, config.Build{Env: c.Environment, Steps: []config.Step{{Kind: "upload", Credentials: task.CredentialRef}}}, values)
-	if e != nil {
-		return protocol.PublishQueryResult{}, e
-	}
+	secrets := taskSecrets(cfg, config.Build{Env: c.Environment, Steps: []config.Step{{Kind: "upload", Credentials: task.CredentialRef}}}, values)
 	checkout, e := scm.Checkout(ctx, scm.CheckoutOptions{DataDir: cfg.DataDir, Repository: c.Repository, Branch: c.Facts["git.branch"], SHA: c.SHA, SSHKey: values["MYBUILDS_GIT_SSH_KEY"], KnownHosts: values["MYBUILDS_GIT_KNOWN_HOSTS"]})
 	if !checkout.StopConfirmed {
 		return protocol.PublishQueryResult{}, distribute.ErrCleanup

@@ -49,3 +49,5 @@ MVP 批次、真实验证与完成定义见 [执行计划](plans/MVP_EXECUTION.m
 2026-10-05 README验收说明更新：补本地、双平台案例、控制端/两节点、internal与store、扩展/故障五阶段及通过标准；同步案例的工具复制、多终端token、真实返回ID与应用doctor说明。三个CLI构建/help/version、本地普通/post四快照内容/大小/SHA-256、双平台dry-run通过；80处链接/锚点、33个bash代码块语法和9组实际CLI帮助核对通过。本次仅更新文档，未执行真实签名或商店发布，人工项仍待验。
 
 2026-10-05主分支与文档整理：经用户授权，main从初始化基线6c13f93快进至43fc5ab并切换主工作区；16个MVP功能提交均在main历史中。README改为用户入口，验收步骤/标准/记录模板移至docs/ACCEPTANCE.md，详细运行与开发说明分别保留于docs/USAGE.md、docs/DEVELOPMENT.md；两处规划链接已更新。实际三个CLI help/version、默认init/dry-run/run及参数/when/post示例通过，117处链接/锚点与29个bash代码块语法通过；仅整理文档，生产代码未改动，真实签名/商店待验标记保留。
+
+2026-10-08 凭据读取精简（022）：完整 Spec Kit 与 converge 无缺口，主工作区 main、基线 `22e99ee`；[规范](../specs/022-credential-simplification/spec.md)、[验证](../specs/022-credential-simplification/validation.md)。删除秘密选择的不可达错误通道和重复排除规则；Agent 配置不再提前读取秘密；只读运行材料接受 0400/0600，保留鉴权、基础日志脱敏与可写状态/停止/恢复保护。八项红→绿读取检查、真实缺失/公开秘密零外部动作、并发隔离及五包必要 race、vet 和六个跨平台编译通过。全量首轮其余包通过，客户端旧诊断测试受本机部署影响，隔离凭据后整个包重跑通过，原非零结果保留在验证记录。不新增依赖或防护开关，不执行外部商店发布。

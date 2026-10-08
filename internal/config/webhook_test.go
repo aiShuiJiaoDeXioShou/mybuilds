@@ -32,6 +32,15 @@ func TestWebhookSecretExplicitFileOnly(t *testing.T) {
 	if e != nil || got["OWN_HOOK"] != value || len(got) != 1 {
 		t.Fatalf("显式材料 %v", e)
 	}
+	if err := os.Chmod(file, 0400); err != nil {
+		t.Fatal(err)
+	}
+	if got, e := LoadWebhookSecrets(file, []string{"OWN_HOOK"}); e != nil || got["OWN_HOOK"] != value {
+		t.Fatal("只读通知秘密被拒绝", e)
+	}
+	if err := os.Chmod(file, 0600); err != nil {
+		t.Fatal(err)
+	}
 	for _, body := range []string{"OWN_HOOK=short\n", "OWN_HOOK=" + value + "\nOWN_HOOK=" + value + "\n", "OWN_HOOK=" + value + "\x00\n"} {
 		os.WriteFile(file, []byte(body), 0600)
 		if _, e := LoadWebhookSecrets(file, []string{"OWN_HOOK"}); e == nil {

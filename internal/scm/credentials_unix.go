@@ -33,5 +33,5 @@ func readPrivate(filename string, limit int64) ([]byte, error) {
 
 func ownedMaterial(info os.FileInfo) bool {
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	return ok && stat.Uid == uint32(os.Geteuid()) && stat.Nlink == 1 && info.Mode().IsRegular() && info.Mode().Perm() == 0600
+	return ok && stat.Uid == uint32(os.Geteuid()) && stat.Nlink == 1 && info.Mode().IsRegular() && (info.Mode().Perm() == 0400 || info.Mode().Perm() == 0600)
 }

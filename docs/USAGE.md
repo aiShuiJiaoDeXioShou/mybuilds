@@ -180,7 +180,7 @@ token create 只显示一次明文，列表不显示 token；首次管理员通�
 
 角色为 admin/trigger/approver：admin 管理与读写；trigger 只读 status 并触发所选定义不含 upload 的构建；approver可读脱敏证据并明确批准或拒绝精确审批检查点。所选定义含 upload 时，即使条件为 false，也要求 admin 与显式 `--allow-upload`；节点执行仍须当前应用、报告和审批授权。
 
-配置默认位于 `~/.mybuilds/server.yml`、`~/.mybuilds/client.yml`。覆盖顺序为默认值 < 文件 < 明确白名单环境变量 < 显式 CLI；服务端白名单为 `MYBUILDS_LISTEN`、`MYBUILDS_DATA_DIR`、`MYBUILDS_CONCURRENCY`、`MYBUILDS_DATABASE_DRIVER`、`MYBUILDS_DATABASE_DSN`、`MYBUILDS_SECRETS_FILE`；客户端为 `MYBUILDS_SERVER_URL`、`MYBUILDS_CLIENT_TOKEN`、`MYBUILDS_CLIENT_TIMEOUT`、`MYBUILDS_CA_FILE`。相对服务端路径基于配置文件目录，data_dir 创建为或要求 0700；客户端 token 可以是 0600 文件中的字面量或完整 `${NAME}` 引用，空/弱 token 拒绝。PostgreSQL 可通过 database.driver 和私有环境中的 MYBUILDS_DATABASE_DSN 配置；切换数据库不迁移已有数据。PostgreSQL 只使用明确 DSN，拒绝非空宿主 PG 环境变量和隐式 service/passfile；显式 TLS 材料需受限普通文件，读入内存后验证，不继承宿主凭据。
+配置默认位于 `~/.mybuilds/server.yml`、`~/.mybuilds/client.yml`。覆盖顺序为默认值 < 文件 < 明确白名单环境变量 < 显式 CLI；服务端白名单为 `MYBUILDS_LISTEN`、`MYBUILDS_DATA_DIR`、`MYBUILDS_CONCURRENCY`、`MYBUILDS_DATABASE_DRIVER`、`MYBUILDS_DATABASE_DSN`、`MYBUILDS_SECRETS_FILE`；客户端为 `MYBUILDS_SERVER_URL`、`MYBUILDS_CLIENT_TOKEN`、`MYBUILDS_CLIENT_TIMEOUT`、`MYBUILDS_CA_FILE`。相对服务端路径基于配置文件目录，data_dir 创建为或要求 0700；客户端 token 可以是自有 0400/0600 文件中的字面量或完整 `${NAME}` 引用，空/弱 token 拒绝。PostgreSQL 可通过 database.driver 和私有环境中的 MYBUILDS_DATABASE_DSN 配置；切换数据库不迁移已有数据。PostgreSQL 只使用明确 DSN，拒绝非空宿主 PG 环境变量和隐式 service/passfile；显式 TLS 材料需受限普通文件，读入内存后验证，不继承宿主凭据。
 
 客户端只有远程命令读取 client 配置；损坏的 client.yml 或缺 token 不影响本地 init/run/doctor/help/version。`--server-url` 覆盖远程地址，`--timeout` 只控制普通 API 请求，不改变本地 YAML 的 build/post 预算。客户端仅允许回环 HTTP 或验证证书的 HTTPS，并拒绝重定向。当前服务端提供 HTTP 监听，可放在终止 TLS 的反向代理后；跨主机客户端必须通过 HTTPS 入口连接并验证服务器证书，不能跳过校验。
 
@@ -201,7 +201,7 @@ umask 077
 ./bin/mybuilds --config ./client.yml node ls --json
 ```
 
-在每个节点分别保存自己的 `agent.yml` 为 0600，并从安全传输或密码管理器注入 `MYBUILDS_AGENT_TOKEN`。节点名、token 和 data_dir 不共用；控制端与 Agent 的 heartbeat/lease 策略必须一致，默认分别 5s/30s：
+在每个节点分别保存自己的 `agent.yml` 为 0400 或 0600，并从安全传输或密码管理器注入 `MYBUILDS_AGENT_TOKEN`。节点名、token 和 data_dir 不共用；控制端与 Agent 的 heartbeat/lease 策略必须一致，默认分别 5s/30s：
 
 ```yaml
 server: https://builds.example.test
@@ -215,7 +215,7 @@ lease_duration: 30s
 # secrets_file: ./secrets.env
 ```
 
-`server` 替换为实际 HTTPS 入口，证书 SAN 必须匹配该主机；`control-ca.pem` 替换为实际 CA 文件。相对路径基于 agent.yml 所在目录。data_dir 必须是节点用户自有的 0700 目录，首次启动可创建；secrets_file 必须是自有 0600 普通文件，只向实际声明的步骤注入对应秘密。私有 SSH 仓库分别给控制端和节点配置显式 key/known_hosts，不使用宿主未知私钥或 SSH agent。
+`server` 替换为实际 HTTPS 入口，证书 SAN 必须匹配该主机；`control-ca.pem` 替换为实际 CA 文件。相对路径基于 agent.yml 所在目录。data_dir 必须是节点用户自有的 0700 目录，首次启动可创建；secrets_file 必须是自有 0400/0600 普通文件，只向实际声明的步骤注入对应秘密。配置加载仅解析其路径，在任务执行和发布查询使用前才读取校验；文件缺失或无效时不会执行构建脚本或上传。SSH 凭据、通知秘密与发布决定等只读材料也接受 0400/0600；Agent 内部可写 journal、spool 与锁文件仍为 0600。私有 SSH 仓库分别给控制端和节点配置显式 key/known_hosts，不使用宿主未知私钥或 SSH agent。
 
 ```bash
 chmod 0600 ./agent.yml

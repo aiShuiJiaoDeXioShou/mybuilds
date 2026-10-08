@@ -177,10 +177,7 @@ func executeTask(parent context.Context, client *agentHTTP, lock *dataLock, cfg 
 	if err != nil {
 		return execution.zeroAction("precheck_error", grant.RemainingBudgetNS, grant.RemainingPostBudgetNS)
 	}
-	secrets, err := taskSecrets(cfg, task.Definition, values)
-	if err != nil {
-		return execution.zeroAction("precheck_error", grant.RemainingBudgetNS, grant.RemainingPostBudgetNS)
-	}
+	secrets := taskSecrets(cfg, task.Definition, values)
 	execution.publishSecrets = secrets
 	journal.mu.Lock()
 	journal.state.StopConfirmed = false

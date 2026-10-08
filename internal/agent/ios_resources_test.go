@@ -101,9 +101,9 @@ func TestIOSSecretRefsUseOnlyDeclaredNodeValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	values := map[string]string{"P12": "own.p12", "PROFILE": "own.profile", "PASSWORD": "sensitive-value", "UNDECLARED": "private-undeclared"}
-	got, err := taskSecrets(config.AgentConfig{}, *doc.Builds["default"], values)
-	if err != nil || len(got) != 3 || got["PASSWORD"] != values["PASSWORD"] || got["UNDECLARED"] != "" {
-		t.Fatal("签名秘密未沿声明边界消费", err)
+	got := taskSecrets(config.AgentConfig{}, *doc.Builds["default"], values)
+	if len(got) != 3 || got["PASSWORD"] != values["PASSWORD"] || got["UNDECLARED"] != "" {
+		t.Fatal("签名秘密未沿声明边界消费")
 	}
 }
 

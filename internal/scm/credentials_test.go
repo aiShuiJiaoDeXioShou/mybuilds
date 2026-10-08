@@ -25,6 +25,11 @@ func TestSSHCredentialsPrivateCopiesAndBoundaries(t *testing.T) {
 	writeFixture(t, source, "key", "PRIVATE_KEY_MARKER")
 	writeFixture(t, source, "known_hosts", "explicit public host")
 	writeFixture(t, source, "secrets.env", "GIT_SSH_KEY_FILE=key\nGIT_SSH_KNOWN_HOSTS_FILE=known_hosts\nOTHER_BUSINESS_SECRET=DO_NOT_EXPORT\n")
+	for _, name := range []string{"key", "known_hosts", "secrets.env"} {
+		if err := os.Chmod(filepath.Join(source, name), 0400); err != nil {
+			t.Fatal(err)
+		}
+	}
 	env, err := sshEnvironment(workspace, filepath.Join(source, "secrets.env"))
 	if err != nil {
 		t.Fatal(err)
@@ -35,6 +40,9 @@ func TestSSHCredentialsPrivateCopiesAndBoundaries(t *testing.T) {
 	copy, err := os.ReadFile(filepath.Join(workspace, "GIT_SSH_KEY_FILE"))
 	if err != nil || string(copy) != "PRIVATE_KEY_MARKER" {
 		t.Fatal("没有真实私有副本")
+	}
+	if err := os.Chmod(filepath.Join(source, "key"), 0600); err != nil {
+		t.Fatal(err)
 	}
 	writeFixture(t, source, "key", "CHANGED_AFTER_COPY")
 	copy, _ = os.ReadFile(filepath.Join(workspace, "GIT_SSH_KEY_FILE"))

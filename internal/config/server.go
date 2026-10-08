@@ -215,6 +215,11 @@ func decodeConfiguration(data []byte, target any) error {
 	return nil
 }
 
+// privateConfiguration允许所有者只读或读写，其他账号无读取权限。
+func privateConfiguration(info os.FileInfo) bool {
+	return info.Mode().IsRegular() && (info.Mode().Perm() == 0400 || info.Mode().Perm() == 0600) && configurationOwned(info)
+}
+
 // readConfiguration为实际管理配置消费者提供有限普通文件读取。
 func readConfiguration(filename string) ([]byte, os.FileInfo, error) {
 	file, err := openConfiguration(filename)

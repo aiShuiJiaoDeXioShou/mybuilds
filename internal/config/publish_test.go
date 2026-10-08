@@ -17,6 +17,15 @@ func TestPublishDecisionPrivateBoundaries(t *testing.T) {
 	if data, err := ReadPrivateJSON(filename, 64<<10); err != nil || string(data) != string(valid) {
 		t.Fatal("私有普通文件", err)
 	}
+	if err := os.Chmod(filename, 0400); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := ReadPrivateJSON(filename, 64<<10); err != nil || string(data) != string(valid) {
+		t.Fatal("只读决定材料被拒绝", err)
+	}
+	if err := os.Chmod(filename, 0600); err != nil {
+		t.Fatal(err)
+	}
 	for _, content := range []string{`{"key":"one","key":"two"}`, `{"Key":"one"}`, `{"key":null}`, `{"key":{}} {}`, `{"key":`} {
 		if err := os.WriteFile(filename, []byte(content), 0600); err != nil {
 			t.Fatal(err)

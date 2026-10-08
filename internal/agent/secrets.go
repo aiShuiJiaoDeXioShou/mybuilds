@@ -33,9 +33,9 @@ func loadSecrets(cfg config.AgentConfig) (map[string]string, error) {
 	}
 	return values, nil
 }
-func taskSecrets(cfg config.AgentConfig, build config.Build, values map[string]string) (map[string]string, error) {
+func taskSecrets(cfg config.AgentConfig, build config.Build, values map[string]string) map[string]string {
 	secrets := map[string]string{}
-	take := func(env map[string]string) error {
+	take := func(env map[string]string) {
 		for _, value := range env {
 			for _, m := range secretReference.FindAllStringSubmatch(value, -1) {
 				name := m[1]
@@ -49,15 +49,10 @@ func taskSecrets(cfg config.AgentConfig, build config.Build, values map[string]s
 				secrets[name] = secret
 			}
 		}
-		return nil
 	}
-	if err := take(build.Env); err != nil {
-		return nil, err
-	}
+	take(build.Env)
 	if build.IOSSigning != nil {
-		if err := take(map[string]string{"p12": build.IOSSigning.P12, "profile": build.IOSSigning.Profile, "password": build.IOSSigning.Password}); err != nil {
-			return nil, err
-		}
+		take(map[string]string{"p12": build.IOSSigning.P12, "profile": build.IOSSigning.Profile, "password": build.IOSSigning.Password})
 	}
 	steps := append([]config.Step{}, build.Steps...)
 	if build.Post != nil {
@@ -67,13 +62,9 @@ func taskSecrets(cfg config.AgentConfig, build config.Build, values map[string]s
 	}
 	for _, step := range steps {
 		if step.Kind == "upload" && step.Credentials != "" {
-			if err := take(map[string]string{"credentials": step.Credentials}); err != nil {
-				return nil, err
-			}
+			take(map[string]string{"credentials": step.Credentials})
 		}
-		if err := take(step.Env); err != nil {
-			return nil, err
-		}
+		take(step.Env)
 	}
-	return secrets, nil
+	return secrets
 }

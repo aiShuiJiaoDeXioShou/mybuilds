@@ -21,8 +21,8 @@ func LoadPublishDoctor(filename string) (PublishTools, string, error) {
 	if err = decodeConfiguration(data, &file); err != nil {
 		return PublishTools{}, "", err
 	}
-	if file.Token != "" && (info.Mode().Perm() != 0600 || !configurationOwned(info)) {
-		return PublishTools{}, "", invalid("发布诊断", "身份配置需要自有0600文件")
+	if file.Token != "" && !privateConfiguration(info) {
+		return PublishTools{}, "", invalid("发布诊断", "身份配置需要自有0400或0600文件")
 	}
 	if file.PublishTools == nil || file.PublishTools.BundleDir == "" {
 		return PublishTools{}, "", invalid("发布诊断", "缺少发布工具配置")

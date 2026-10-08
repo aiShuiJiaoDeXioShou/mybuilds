@@ -36,7 +36,7 @@ func readMaterial(ctx context.Context, path string, limit int64, secret bool) ([
 	data, e := io.ReadAll(io.LimitReader(f, limit+1))
 	after, ae := f.Stat()
 	leaf, le := os.Lstat(path)
-	if e != nil || ae != nil || le != nil || !os.SameFile(before, after) || !os.SameFile(after, leaf) || leaf.Mode()&os.ModeSymlink != 0 || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) || int64(len(data)) != after.Size() || ctx.Err() != nil {
+	if e != nil || ae != nil || le != nil || !os.SameFile(after, leaf) || leaf.Mode()&os.ModeSymlink != 0 || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) || int64(len(data)) != after.Size() || ctx.Err() != nil {
 		return nil, errMaterial
 	}
 	return data, nil

@@ -52,8 +52,8 @@ func LoadClient(options ClientLoadOptions) (ClientConfig, error) {
 		if err := decodeConfiguration(data, &file); err != nil {
 			return ClientConfig{}, err
 		}
-		if file.Token != "" && (info.Mode().Perm() != 0600 || !configurationOwned(info)) {
-			return ClientConfig{}, invalid("客户端凭据", "需要0600私有文件")
+		if file.Token != "" && !privateConfiguration(info) {
+			return ClientConfig{}, invalid("客户端凭据", "需要自有0400或0600私有文件")
 		}
 		if err := values.ReadConfig(bytes.NewReader(data)); err != nil {
 			return ClientConfig{}, invalid("客户端配置", "无法解码")

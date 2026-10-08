@@ -33,6 +33,12 @@ func TestClientStrictAndPrivate(t *testing.T) {
 		}
 	}
 	p := writeManagementConfig(t, "token: '"+token+"'\n")
+	if err := os.Chmod(p, 0400); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadClient(ClientLoadOptions{Filename: p, Explicit: true}); err != nil {
+		t.Fatal("只读凭据被拒绝", err)
+	}
 	if err := os.Chmod(p, 0644); err != nil {
 		t.Fatal(err)
 	}

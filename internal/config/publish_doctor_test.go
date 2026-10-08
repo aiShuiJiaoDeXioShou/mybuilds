@@ -17,6 +17,12 @@ func TestPublishDoctorDoesNotLoadControlIdentity(t *testing.T) {
 	if err != nil || tools.BundleDir != filepath.Join(dir, "tools") || tools.Bundletool != filepath.Join(dir, "tools/bundletool.jar") || data != filepath.Join(dir, "data") {
 		t.Fatal("诊断意外需要控制端身份", err)
 	}
+	if err := os.Chmod(file, 0400); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = LoadPublishDoctor(file); err != nil {
+		t.Fatal("只读诊断配置被拒绝", err)
+	}
 	if err := os.Chmod(file, 0644); err != nil {
 		t.Fatal(err)
 	}

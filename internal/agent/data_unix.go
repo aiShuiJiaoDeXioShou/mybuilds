@@ -19,14 +19,16 @@ type dataLock struct {
 }
 
 func privateInfo(info os.FileInfo, directory bool) bool {
+	if !directory {
+		return privateReadableInfo(info) && info.Mode().Perm() == 0600
+	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || stat.Uid != uint32(os.Geteuid()) {
-		return false
-	}
-	if directory {
-		return info.IsDir() && info.Mode().Perm() == 0700
-	}
-	return info.Mode().IsRegular() && info.Mode().Perm() == 0600 && stat.Nlink == 1
+	return ok && stat.Uid == uint32(os.Geteuid()) && info.IsDir() && info.Mode().Perm() == 0700
+}
+
+func privateReadableInfo(info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && stat.Uid == uint32(os.Geteuid()) && stat.Nlink == 1 && info.Mode().IsRegular() && (info.Mode().Perm() == 0400 || info.Mode().Perm() == 0600)
 }
 
 func lockDataDir(path string) (*dataLock, error) {

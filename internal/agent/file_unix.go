@@ -118,7 +118,7 @@ func (lock *dataLock) removeFile(name string, previous os.FileInfo) error {
 
 func readSecretFile(name string) ([]byte, error) {
 	before, err := os.Lstat(name)
-	if err != nil || !privateInfo(before, false) || before.Size() > 1<<20 {
+	if err != nil || !privateReadableInfo(before) || before.Size() > 1<<20 {
 		return nil, failure("secrets_invalid")
 	}
 	file, err := os.OpenFile(name, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
@@ -127,7 +127,7 @@ func readSecretFile(name string) ([]byte, error) {
 	}
 	defer file.Close()
 	info, err := file.Stat()
-	if err != nil || !privateInfo(info, false) || !os.SameFile(before, info) {
+	if err != nil || !privateReadableInfo(info) || !os.SameFile(before, info) {
 		return nil, failure("secrets_invalid")
 	}
 	data, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))

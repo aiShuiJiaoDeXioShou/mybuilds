@@ -369,7 +369,7 @@ flowchart LR
 | Windows | 支持；制品下载需 WSL | 原生暂不支持，可用 WSL | 由远程节点执行 |
 
 - **工具链自备**：Android 需要 Java 17+、Android SDK 和工程 Gradle wrapper；Flutter 另需 Flutter SDK；iOS 签名需要 macOS 15+、Xcode、有效签名材料，以及启用 cgo 编译的程序。
-- **宿主机执行**：Agent 直接执行可信仓库的脚本，应使用独立构建账户。跨主机连接需要验证证书的 HTTPS。
+- **宿主机执行**：Agent 直接执行可信仓库的脚本，应使用独立构建账户。跨主机连接需要验证证书的 HTTPS。Unix 下客户端/Agent 配置及运行时只读凭据支持自有 `0400` 或 `0600` 文件；Agent 秘密文件在实际使用前校验，详见[节点配置](docs/USAGE.md#独立节点日志与制品)。
 - **验证范围**：原生 Android 已有真实签名构建记录；iOS / Flutter 签名、Apple / Google 商店操作及外部 Git 平台投递仍有人工待验项。已完成的自动与集成验证见[实施历史](docs/IMPLEMENTATION_HISTORY.md)和[验证记录](examples/mvp/validation.md)。
 - **当前范围**：采用纯 CLI 形态；机器人通知发送、轮询 / cron 触发及更多内置分发渠道尚未实现。自定义方案仍用 YAML 描述，暂不支持通过 CLI 逐步添加任意流水线步骤。
 

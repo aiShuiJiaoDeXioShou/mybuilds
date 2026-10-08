@@ -191,7 +191,7 @@ func LoadWebhookSecrets(filename string, names []string) (map[string]string, err
 	}
 	defer f.Close()
 	before, e := f.Stat()
-	if e != nil || !before.Mode().IsRegular() || before.Mode().Perm() != 0600 || !configurationOwned(before) || !configurationSingleLink(before) || before.Size() > MaxConfigBytes {
+	if e != nil || !privateConfiguration(before) || !configurationSingleLink(before) || before.Size() > MaxConfigBytes {
 		return fail()
 	}
 	data, e := io.ReadAll(io.LimitReader(f, MaxConfigBytes+1))
@@ -200,7 +200,7 @@ func LoadWebhookSecrets(filename string, names []string) (map[string]string, err
 	}
 	after, e := f.Stat()
 	leaf, le := os.Lstat(filename)
-	if e != nil || le != nil || !os.SameFile(before, after) || !os.SameFile(after, leaf) || !before.ModTime().Equal(after.ModTime()) || bytes.IndexByte(data, 0) >= 0 {
+	if e != nil || le != nil || !os.SameFile(after, leaf) || !before.ModTime().Equal(after.ModTime()) || bytes.IndexByte(data, 0) >= 0 {
 		return fail()
 	}
 	parent, e := os.Lstat(filepath.Dir(filename))
