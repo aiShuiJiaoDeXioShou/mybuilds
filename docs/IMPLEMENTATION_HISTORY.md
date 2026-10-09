@@ -53,3 +53,5 @@ MVP 批次、真实验证与完成定义见 [执行计划](plans/MVP_EXECUTION.m
 2026-10-08 凭据读取精简（022）：完整 Spec Kit 与 converge 无缺口，主工作区 main、基线 `22e99ee`；[规范](../specs/022-credential-simplification/spec.md)、[验证](../specs/022-credential-simplification/validation.md)。删除秘密选择的不可达错误通道和重复排除规则；Agent 配置不再提前读取秘密；只读运行材料接受 0400/0600，保留鉴权、基础日志脱敏与可写状态/停止/恢复保护。八项红→绿读取检查、真实缺失/公开秘密零外部动作、并发隔离及五包必要 race、vet 和六个跨平台编译通过。全量首轮其余包通过，客户端旧诊断测试受本机部署影响，隔离凭据后整个包重跑通过，原非零结果保留在验证记录。不新增依赖或防护开关，不执行外部商店发布。
 
 2026-10-08 JUnit报告数量增量（019）：默认64→256，每个build的reports.junit.max_files可设1–1024；扫描/恢复/Agent/Store/终态和发布引用统一数量，普通制品128份另外计数。报告消息8MiB、执行journal64MiB，字节/cases/诊断/时间预算保持；审批归属在单次核验按Ref复用摘要，解决大量报告恢复重复编码。真实1024上传/封存/原XML下载及暂停重启批准通过，全套测试分组覆盖、必要race/vet和六个跨平台编译通过；首轮环境隔离/时序与race预算失败及复验如实保留于[验证记录](../specs/019-test-reports/validation.md)。未实跑PostgreSQL或本次Linux节点，不冒充外部商店验收。
+
+2026-10-09 本机维护与FRP规划：main@2d18771已推送；本机客户端升级为v0.1.1-dev.2d18771，沿用既有配置/身份并保留旧程序备份。Java本地工作流改为逐份兼容报告和max_files=1024；dry-run及实际70份生成报告/失败/统计矛盾/数量超限检查通过，未重新运行实际Java项目。见[维护验证](../specs/021-installers-skills/validation.md)。[FRP接入](plans/FRP_ACCESS.md)已完成023的specify/plan/tasks/analyze与frpc0.64.0配置检查，11项部署任务仍待实施；远端控制端/Agent未升级，公网服务未启用，原SSH保持。

@@ -64,6 +64,8 @@ ssh -N -L 127.0.0.1:8787:127.0.0.1:8787 -p SSH_PORT USER@HOST
 
 保持隧道运行，客户端 `server` 配置为 `http://127.0.0.1:8787`；若本地端口被占用，改转发左侧端口并同步配置。控制端与同机 Agent 始终通过远端回环通信。不要把远程明文 HTTP 作为跨机器连接地址。
 
+FRP 公网接入的配置、实施顺序和回退方案见[接入规划](plans/FRP_ACCESS.md)。当前仅完成规划；正式切换前需验证 HTTPS 证书、隧道、实时日志与文件传输，原 SSH 入口保持可用。
+
 ## Windows
 
 PowerShell 原生客户端（Windows PowerShell 5.1 或 PowerShell 7）：

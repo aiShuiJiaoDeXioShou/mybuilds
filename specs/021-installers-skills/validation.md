@@ -29,3 +29,13 @@ Windows原生客户端仍不支持artifact download，已在脚本、README、CL
 
 converge核对9项功能要求、4项成功指标、3个用户故事与5项项目原则，未发现需追加的实现任务，tasks保持全完成状态。未修改Go业务实现或数据库模型；本次没有新依赖。
 main分支的三平台验收 [37660471989](https://github.com/aiShuiJiaoDeXioShou/mybuilds/actions/runs/37660471989) 同样全部成功。服务端安装采用已校验的离线包；客户端公开下载入口随后验证通过。运行凭据、SSH密钥与部署地址均未写入项目文件。
+
+## 2026-10-09 本机客户端升级与Java工作流
+
+经用户授权，main的21116f7、2d18771已推送origin/main；未创建发行标签或GitHub Release。按现有release.py从2d18771构建darwin/arm64的v0.1.1-dev.2d18771包（三入口启用cgo），本次只替换本机客户端。包SHA256 b9f609309397aef5c620cbc75e5a914bef86c6be1cf07ba570e0fb59f0114b81，安装后客户端SHA256 3208830e28af3c095a72a793eccd3cf971e62fbbf984836ab0bdebd04d1159e1；程序version和help通过，安装器版本记录同步。旧程序、安装记录、连接配置及工作流备份于~/.mybuilds/updates/20261009-2d18771/backup，连接配置字节不变；没有重新创建身份或项目。
+
+更新~/.mybuilds/build-inputs/sqcms-backend/mybuilds.yml：reports.junit.max_files=1024，路径改target/mybuilds-junit/TEST-*.xml；沿用此前Maven报告兼容化脚本，按输入文件逐份生成，不再合并为一份；原Java路径、Maven退出状态及JAR路径保持。新文件SHA256 96361ad65cffcc9f016922f5501781f977c22e90267b41defedf8979c86012f8。历史source.json记录未改，不把新本地文件冒充旧远端Git快照。
+
+实际新客户端对该文件dry-run exit0。使用该文件中提取的真实转换脚本生成70份Maven格式带命名空间的测试报告，经实际mybuilds run校验：373 tests/16 skipped、70份文件通过；失败用例保留70份且report_failed、统计不一致导致命令失败、max_files=64时70份超限；三种失败均阻止后续哨兵。检查脚本与JSON记录在~/.mybuilds/updates/20261009-2d18771，不含token。生成测试不等于重新运行实际Java项目。
+
+升级后现有SSH隧道status/项目查询正常，远端仍v0.1.0、两项目、一个健康在线节点、无排队/运行构建。本次未升级远端控制端/Agent，未修改其Git仓库里的旧工作流，未触发远端构建；新文件用于远程执行前必须先升级两者并更新实际仓库配置。FRP接入已在023完成specify/plan/tasks/analyze，公网实施待执行。未改Go源，不重复全套Go测试。
